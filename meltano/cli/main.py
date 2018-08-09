@@ -1,6 +1,6 @@
 import click
 
-from Extract.fastly.extractor import FastlyExtractor
+from ..Extract.fastly.extractor import FastlyExtractor
 from Load.postgres.loader import PostgresLoader
 
 
@@ -63,7 +63,6 @@ def extract(extractor_name, loader_name, host, port, database, username, passwor
     click.echo("Starting extraction ... ")
     extracted_entities = extractor.extract()
     click.echo("Applying the schema ... ")
-
     loader.schema_apply()
     click.echo("Got extractor results, loading them into the loader")
     loader.load(extracted_entities)
