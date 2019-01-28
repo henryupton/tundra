@@ -15,18 +15,20 @@ meltano init carbon
 # Change directory into your new carbon project
 cd carbon
 
-# Start Docker container, which will start a postgres database
-# to act as our data warehouse.
+# Start Docker container to setup logging
 docker-compose up -d
 
-# let's see what extractors and loaders are available
+# Set environment variables
+source .env
+
+# Let's see what extractors and loaders are available
 meltano discover all
 
 # It looks like a tap for carbon intensity data is available,
 # let's add that as a dependency. See https://api.carbonintensity.org.uk/
 meltano add extractor tap-carbon-intensity
 
-# Since we have a postgres running, we can add a loader for a Postgres database
+# Now we add a loader for the sqlite database
 meltano add loader target-sqlite
 
 # Run elt (extract, load, transform) with an id of your choice and the extractor and
@@ -50,17 +52,13 @@ Follow the [installation](/docs/#installation) steps if Meltano UI is not runnin
 :::
 
 Next, we'll wire up our data warehouse to store data from the *carbon dataset*:
-- Navigate to Settings (upper-right)
-- Enter connection settings
+
+1. Navigate to Settings (upper-right)
+1. Enter connection settings
   - Name = `runners_db`
-  - Dialect = `PostgresSQL`
-  - Host = `localhost`
-  - Port = `5502`
-  - Database = `warehouse`
-  - Schema = `gitlab`
-  - Username = `warehouse`
-  - Password = `warehouse`
-- Click "Save Connection"
+  - Dialect = `sqlite`
+  - Path to SQLite File = `meltano.db`
+1. Click "Save Connection"
 
 Then, we'll ensure our models are valid so Meltano Analyze can properly generate queries for us:
 - Click Model button (upper-left)
@@ -69,6 +67,6 @@ Then, we'll ensure our models are valid so Meltano Analyze can properly generate
 Lastly, we'll query and explore the data:
 - Navigate to Model > Region (Model dropdown)
 - Open Region accordion
-  - Toggle Dimensions and Measures buttons to generate SQL query
+  - Toggle Columns and Aggregates buttons to generate SQL query
   - Click Run button to query
 - Open Charts accordion and explore the data!
