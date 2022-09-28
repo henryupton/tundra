@@ -62,6 +62,11 @@ SNOWFLAKE_SPEC_DATABASE_SCHEMA = """
     owner:
         type: string
         required: False
+    meta:
+        type: dict
+        required: False
+        keyschema:
+            type: string
     """
 
 
@@ -122,6 +127,11 @@ SNOWFLAKE_SPEC_ROLE_SCHEMA = """
             type: list
             schema:
                 type: string
+    meta:
+        type: dict
+        required: False
+        keyschema:
+            type: string
     """
 
 SNOWFLAKE_SPEC_USER_SCHEMA = """
@@ -135,6 +145,11 @@ SNOWFLAKE_SPEC_USER_SCHEMA = """
         type: list
         schema:
             type: string
+    meta:
+        type: dict
+        required: False
+        keyschema:
+            type: string
     """
 
 SNOWFLAKE_SPEC_WAREHOUSE_SCHEMA = """
@@ -144,6 +159,11 @@ SNOWFLAKE_SPEC_WAREHOUSE_SCHEMA = """
     size:
         type: string
         required: True
+    meta:
+        type: dict
+        required: False
+        keyschema:
+            type: string
     """
 
 SNOWFLAKE_SPEC_INTEGRATION_SCHEMA = """
@@ -153,4 +173,9 @@ SNOWFLAKE_SPEC_INTEGRATION_SCHEMA = """
     category:
         type: string
         required: True
+    meta:
+        type: dict
+        required: False
+        keyschema:
+            type: string
     """

@@ -86,7 +86,7 @@ def load_spec(spec_path: str) -> PermifrostSpecSchema:
     raise a SpecLoadingError with the appropriate error messages.
 
     Otherwise, return the valid specification as a Dictionary to be used
-    in other operations.
+    in other operations. Remove meta data if any is present.
 
     Raises a SpecLoadingError with all the errors found in the spec if at
     least one error is found.
@@ -102,5 +102,16 @@ def load_spec(spec_path: str) -> PermifrostSpecSchema:
     error_messages = ensure_valid_schema(spec)
     if error_messages:
         raise SpecLoadingError("\n".join(error_messages))
+    
+    for entity_type, entities in spec.items():
+        if entities and entity_type in [
+            "databases",
+            "roles",
+            "users",
+            "warehouses",
+            "integrations",
+        ]:
+            for entity in entities:
+                entity.pop("meta", None)
 
     return spec
