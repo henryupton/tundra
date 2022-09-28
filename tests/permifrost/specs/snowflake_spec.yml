@@ -7,6 +7,8 @@ databases:
 
     - raw:
         shared: no
+        meta:
+            some_key: some_value
 
     - testing_db:
         shared: no
@@ -25,6 +27,8 @@ roles:
             - sysadmin
 
     - securityadmin:
+        meta:
+            some_key: some_value
         warehouses:
             - loading
         member_of:
@@ -232,6 +236,8 @@ roles:
 # Users
 users:
     - eburke:
+        meta:
+            some_key: some_value
         can_login: yes
         member_of:
             - sysadmin
@@ -303,6 +309,8 @@ users:
 # Warehouses
 warehouses:
     - loading:
+        meta:
+            some_key: some_value
         size: x-small
 
     - reporting:
@@ -313,4 +321,6 @@ warehouses:
 
 integrations:
     - cloud_integration:
+        meta:
+            some_key: some_value
         category: storage
