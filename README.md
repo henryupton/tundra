@@ -158,6 +158,9 @@ in`exclude`will be removed from the list defined in`include`.
 Objects like warehouses and integrations that only have one permifrost permission type just
 needs to be specified in the role (see below).
 
+Objects can have a `meta` dictionary which may contain information that is not relevant for Permifrost's
+execution and are ignored by Permifrost itself.
+
 A specification file has the following structure:
 
 ```bash
@@ -168,6 +171,9 @@ databases:
     - db_name:
         shared: boolean
         owner: role_name
+        meta:
+            some_key: some_value
+            ...
     ... ... ...
 
 # Roles
@@ -244,6 +250,10 @@ roles:
                 - database_name.schema_name.*
                 - database_name.schema_name.table_name
                 ...
+        
+        meta:
+            some_key: some_value
+            ...
 
     - role_name:
         owner: role_name
@@ -256,6 +266,9 @@ users:
         member_of:
             - role_name
             ...
+        meta:
+            some_key: some_value
+            ...
     - user_name:
         owner: role_name
     ... ... ...
@@ -265,6 +278,9 @@ users:
 warehouses:
     - warehouse_name:
         size: x-small
+        meta:
+            some_key: some_value
+            ...
     - warehouse_name:
         size: x-small
         owner: role_name
@@ -275,6 +291,9 @@ warehouses:
 integrations:
     - integration_name:
         category: storage
+        meta:
+            some_key: some_value
+            ...
     - integration_name:
         category: security
         owner: role_name
