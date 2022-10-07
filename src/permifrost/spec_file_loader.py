@@ -102,7 +102,7 @@ def load_spec(spec_path: str) -> PermifrostSpecSchema:
     error_messages = ensure_valid_schema(spec)
     if error_messages:
         raise SpecLoadingError("\n".join(error_messages))
-    
+
     for entity_type, entities in spec.items():
         if entities and entity_type in [
             "databases",
