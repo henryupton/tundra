@@ -16,6 +16,9 @@ Adds support for suffix partial schema name
 * [#116](https://gitlab.com/gitlab-data/permifrost/-/issues/116)
 Adds support for integrations
 
+* [#133](https://gitlab.com/gitlab-data/permifrost/-/issues/133)
+Adds support for object meta data
+
 ### Changes
 [#112](https://gitlab.com/gitlab-data/permifrost/-/issues/112)  Add support for 'grant select on all tables in db/schema'
 for `db.*.*` or `db.schema.*` in spec file.
