@@ -39,7 +39,7 @@ Fix handling of delimited object identifiers
 * [#117](https://gitlab.com/gitlab-data/permifrost/-/issues/117)
 Remove `information_schema` of fetched schemas in case of partial schema name input
 
-* [#112](https://gitlab.com/gitlab-data/permifrost/-/issues/122)
+* [#122](https://gitlab.com/gitlab-data/permifrost/-/issues/122)
 Explicitly mention the spec file must be lowercase
 
 ### Breaks
