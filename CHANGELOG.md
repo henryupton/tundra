@@ -27,13 +27,13 @@ for `db.*.*` or `db.schema.*` in spec file.
 * [#126](https://gitlab.com/gitlab-data/permifrost/-/issues/126)
 Fix bug in spec validation / missing entity checks
 
-* [#126](https://gitlab.com/gitlab-data/permifrost/-/issues/120)
+* [#138](https://gitlab.com/gitlab-data/permifrost/-/issues/138)
 Validate spec file table entity per database instead per account
 
 * [#125](https://gitlab.com/gitlab-data/permifrost/-/issues/125)
 Skip generation of write privileges for already-granted <database_or_schema>.* privileges
 
-* [#119](https://gitlab.com/gitlab-data/permifrost/-/issues/119)
+* [#52](https://gitlab.com/gitlab-data/permifrost/-/issues/52)
 Fix handling of delimited object identifiers
 
 * [#117](https://gitlab.com/gitlab-data/permifrost/-/issues/117)
