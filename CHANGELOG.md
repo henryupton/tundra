@@ -13,7 +13,7 @@ Changelog](http://keepachangelog.com/).
 * [#117](https://gitlab.com/gitlab-data/permifrost/-/issues/117)
 Adds support for suffix partial schema name
 
-* [#116](https://gitlab.com/gitlab-data/permifrost/-/issues/116)
+* [!116](https://gitlab.com/gitlab-data/permifrost/-/issues/116)
 Adds support for integrations
 
 * [#133](https://gitlab.com/gitlab-data/permifrost/-/issues/133)
