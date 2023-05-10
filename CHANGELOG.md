@@ -27,6 +27,9 @@ for `db.*.*` or `db.schema.*` in spec file.
 * [#126](https://gitlab.com/gitlab-data/permifrost/-/issues/126)
 Fix bug in spec validation / missing entity checks
 
+* [!127](https://gitlab.com/gitlab-data/permifrost/-/merge_requests/127)
+Fix views future privileges is_already_granted check
+
 * [#138](https://gitlab.com/gitlab-data/permifrost/-/issues/138)
 Validate spec file table entity per database instead per account
 
