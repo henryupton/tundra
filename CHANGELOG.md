@@ -10,6 +10,21 @@ Changelog](http://keepachangelog.com/).
 ---
 
 ### New
+
+
+### Changes
+
+
+### Fixes
+
+
+### Breaks
+
+
+## 0.15.0 - (2022-05-11)
+---
+
+### New
 * [#117](https://gitlab.com/gitlab-data/permifrost/-/issues/117)
 Adds support for suffix partial schema name
 
