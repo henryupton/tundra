@@ -17,7 +17,6 @@ def snowflake_connector_env():
 
 class TestSnowflakeConnector:
     def test_snowflaky(self):
-
         db1 = "analytics.schema.table"
         db2 = "1234raw.schema.table"
         db3 = '"123-with-quotes".schema.table'
@@ -402,6 +401,8 @@ class TestSnowflakeConnector:
             return_value=[
                 {"name": "TEST_ROLE", "owner": "SUPERADMIN"},
                 {"name": "SUPERADMIN", "owner": "SUPERADMIN"},
+                {"name": "ROLE WITH SPACES", "owner": "SUPERADMIN"},
+                {"name": "lowercase role with spaces", "owner": "SUPERADMIN"},
             ],
         )
 
@@ -410,6 +411,35 @@ class TestSnowflakeConnector:
         conn.run_query.assert_has_calls([mocker.call("SHOW ROLES")])
         assert roles["test_role"] == "superadmin"
         assert roles["superadmin"] == "superadmin"
+        assert roles['"ROLE WITH SPACES"'] == "superadmin"
+        assert roles['"lowercase role with spaces"'] == "superadmin"
+
+    def test_show_roles_granted_to_user(self, mocker):
+        mocker.patch("sqlalchemy.create_engine")
+        conn = SnowflakeConnector()
+        conn.run_query = mocker.MagicMock()
+        mocker.patch.object(
+            conn.run_query(),
+            "fetchall",
+            return_value=[
+                {"role": "TEST_ROLE"},
+                {"role": "SUPERADMIN"},
+                {"role": "ROLE WITH SPACES"},
+                {"role": "lowercase role with spaces"},
+            ],
+        )
+
+        roles_granted_to_user = conn.show_roles_granted_to_user("test_user")
+
+        expected_roles_granted_to_user = [
+            "test_role",
+            "superadmin",
+            '"ROLE WITH SPACES"',
+            '"lowercase role with spaces"',
+        ]
+
+        conn.run_query.assert_has_calls([mocker.call("SHOW GRANTS TO USER test_user")])
+        assert roles_granted_to_user == expected_roles_granted_to_user
 
     def test_show_grants_to_role(self, mocker):
         mocker.patch("sqlalchemy.create_engine")
