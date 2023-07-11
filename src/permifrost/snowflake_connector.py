@@ -264,7 +264,7 @@ class SnowflakeConnector:
         results = self.run_query(query).fetchall()
 
         for result in results:
-            roles.append(result["role"].lower())
+            roles.append(SnowflakeConnector.snowflaky(result["role"]))
 
         return roles
 
@@ -285,11 +285,12 @@ class SnowflakeConnector:
         results = self.run_query(query).fetchall()
 
         for result in results:
-            roles[result["name"].lower()] = result["owner"].lower()
+            roles[
+                SnowflakeConnector.snowflaky(result["name"])
+            ] = SnowflakeConnector.snowflaky(result["owner"])
         return roles
 
     def run_query(self, query: str):
-
         with self.engine.connect() as connection:
             logger.debug(f"Running query: {query}")
             result = connection.execute(query)
@@ -375,7 +376,6 @@ class SnowflakeConnector:
         new_name_parts = []
 
         for part in name_parts:
-
             # If already quoted, return as-is
             if re.match('^".*"$', part) is not None:
                 new_name_parts.append(part)
