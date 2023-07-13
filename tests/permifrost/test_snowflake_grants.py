@@ -1146,7 +1146,6 @@ class TestGenerateTableAndViewGrants:
         mocker,
         config,
     ):
-
         mocker.patch.object(SnowflakeConnector, "__init__", lambda x: None)
 
         # Generation of database grants should be identical while ignoring or not ignoring memberships
@@ -1752,7 +1751,6 @@ class TestGenerateDatabaseGrants:
         config,
         ignore_memberships,
     ):
-
         mocker.patch.object(SnowflakeConnector, "__init__", lambda x: None)
 
         mock_connector, test_database_config, expected, test_grants_to_role = config(
@@ -2126,7 +2124,6 @@ class TestGenerateTableAndViewRevokes:
         mocker,
         config,
     ):
-
         test_tables_config, test_grants_to_role, expected = config(mocker)
 
         mocker.patch.object(SnowflakeConnector, "__init__", lambda x: None)
@@ -2355,7 +2352,6 @@ class TestGenerateSchemaRevokes:
         mocker,
         config,
     ):
-
         test_schemas_config, test_grants_to_role, expected = config(mocker)
 
         mocker.patch.object(SnowflakeConnector, "__init__", lambda x: None)
@@ -2631,7 +2627,6 @@ class TestGenerateDatabaseRevokes:
         config,
         ignore_memberships,
     ):
-
         mocker.patch.object(SnowflakeConnector, "__init__", lambda x: None)
 
         mock_connector, test_database_config, expected, test_grants_to_role = config(

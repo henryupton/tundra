@@ -16,7 +16,7 @@ class SnowflakeSpecLoader:
     def __init__(
         self,
         spec_path: str,
-        conn: SnowflakeConnector = None,
+        conn: Optional[SnowflakeConnector] = None,
         roles: Optional[List[str]] = None,
         users: Optional[List[str]] = None,
         run_list: Optional[List[str]] = None,
@@ -62,7 +62,7 @@ class SnowflakeSpecLoader:
         )
 
     def check_permissions_on_snowflake_server(
-        self, conn: SnowflakeConnector = None
+        self, conn: Optional[SnowflakeConnector] = None
     ) -> None:
         if conn is None:
             conn = SnowflakeConnector()
@@ -200,7 +200,7 @@ class SnowflakeSpecLoader:
         return error_messages
 
     def check_entities_on_snowflake_server(  # noqa
-        self, conn: SnowflakeConnector = None
+        self, conn: Optional[SnowflakeConnector] = None
     ) -> None:
         """
         Make sure that all [warehouses, integrations, dbs, schemas, tables, users, roles]
@@ -328,7 +328,7 @@ class SnowflakeSpecLoader:
 
     def get_privileges_from_snowflake_server(
         self,
-        conn: SnowflakeConnector = None,
+        conn: Optional[SnowflakeConnector] = None,
         roles: Optional[List[str]] = None,
         users: Optional[List[str]] = None,
         run_list: Optional[List[str]] = None,

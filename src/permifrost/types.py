@@ -51,6 +51,16 @@ class UserSchemaBase(TypedDict):
 
 class UserSchema(UserSchemaBase, total=False):
     owner: str
+    has_password: bool
+    display_name: str
+    first_name: str
+    middle_name: str
+    last_name: str
+    email: str
+    comment: str
+    default_warehouse: str
+    default_namespace: str
+    default_role: str
 
 
 class WarehouseSchemaBase(TypedDict):

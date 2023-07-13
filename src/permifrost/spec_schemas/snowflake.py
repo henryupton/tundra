@@ -145,6 +145,36 @@ SNOWFLAKE_SPEC_USER_SCHEMA = """
         type: list
         schema:
             type: string
+    has_password:
+        type: boolean
+        required: False
+    display_name:
+        type: string
+        required: False
+    first_name:
+        type: string
+        required: False
+    middle_name:
+        type: string
+        required: False
+    last_name:
+        type: string
+        required: False
+    email:
+        type: string
+        required: False
+    comment:
+        type: string
+        required: False
+    default_warehouse:
+        type: string
+        required: False
+    default_namespace:
+        type: string
+        required: False
+    default_role:
+        type: string
+        required: False
     meta:
         type: dict
         required: False
