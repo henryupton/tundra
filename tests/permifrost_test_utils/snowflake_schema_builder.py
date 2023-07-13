@@ -42,6 +42,21 @@ class SnowflakeSchemaBuilder:
             spec_yaml.extend([f"  - {user['name']}:", "      can_login: yes"])
             if user["owner"] is not None:
                 spec_yaml.append(f"      owner: {user['owner']}")
+            for conf in [
+                "has_password",
+                "display_name",
+                "first_name",
+                "middle_name",
+                "last_name",
+                "email",
+                "comment",
+                "default_warehouse",
+                "default_namespace",
+                "default_role",
+            ]:
+                if user[conf] is not None:
+                    spec_yaml.append(f"      {conf}: {user[conf]}")
+
         if len(self.warehouses) > 0:
             spec_yaml.append("warehouses:")
         for warehouse in self.warehouses:
@@ -236,10 +251,10 @@ class SnowflakeSchemaBuilder:
     def add_role(
         self,
         name: str = "testrole",
-        owner: str = None,
-        member_of: List[str] = None,
+        owner: Optional[str] = None,
+        member_of: Optional[List[str]] = None,
         tables: List[str] = [],
-        permission_set: List[str] = None,
+        permission_set: Optional[List[str]] = None,
         member_of_include: Optional[List[str]] = None,
         member_of_exclude: Optional[List[str]] = None,
     ):
@@ -260,11 +275,40 @@ class SnowflakeSchemaBuilder:
         )
         return self
 
-    def add_user(self, name: str = "testusername", owner: str = None):
+    def add_user(
+        self,
+        name: str = "testusername",
+        owner: Optional[str] = None,
+        has_password: Optional[bool] = None,
+        display_name: Optional[str] = None,
+        first_name: Optional[str] = None,
+        middle_name: Optional[str] = None,
+        last_name: Optional[str] = None,
+        email: Optional[str] = None,
+        comment: Optional[str] = None,
+        default_warehouse: Optional[str] = None,
+        default_namespace: Optional[str] = None,
+        default_role: Optional[str] = None,
+    ):
         """
         Adds user to spec file
         """
-        self.users.append({"name": name, "owner": owner})
+        self.users.append(
+            {
+                "name": name,
+                "owner": owner,
+                "has_password": has_password,
+                "display_name": display_name,
+                "first_name": first_name,
+                "middle_name": middle_name,
+                "last_name": last_name,
+                "email": email,
+                "comment": comment,
+                "default_warehouse": default_warehouse,
+                "default_namespace": default_namespace,
+                "default_role": default_role,
+            }
+        )
         return self
 
     def add_db(self, name="testdb", owner=None):

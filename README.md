@@ -250,7 +250,7 @@ roles:
                 - database_name.schema_name.*
                 - database_name.schema_name.table_name
                 ...
-        
+
         meta:
             some_key: some_value
             ...
@@ -260,12 +260,25 @@ roles:
     ... ... ...
 
 # Users
+# can_login is required the rest of the parameters are optional
+# None of the values are validated in Snowflake, hence default_warehouse, default_namespace and default_role
+# can contain invalid values
 users:
     - user_name:
         can_login: boolean
         member_of:
             - role_name
             ...
+        has_password: boolean
+        display_name: string
+        first_name: string
+        middle_name: string
+        last_name: string
+        email: string
+        comment: string
+        default_warehouse: string
+        default_namespace: string
+        default_role: string
         meta:
             some_key: some_value
             ...
