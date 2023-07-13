@@ -663,7 +663,6 @@ class TestSnowflakeSpecLoader:
         assert expected_error in str(context.value)
 
     def test_remove_duplicate_queries(self):
-
         sql_command_1 = {"sql": "GRANT OWNERSHIP ON SCHEMA PIZZA TO ROLE LIZZY"}
         sql_command_2 = sql_command_1.copy()
         sql_command_3 = {"sql": "REVOKE ALL PRIVILEGES ON SCHEMA PIZZA FROM ROLE LIZZY"}
