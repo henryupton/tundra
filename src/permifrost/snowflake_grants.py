@@ -497,7 +497,6 @@ class SnowflakeGrantsGenerator:
         sql_commands: List[Dict] = []
 
         for integration in integrations:
-
             already_granted = self.is_granted_privilege(
                 role, "usage", "integration", integration
             )
@@ -734,7 +733,6 @@ class SnowflakeGrantsGenerator:
     def _generate_schema_read_grants(
         self, schemas, shared_dbs, role
     ) -> Tuple[List[Dict], List]:
-
         sql_commands = []
         read_grant_schemas = []
         read_privileges = "usage"
@@ -1099,7 +1097,6 @@ class SnowflakeGrantsGenerator:
             read_grant_views_full.append(future_database_view)
 
             if schema_name == "*" and table_view_name == "*":
-
                 # Tables
                 sql_commands.append(
                     {
@@ -1348,7 +1345,6 @@ class SnowflakeGrantsGenerator:
             write_grant_views_full.append(future_database_view)
 
             if schema_name == "*" and table_view_name == "*":
-
                 # Tables
                 sql_commands.append(
                     {
@@ -1509,7 +1505,6 @@ class SnowflakeGrantsGenerator:
             # We have this loop b/c we explicitly grant to each table
             # Instead of doing grant to all tables/views in schema
             for db_table in write_grant_tables:
-
                 table_already_granted = True
                 for privilege in write_privileges_array:
                     # If any of the privileges are not granted, set already_granted to False
@@ -1646,7 +1641,6 @@ class SnowflakeGrantsGenerator:
         all_grant_views: List[str],
         write_grant_tables_full: List[str],
     ) -> List[Dict[str, Any]]:
-
         read_privileges = "select"
         write_partial_privileges = "insert, update, delete, truncate, references"
         sql_commands = []
@@ -1783,6 +1777,26 @@ class SnowflakeGrantsGenerator:
                 alter_privileges.append("DISABLED = FALSE")
             else:
                 alter_privileges.append("DISABLED = TRUE")
+
+        if "has_password" in config:
+            if not config.get("has_password"):
+                alter_privileges.append("PASSWORD = NULL")
+        for conf in [
+            "display_name",
+            "first_name",
+            "middle_name",
+            "last_name",
+            "email",
+            "comment",
+            "default_warehouse",
+            "default_namespace",
+            "default_role",
+        ]:
+            if conf in config:
+                property_name = str.upper(conf)
+                property_value = config.get(conf)
+                alter_privileges.append(f"{property_name} = '{property_value}'")
+
         if alter_privileges:
             sql_commands.append(
                 {

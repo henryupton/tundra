@@ -2,7 +2,7 @@ import logging
 import os
 import re
 import warnings
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Optional, Union
 from urllib.parse import quote_plus
 
 import sqlalchemy
@@ -21,7 +21,7 @@ for logger_name in ["snowflake.connector", "bot", "boto3"]:
 
 
 class SnowflakeConnector:
-    def __init__(self, config: Dict = None) -> None:
+    def __init__(self, config: Optional[Dict] = None) -> None:
         if not config:
             config = {
                 "user": os.getenv("PERMISSION_BOT_USER"),
@@ -135,7 +135,7 @@ class SnowflakeConnector:
     def show_users(self) -> List[str]:
         return self.show_query("USERS")
 
-    def show_schemas(self, database: str = None) -> List[str]:
+    def show_schemas(self, database: Optional[str] = None) -> List[str]:
         names = []
 
         if database:
@@ -151,7 +151,9 @@ class SnowflakeConnector:
 
         return names
 
-    def show_tables(self, database: str = None, schema: str = None) -> List[str]:
+    def show_tables(
+        self, database: Optional[str] = None, schema: Optional[str] = None
+    ) -> List[str]:
         names = []
 
         if schema:
@@ -171,7 +173,9 @@ class SnowflakeConnector:
 
         return names
 
-    def show_views(self, database: str = None, schema: str = None) -> List[str]:
+    def show_views(
+        self, database: Optional[str] = None, schema: Optional[str] = None
+    ) -> List[str]:
         names = []
 
         if schema:
@@ -192,7 +196,7 @@ class SnowflakeConnector:
         return names
 
     def show_future_grants(
-        self, database: str = None, schema: str = None
+        self, database: Optional[str] = None, schema: Optional[str] = None
     ) -> Dict[str, Dict[str, Dict[str, List[str]]]]:
         future_grants: Dict[str, Any] = {}
 
