@@ -1,4 +1,4 @@
-from typing import Dict, List, Any
+from typing import Optional, Dict, List, Any
 from permifrost.snowflake_connector import SnowflakeConnector
 
 
@@ -18,16 +18,22 @@ class MockSnowflakeConnector(SnowflakeConnector):
     def show_users(self) -> List[str]:
         return []
 
-    def show_schemas(self, database: str = None) -> List[str]:
+    def show_schemas(self, database: Optional[str] = None) -> List[str]:
         return []
 
-    def show_tables(self, database: str = None, schema: str = None) -> List[str]:
+    def show_tables(
+        self, database: Optional[str] = None, schema: Optional[str] = None
+    ) -> List[str]:
         return []
 
-    def show_views(self, database: str = None, schema: str = None) -> List[str]:
+    def show_views(
+        self, database: Optional[str] = None, schema: Optional[str] = None
+    ) -> List[str]:
         return []
 
-    def show_future_grants(self, database: str = None, schema: str = None) -> List[str]:
+    def show_future_grants(
+        self, database: Optional[str] = None, schema: Optional[str] = None
+    ) -> List[str]:
         return []
 
     def show_grants_to_role(self, role) -> Dict[str, Any]:

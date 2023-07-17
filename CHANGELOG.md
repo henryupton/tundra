@@ -10,6 +10,8 @@ Changelog](http://keepachangelog.com/).
 ---
 
 ### New
+* [#111](https://gitlab.com/gitlab-data/permifrost/-/issues/111)
+Adds support to customise the user object
 
 
 ### Changes
