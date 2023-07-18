@@ -364,6 +364,7 @@ class SnowflakeConnector:
         e.g. gitlab-ci --> "gitlab-ci"
              527-INVESTIGATE$ISSUES.ANALYTICS.COUNTRY_CODES -->
              --> "527-INVESTIGATE$ISSUES".ANALYTICS.COUNTRY_CODES;
+             DEPARTMENT - DATA --> "DEPARTMENT - DATA"
 
         Pronounced /snəʊfleɪkɪ/ like saying very fast snowflak[e and clarif]y
         Permission granted to use snowflaky as a verb.
