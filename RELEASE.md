@@ -3,12 +3,12 @@
 
 ## When to release
 
-* Usually, will kick off the release `2` times per year (each `6` months). Do not want to be strict, probably `September` and `March` are good options. The person who is maintainer for the week will proceed with the new version release process
+* We plan to kick off the release `2` times per year (each `6` months). This is not a strict timeline, but we'll probably release in `September` and `March`.
 
 ### Pre-requirements
 
 Check list:
-* [ ] Create an issue with [Releasing update.md](https://gitlab.com/gitlab-data/permifrost/-/blob/master/.gitlab/issue_templates/Releasing%20update.md) template and following the checklist.
+* [ ] Create an issue with the [Releasing update](https://gitlab.com/gitlab-data/permifrost/-/blob/master/.gitlab/issue_templates/Releasing%20update.md) template and following the checklist.
 
 
 ## Who to release
