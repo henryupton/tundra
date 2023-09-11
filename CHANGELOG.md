@@ -24,7 +24,7 @@ Adds support to customise the user object
 
 
 
-## 0.15.0 - (2023-09-06)
+## 0.15.0 - (2023-09-11)
 ---
 
 ### New
