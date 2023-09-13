@@ -10,21 +10,20 @@ Changelog](http://keepachangelog.com/).
 ---
 
 ### New
-* [#111](https://gitlab.com/gitlab-data/permifrost/-/issues/111)
-Adds support to customise the user object
-
 
 ### Changes
 
-
 ### Fixes
-
 
 ### Breaks
 
 
-## 0.15.0 - (2022-05-11)
----
+### New
+* [#111](https://gitlab.com/gitlab-data/permifrost/-/issues/111)
+Adds support to customise the user object
+
+
+## 0.15.1 - (2023-09-11)
 
 ### New
 * [#117](https://gitlab.com/gitlab-data/permifrost/-/issues/117)
@@ -41,26 +40,51 @@ Adds support for object meta data
 for `db.*.*` or `db.schema.*` in spec file.
 
 ### Fixes
-* [#126](https://gitlab.com/gitlab-data/permifrost/-/issues/126)
-Fix bug in spec validation / missing entity checks
 
-* [!127](https://gitlab.com/gitlab-data/permifrost/-/merge_requests/127)
-Fix views future privileges is_already_granted check
+* [!132](https://gitlab.com/gitlab-data/permifrost/-/merge_requests/132)
+Add fix to changelog
+
+* [!131](https://gitlab.com/gitlab-data/permifrost/-/merge_requests/131)
+fix-gitlab-ref-in-changelog
+
+* [!130](https://gitlab.com/gitlab-data/permifrost/-/merge_requests/130)
+fix-change-log-errors
+
+* [!129](https://gitlab.com/gitlab-data/permifrost/-/merge_requests/129)
+Fix typo
+
+* [#139](https://gitlab.com/gitlab-data/permifrost/-/issues/139)
+Write privileges at tables level on future objects are not detected by permifrost
 
 * [#138](https://gitlab.com/gitlab-data/permifrost/-/issues/138)
 Validate spec file table entity per database instead per account
 
+* [#126](https://gitlab.com/gitlab-data/permifrost/-/issues/126)
+Fix bug in spec validation / missing entity checks
+
 * [#125](https://gitlab.com/gitlab-data/permifrost/-/issues/125)
 Skip generation of write privileges for already-granted <database_or_schema>.* privileges
 
-* [#52](https://gitlab.com/gitlab-data/permifrost/-/issues/52)
+* [#123](https://gitlab.com/gitlab-data/permifrost/-/merge_requests/123)
+Add ability to add meta data to objects in permifrost.yml
+
+* [#122](https://gitlab.com/gitlab-data/permifrost/-/issues/122)
+Explicitly mention the spec file must be lowercase
+
+* [#120](https://gitlab.com/gitlab-data/permifrost/-/merge_requests/120)
+Fix: Query Tables per database instead of account
+
+* [#119](https://gitlab.com/gitlab-data/permifrost/-/merge_requests/119)
 Fix handling of delimited object identifiers
 
 * [#117](https://gitlab.com/gitlab-data/permifrost/-/issues/117)
 Remove `information_schema` of fetched schemas in case of partial schema name input
 
-* [#122](https://gitlab.com/gitlab-data/permifrost/-/issues/122)
-Explicitly mention the spec file must be lowercase
+* [#111](https://gitlab.com/gitlab-data/permifrost/-/issues/111)
+Add user details
+
+* [#52](https://gitlab.com/gitlab-data/permifrost/-/issues/52)
+Fix handling of delimited object identifiers
 
 ### Breaks
 
