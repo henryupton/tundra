@@ -12,8 +12,11 @@
 - [ ] PyPi Deployment:
     - **If no changes were required:** Upon approval, merge the MR on GitLab and run `git push origin --tags` locally. After CI completes, the new release should now be on PyPi
     - **If changes were required:** Upon approval, merge the MR on GitLab, generate a new tag locally with `git tag -a v<x.x.x> -m "Bump version: <current> -> <update>"` and run `git push origin --tags`. 
-- [ ] Create a tag for the new version `Code -> Tag -New tag`. Name tag with your latest version number (ie `0.15.`) and save it. 
-- [ ] CI for deployment will be triggered automatically. After CI is completed, the new release should now be on PyPi  
+- [ ] Create a tag for the new version `Code -> Tag -New tag`. Name tag with your latest version number (ie `0.15.1`) and save it.
+  ![create_tag.png](images%2Fcreate_tag.png)
+- Once when tag is created, press button `Create release` and add details for release in the `Permifrost` repo
+- [ ] CI for deployment will be triggered automatically. After CI is completed, the new release should now be on PyPi
+
 
 ### Announce
 - [ ] Send out an announcement in GitLab communications
