@@ -268,7 +268,7 @@ class SnowflakeConnector:
         results = self.run_query(query).fetchall()
 
         for result in results:
-            roles.append(result["role"].lower())
+            roles.append(SnowflakeConnector.snowflaky(result["role"]))
 
         return roles
 
@@ -289,7 +289,9 @@ class SnowflakeConnector:
         results = self.run_query(query).fetchall()
 
         for result in results:
-            roles[result["name"].lower()] = result["owner"].lower()
+            roles[
+                SnowflakeConnector.snowflaky(result["name"])
+            ] = SnowflakeConnector.snowflaky(result["owner"])
         return roles
 
     def run_query(self, query: str):
@@ -362,6 +364,7 @@ class SnowflakeConnector:
         e.g. gitlab-ci --> "gitlab-ci"
              527-INVESTIGATE$ISSUES.ANALYTICS.COUNTRY_CODES -->
              --> "527-INVESTIGATE$ISSUES".ANALYTICS.COUNTRY_CODES;
+             DEPARTMENT - DATA --> "DEPARTMENT - DATA"
 
         Pronounced /snəʊfleɪkɪ/ like saying very fast snowflak[e and clarif]y
         Permission granted to use snowflaky as a verb.

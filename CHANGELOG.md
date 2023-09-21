@@ -10,6 +10,11 @@ Changelog](http://keepachangelog.com/).
 ---
 
 ### New
+* [#169](https://gitlab.com/gitlab-data/permifrost/-/issues/169)
+Adds support for roles containing spaces.
+* [#111](https://gitlab.com/gitlab-data/permifrost/-/issues/111)
+Adds support to customise the user object
+
 
 ### Changes
 
