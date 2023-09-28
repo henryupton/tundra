@@ -20,6 +20,9 @@ Adds support to customise the user object
 
 ### Fixes
 
+*[#51](https://gitlab.com/gitlab-data/permifrost/-/issues/51)
+Fix error when object name is a reserved keyword
+
 ### Breaks
 
 
