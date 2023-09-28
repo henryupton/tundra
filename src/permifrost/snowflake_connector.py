@@ -2,7 +2,7 @@ import logging
 import os
 import re
 import warnings
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Set, Union
 from urllib.parse import quote_plus
 
 import sqlalchemy
@@ -389,15 +389,15 @@ class SnowflakeConnector:
             elif re.match("<(table|view|schema)>", part, re.IGNORECASE) is not None:
                 new_name_parts.append(part.lower())
 
-            # If does not meet requirements for unquoted object identifiers, add double-quotes
-            # See https://docs.snowflake.com/en/sql-reference/identifiers-syntax.html for what those requirements are
+            # If does not meet requirements for unquoted object identifiers or collides with reserved keywords,
+            # add double-quotes. See https://docs.snowflake.com/en/sql-reference/identifiers-syntax.html for what
+            # those requirements are and https://docs.snowflake.com/en/sql-reference/reserved-keywords for keywords
             elif (
                 re.match("^[a-z_][0-9a-z_$]*$", part) is None
                 and re.match("^[A-Z_][0-9A-Z_$]*$", part) is None
-            ):
+            ) or part.lower() in SnowflakeConnector.reserved_keywords():
                 new_name_parts.append(f'"{part}"')
 
-            # Otherwise assume valid unquoted, case-insensitive object identifier and return in lowercase
             else:
                 new_name_parts.append(part.lower())
 
@@ -422,3 +422,99 @@ class SnowflakeConnector:
             name = f'"{name}"'
 
         return name
+
+    @staticmethod
+    def reserved_keywords() -> Set[str]:
+        return {
+            "account",
+            "all",
+            "alter",
+            "and",
+            "any",
+            "as",
+            "between",
+            "by",
+            "case",
+            "cast",
+            "check",
+            "column",
+            "connect",
+            "connection",
+            "constraint",
+            "create",
+            "cross",
+            "current",
+            "current_date",
+            "current_time",
+            "current_timestamp",
+            "current_user",
+            "database",
+            "delete",
+            "distinct",
+            "drop",
+            "else",
+            "exists",
+            "false",
+            "following",
+            "for",
+            "from",
+            "full",
+            "grant",
+            "group",
+            "gscluster",
+            "having",
+            "ilike",
+            "in",
+            "increment",
+            "inner",
+            "insert",
+            "intersect",
+            "into",
+            "is",
+            "issue",
+            "join",
+            "lateral",
+            "left",
+            "like",
+            "localtime",
+            "localtimestamp",
+            "minus",
+            "natural",
+            "not",
+            "null",
+            "of",
+            "on",
+            "or",
+            "order",
+            "organization",
+            "qualify",
+            "regexp",
+            "revoke",
+            "right",
+            "rlike",
+            "row",
+            "rows",
+            "sample",
+            "schema",
+            "select",
+            "set",
+            "some",
+            "start",
+            "table",
+            "tablesample",
+            "then",
+            "to",
+            "trigger",
+            "true",
+            "try_cast",
+            "union",
+            "unique",
+            "update",
+            "using",
+            "values",
+            "view",
+            "when",
+            "whenever",
+            "where",
+            "with",
+        }

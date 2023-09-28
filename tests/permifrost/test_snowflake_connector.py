@@ -1,7 +1,7 @@
-import pytest
 import os
-import sqlalchemy
 
+import pytest
+import sqlalchemy
 from permifrost.snowflake_connector import SnowflakeConnector
 
 
@@ -34,11 +34,12 @@ class TestSnowflakeConnector:
         db15 = "DATABASE_1.1_LEADING_DIGIT.<table>"
         db16 = "DATABASE_1.SCHEMA_1.TABLE_1.AMBIGUOUS_IDENTIFIER"
         db17 = 'DATABASE_1.SCHEMA_1."TABLE_1.AMBIGUOUS_IDENTIFIER"'
+        db18 = "DATABASE_1.SCHEMA_1.GROUP"
 
-        assert SnowflakeConnector.snowflaky(db1) == "analytics.schema.table"
-        assert SnowflakeConnector.snowflaky(db2) == '"1234raw".schema.table'
-        assert SnowflakeConnector.snowflaky(db3) == '"123-with-quotes".schema.table'
-        assert SnowflakeConnector.snowflaky(db4) == '"1_db-9-RANDOM".schema.table'
+        assert SnowflakeConnector.snowflaky(db1) == 'analytics."schema"."table"'
+        assert SnowflakeConnector.snowflaky(db2) == '"1234raw"."schema"."table"'
+        assert SnowflakeConnector.snowflaky(db3) == '"123-with-quotes"."schema"."table"'
+        assert SnowflakeConnector.snowflaky(db4) == '"1_db-9-RANDOM"."schema"."table"'
         assert SnowflakeConnector.snowflaky(db5) == "database_1.schema_1.table_1"
         assert SnowflakeConnector.snowflaky(db6) == "database_1.schema_1.table$a"
         assert SnowflakeConnector.snowflaky(db7) == 'database_1.schema_1."GROUP"'
@@ -75,6 +76,8 @@ class TestSnowflakeConnector:
         with pytest.warns(SyntaxWarning):
             SnowflakeConnector.snowflaky(db16)
             SnowflakeConnector.snowflaky(db17)
+
+        assert SnowflakeConnector.snowflaky(db18) == 'database_1.schema_1."GROUP"'
 
     def test_uses_oauth_if_available(self, mocker, snowflake_connector_env):
         mocker.patch("sqlalchemy.create_engine")
