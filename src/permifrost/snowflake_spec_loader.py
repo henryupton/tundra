@@ -51,12 +51,11 @@ class SnowflakeSpecLoader:
         # Get the privileges granted to users and roles in the Snowflake account
         # Used in order to figure out which permissions in the spec file are
         #  new ones and which already exist (and there is no need to re-grant them)
-        click.secho("Fetching granted privileges from Snowflake", fg="green")
-
         self.grants_to_role: Dict[str, Any] = {}
         self.roles_granted_to_user: Dict[str, Any] = {}
 
         if not spec_test:
+            click.secho("Fetching granted privileges from Snowflake", fg="green")
             self.get_privileges_from_snowflake_server(
                 conn,
                 roles=roles,
