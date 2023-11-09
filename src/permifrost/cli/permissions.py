@@ -131,6 +131,7 @@ def load_specs(spec, role, user, run_list, ignore_memberships):
             users=user,
             run_list=run_list,
             ignore_memberships=ignore_memberships,
+            spec_test=True,
         )
         click.secho("Snowflake specs successfully loaded", fg="green")
     except SpecLoadingError as exc:
