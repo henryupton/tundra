@@ -21,6 +21,7 @@ class SnowflakeSpecLoader:
         users: Optional[List[str]] = None,
         run_list: Optional[List[str]] = None,
         ignore_memberships: Optional[bool] = False,
+        spec_test: Optional[bool] = False,
     ) -> None:
         run_list = run_list or ["users", "roles"]
         # Load the specification file and check for (syntactical) errors
@@ -50,16 +51,18 @@ class SnowflakeSpecLoader:
         # Get the privileges granted to users and roles in the Snowflake account
         # Used in order to figure out which permissions in the spec file are
         #  new ones and which already exist (and there is no need to re-grant them)
-        click.secho("Fetching granted privileges from Snowflake", fg="green")
         self.grants_to_role: Dict[str, Any] = {}
         self.roles_granted_to_user: Dict[str, Any] = {}
-        self.get_privileges_from_snowflake_server(
-            conn,
-            roles=roles,
-            users=users,
-            run_list=run_list,
-            ignore_memberships=ignore_memberships,
-        )
+
+        if not spec_test:
+            click.secho("Fetching granted privileges from Snowflake", fg="green")
+            self.get_privileges_from_snowflake_server(
+                conn,
+                roles=roles,
+                users=users,
+                run_list=run_list,
+                ignore_memberships=ignore_memberships,
+            )
 
     def check_permissions_on_snowflake_server(
         self, conn: Optional[SnowflakeConnector] = None
