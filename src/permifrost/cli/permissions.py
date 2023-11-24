@@ -112,14 +112,21 @@ def run(ctx, spec, dry, diff, role, user, ignore_memberships, print_skipped=Fals
     default=["roles", "users"],
     help="Run grants for specific users. Usage: --user testuser --user testuser2.",
 )
-def spec_test(spec, role, user, ignore_memberships, run_list):
+def spec_test(spec, roles, users, run_list, ignore_memberships):
     """
     Load SnowFlake spec based on the roles.yml provided. CLI use only for confirming specifications are valid.
     """
-    load_specs(spec, role, user, run_list, ignore_memberships)
+    load_specs(
+            spec,
+            role=roles,
+            user=users,
+            run_list=run_list,
+            ignore_memberships=ignore_memberships,
+            do_spec_test=True,
+    )
 
 
-def load_specs(spec, role, user, run_list, ignore_memberships):
+def load_specs(spec, role, user, run_list, ignore_memberships, do_spec_test):
     """
     Load specs separately.
     """
@@ -131,7 +138,7 @@ def load_specs(spec, role, user, run_list, ignore_memberships):
             users=user,
             run_list=run_list,
             ignore_memberships=ignore_memberships,
-            spec_test=True,
+            spec_test=do_spec_test,
         )
         click.secho("Snowflake specs successfully loaded", fg="green")
     except SpecLoadingError as exc:
@@ -152,6 +159,7 @@ def permifrost_grants(
         user=users,
         run_list=run_list,
         ignore_memberships=ignore_memberships,
+        do_spec_test=False,
     )
 
     sql_grant_queries = spec_loader.generate_permission_queries(
