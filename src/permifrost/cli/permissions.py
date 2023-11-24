@@ -112,14 +112,14 @@ def run(ctx, spec, dry, diff, role, user, ignore_memberships, print_skipped=Fals
     default=["roles", "users"],
     help="Run grants for specific users. Usage: --user testuser --user testuser2.",
 )
-def spec_test(spec, roles, users, run_list, ignore_memberships):
+def spec_test(spec, role, user, run_list, ignore_memberships):
     """
     Load SnowFlake spec based on the roles.yml provided. CLI use only for confirming specifications are valid.
     """
     load_specs(
         spec,
-        role=roles,
-        user=users,
+        role=role,
+        user=user,
         run_list=run_list,
         ignore_memberships=ignore_memberships,
         do_spec_test=True,
