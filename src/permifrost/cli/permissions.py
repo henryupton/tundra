@@ -117,12 +117,12 @@ def spec_test(spec, roles, users, run_list, ignore_memberships):
     Load SnowFlake spec based on the roles.yml provided. CLI use only for confirming specifications are valid.
     """
     load_specs(
-            spec,
-            role=roles,
-            user=users,
-            run_list=run_list,
-            ignore_memberships=ignore_memberships,
-            do_spec_test=True,
+        spec,
+        role=roles,
+        user=users,
+        run_list=run_list,
+        ignore_memberships=ignore_memberships,
+        do_spec_test=True,
     )
 
 
