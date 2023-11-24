@@ -1,4 +1,4 @@
-FROM python:3.10.3
+FROM python:3.8
 
 RUN echo "Installing system deps" \
     && apt-get update \
