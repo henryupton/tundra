@@ -19,19 +19,12 @@ Changelog](http://keepachangelog.com/).
 ### New
 * [#169](https://gitlab.com/gitlab-data/permifrost/-/issues/169)
 Adds support for roles containing spaces.
-* [#111](https://gitlab.com/gitlab-data/permifrost/-/issues/111)
-Adds support to customise the user object
-
-* [#111](https://gitlab.com/gitlab-data/permifrost/-/issues/111)
-Adds support to customise the user object
 
 ### Fixes
-
 *[#51](https://gitlab.com/gitlab-data/permifrost/-/issues/51)
 Fix error when object name is a reserved keyword
 
 ### Changes
-
 * [#138](https://gitlab.com/gitlab-data/permifrost/-/merge_requests/138)
 Removes unnecessary operations from the spec test process to improve performance
 
