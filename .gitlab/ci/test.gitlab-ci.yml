@@ -18,8 +18,10 @@ pytest:
   script:
     - pytest -v --cov-report= --cov permifrost -m "$PYTEST_MARKERS"
     - coverage report
-    - coverage html
+    - coverage xml
+  coverage: '/TOTAL.*\s+(\d+%)$/'
   artifacts:
-    paths:
-      - htmlcov/
-    when: on_success
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
