@@ -14,6 +14,9 @@ Changelog](http://keepachangelog.com/).
 
 ### Changes
 
+## 0.15.4 - (2023-12-04)
+* Moves built in docker version to 3.10.3 as well as updating some python libraries. 
+
 ## 0.15.2 - (2023-11-20)
 
 ### New
