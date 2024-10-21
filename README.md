@@ -321,6 +321,38 @@ that we are using for testing `permifrost permissions`.
 
 Note: The spec file must all be in lowercase.
 
+### Spec file inheritance/inclusion
+
+To achieve better organization, you can include content from other YML files into your spec file using the `!include` format.
+
+For example, the following imports the content of a `warehouses.yml` file (among others) into `snowflake_spec.yml`
+
+```yml
+# warehouses.yml
+
+- wh_loading:
+    size: x-small
+    auto_suspend: 600
+    auto_resume: true
+    initially_suspended: true
+```
+
+```yml
+# snowflake_spec.yml
+
+# Databases
+databases: !include databases.yml
+
+# Warehouses
+warehouses: !include warehouses.yml
+
+# Roles
+roles: !include roles.yml
+
+# Users
+users: !include users.yml
+```
+
 ### Settings
 
 All settings are declared here with their default values and are described
