@@ -2,10 +2,12 @@ import logging
 import os
 import re
 import warnings
+from functools import lru_cache
 from typing import Any, Dict, List, Optional, Set, Union
 from urllib.parse import quote_plus
 
 import sqlalchemy
+import sqlalchemy.pool
 
 # To support key pair authentication
 from cryptography.hazmat.backends import default_backend
@@ -21,7 +23,9 @@ for logger_name in ["snowflake.connector", "bot", "boto3"]:
 
 
 class SnowflakeConnector:
-    def __init__(self, config: Optional[Dict] = None) -> None:
+    def __init__(self, config: Optional[Dict] = None, pool_size: int = 32) -> None:
+        self._connection = None
+        self._engine_kwargs = {"pool_size": pool_size, "max_overflow": 0}
         if not config:
             config = {
                 "user": os.getenv("PERMISSION_BOT_USER"),
@@ -44,7 +48,8 @@ class SnowflakeConnector:
                     authenticator="oauth",
                     token=config["oauth_token"],
                     warehouse=config["warehouse"],
-                )
+                ),
+                **self._engine_kwargs,
             )
         elif config["key_path"] is not None:
             pkb = self.generate_private_key(
@@ -59,6 +64,7 @@ class SnowflakeConnector:
                     warehouse=config["warehouse"],
                 ),
                 connect_args={"private_key": pkb},
+                **self._engine_kwargs,
             )
 
         elif config["authenticator"] is not None:
@@ -71,6 +77,7 @@ class SnowflakeConnector:
                     warehouse=config["warehouse"],
                     authenticator=config["authenticator"],
                 ),
+                **self._engine_kwargs,
             )
         else:
             if not config["user"]:
@@ -87,7 +94,8 @@ class SnowflakeConnector:
                     warehouse=config["warehouse"],
                     # Enable the insecure_mode if you get OCSP errors while testing
                     # insecure_mode=True,
-                )
+                ),
+                **self._engine_kwargs,
             )
 
     def generate_private_key(
@@ -107,6 +115,7 @@ class SnowflakeConnector:
             encryption_algorithm=serialization.NoEncryption(),
         )
 
+    @lru_cache(maxsize=4)
     def show_query(self, entity) -> List[str]:
         names = []
 
@@ -135,6 +144,7 @@ class SnowflakeConnector:
     def show_users(self) -> List[str]:
         return self.show_query("USERS")
 
+    @lru_cache(maxsize=128)
     def show_schemas(self, database: Optional[str] = None) -> List[str]:
         names = []
 
@@ -151,6 +161,7 @@ class SnowflakeConnector:
 
         return names
 
+    @lru_cache(maxsize=128)
     def show_tables(
         self, database: Optional[str] = None, schema: Optional[str] = None
     ) -> List[str]:
@@ -173,6 +184,7 @@ class SnowflakeConnector:
 
         return names
 
+    @lru_cache(maxsize=128)
     def show_views(
         self, database: Optional[str] = None, schema: Optional[str] = None
     ) -> List[str]:
@@ -195,6 +207,7 @@ class SnowflakeConnector:
 
         return names
 
+    @lru_cache(maxsize=128)
     def show_future_grants(
         self, database: Optional[str] = None, schema: Optional[str] = None
     ) -> Dict[str, Dict[str, Dict[str, List[str]]]]:
@@ -224,6 +237,7 @@ class SnowflakeConnector:
 
         return future_grants
 
+    @lru_cache(maxsize=128)
     def show_grants_to_role(self, role) -> Dict[str, Any]:
         grants: Dict[str, Any] = {}
         if role in ["*", '"*"']:
@@ -243,6 +257,7 @@ class SnowflakeConnector:
 
         return grants
 
+    @lru_cache(maxsize=128)
     def show_grants_to_role_with_grant_option(self, role) -> Dict[str, Any]:
         grants: Dict[str, Any] = {}
 
@@ -261,6 +276,7 @@ class SnowflakeConnector:
 
         return grants
 
+    @lru_cache(maxsize=128)
     def show_roles_granted_to_user(self, user) -> List[str]:
         roles = []
 
@@ -272,16 +288,19 @@ class SnowflakeConnector:
 
         return roles
 
+    @lru_cache(maxsize=1)
     def get_current_user(self) -> str:
         query = "SELECT CURRENT_USER() AS USER"
         result = self.run_query(query).fetchone()
         return result["user"].lower()
 
+    @lru_cache(maxsize=1)
     def get_current_role(self) -> str:
         query = "SELECT CURRENT_ROLE() AS ROLE"
         result = self.run_query(query).fetchone()
         return result["role"].lower()
 
+    @lru_cache(maxsize=1)
     def show_roles(self) -> Dict[str, str]:
         roles = {}
 
@@ -301,6 +320,7 @@ class SnowflakeConnector:
 
         return result
 
+    @lru_cache(maxsize=128)
     def full_schema_list(self, schema: str) -> List[str]:
         """
         For a given schema name, get all schemas it may be referencing.
