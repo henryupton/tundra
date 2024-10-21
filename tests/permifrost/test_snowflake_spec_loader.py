@@ -1,15 +1,13 @@
-import os
-from concurrent.futures import ThreadPoolExecutor
-from unittest.mock import Mock, patch
-
 import pytest
-from permifrost_test_utils.snowflake_connector import MockSnowflakeConnector
-from permifrost_test_utils.snowflake_schema_builder import SnowflakeSchemaBuilder
+import os
 
 from permifrost import SpecLoadingError
+from permifrost.snowflake_spec_loader import SnowflakeSpecLoader
 from permifrost.snowflake_connector import SnowflakeConnector
 from permifrost.snowflake_grants import SnowflakeGrantsGenerator
-from permifrost.snowflake_spec_loader import SnowflakeSpecLoader
+from permifrost_test_utils.snowflake_schema_builder import SnowflakeSchemaBuilder
+from permifrost_test_utils.snowflake_connector import MockSnowflakeConnector
+
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 SPEC_FILE_DIR = os.path.join(THIS_DIR, "specs")
@@ -30,13 +28,6 @@ def test_dir(request):
 @pytest.fixture
 def mock_connector():
     return MockSnowflakeConnector()
-
-
-@pytest.fixture
-def mock_tpe():
-    mock_executor = Mock(spec=ThreadPoolExecutor)
-    mock_executor.submit.side_effect = lambda func: func()
-    return mock_executor
 
 
 @pytest.fixture
@@ -693,13 +684,6 @@ class TestSnowflakeSpecLoader:
         SnowflakeSpecLoader(filepath, mock_connector)
 
         mock_open.assert_called_once_with(filepath, "r")
-
-    @patch("concurrent.futures.ThreadPoolExecutor", side_effect=mock_tpe)
-    def test_snowflake_spec_loader_with_tpe(mock_tpe, mock_connector):
-        loader = SnowflakeSpecLoader(mock_connector)
-
-        # Assert that loader.tpe is an instance of ThreadPoolExecutor
-        assert isinstance(loader.tpe, ThreadPoolExecutor)
 
 
 class TestSnowflakeSpecLoaderWithOwner:
