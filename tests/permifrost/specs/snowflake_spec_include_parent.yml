@@ -1,0 +1,38 @@
+version: "1.0"
+require-owner: true
+
+# Databases
+databases:
+  - demo:
+      shared: no
+  - shared_demo:
+      shared: yes
+
+# Roles
+roles: !include snowflake_spec_include_child.yml
+
+# Users
+users:
+  - airflow_demo:
+      can_login: yes
+      member_of:
+        - demo
+
+  - dbt_demo:
+      can_login: yes
+      member_of:
+        - demo
+
+# Warehouses
+warehouses:
+  - loading:
+      size: x-small
+
+  - reporting:
+      size: x-small
+
+  - transforming:
+      size: x-small
+
+  - demo:
+      size: x-small

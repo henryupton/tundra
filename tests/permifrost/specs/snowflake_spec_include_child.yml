@@ -1,0 +1,62 @@
+## Admin Roles
+- accountadmin:
+    warehouses:
+      - loading
+    member_of:
+      - sysadmin
+      - securityadmin
+
+- securityadmin:
+    warehouses:
+      - loading
+    member_of:
+      - useradmin
+
+- useradmin:
+    warehouses:
+      - loading
+
+- sysadmin:
+    warehouses:
+      - loading
+      - transforming
+      - reporting
+    member_of:
+      include:
+        - "*"
+      exclude:
+        - accountadmin
+
+
+
+- demo:
+    warehouses:
+      - demo
+    owns:
+      schemas:
+        - demodb.*
+      tables:
+        - demodb.*.*
+    privileges:
+      databases:
+        read:
+          - demodb
+          - demodb2
+        write:
+          - demodb
+      schemas:
+        read:
+          - demodb.*
+          - demodb2.*
+          - demodb3.read_only_schema
+        write:
+          - demodb.*
+          - demodb4.write_schema
+      tables:
+        read:
+          - demodb.*.*
+          - demodb2.*.*
+          - demodb5.demo_schema.demo_table
+        write:
+          - demodb.*.*
+          - demodb6.demo_schema.demo_table
