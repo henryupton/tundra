@@ -1,6 +1,7 @@
-from typing import Dict, List
+from typing import Any, Dict, List
 
 import cerberus
+import os
 import yaml
 
 from permifrost.error import SpecLoadingError
@@ -15,6 +16,22 @@ from permifrost.spec_schemas.snowflake import (
 from permifrost.types import PermifrostSpecSchema
 
 VALIDATION_ERR_MSG = 'Spec error: {} "{}", field "{}": {}'
+
+
+def construct_include(loader, node) -> Any:
+    """Include file referenced at node."""
+    filename = os.path.abspath(
+        os.path.join(
+            os.path.split(loader.stream.name)[0], loader.construct_scalar(node)
+        )
+    )
+    extension = os.path.splitext(filename)[1].lstrip(".")
+    with open(filename, "r") as f:
+        if extension in ("yaml", "yml"):
+            return yaml.safe_load(f)
+
+
+yaml.SafeLoader.add_constructor("!include", construct_include)
 
 
 def ensure_valid_schema(spec: Dict) -> List[str]:
