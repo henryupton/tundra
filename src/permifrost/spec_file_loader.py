@@ -1,7 +1,7 @@
+import os
 from typing import Any, Dict, List
 
 import cerberus
-import os
 import yaml
 
 from permifrost.error import SpecLoadingError
