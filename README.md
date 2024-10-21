@@ -45,7 +45,6 @@ Options:
 ```
 
 Use this utility command to run the SnowFlake specification loader to confirm that your `roles.yml` file is valid.
-
 ```bash
 permifrost [-v] spec-test <spec_file> [--role] [--user] [--ignore-memberships]
 ```
@@ -69,7 +68,6 @@ Options:
 
   --help                Show this message and exit.
 ```
-
 Given the parameters to connect to a Snowflake account and a YAML file (a
 "spec") representing the desired database configuration, this command makes sure
 that the configuration of that database matches the spec. If there are
@@ -87,8 +85,7 @@ Lastly, note that the default roles cannot have their role hierarchies modified.
 For example:
 
 ```yaml
-
----
+...
 roles:
   public:
     member_of:
@@ -96,8 +93,8 @@ roles:
   securityadmin:
     member_of:
       - useradmin
+...
 ```
-
 Both of the above relationships will be skipped as this attempts to modify a default Snowflake permission structure which would generate an error on attempting to implement.
 
 Permifrost is heavily inspired by
@@ -123,13 +120,14 @@ database and schema.
 Please find below the links between Permifrost permissions and Snowflake grants.
 
 | Objects   | Permifrost permissions | Snowflake grants                                                                                                    |
-| --------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------- |
+|-----------|------------------------|---------------------------------------------------------------------------------------------------------------------|
 | Databases | read                   | usage                                                                                                               |
 |           | write                  | monitor, create schema                                                                                              |
 | Schemas   | read                   | usage                                                                                                               |
 |           | write                  | monitor, create table, create view, create stage, create file format, create sequence, create function, create pipe |
 | Table     | read                   | select                                                                                                              |
 |           | write                  | insert, update, delete, truncate, references                                                                        |
+
 
 Tables and views are listed under `tables` and handled properly behind the
 scenes.
@@ -380,10 +378,6 @@ running them manually.
 When this flag is not set, the commands will be executed on Snowflake and their
 status will be returned and shown on the command line.
 
-## --parallel :int:
-
-When this flag is set, Snowflake grants run in parallel. It receives N amount of threads to use.
-
 ## Connection Parameters
 
 The following environmental variables must be available to connect to Snowflake:
@@ -472,20 +466,19 @@ For committing work-in-progress changes use `git commit --no-verify -m "WIP:
 <message>"`.
 
 For committing finalized changes, the below workflow will identify errors and allow for easier development:
-
-- Make your changes and `git add <file name(s)>`
-- `git commit` to identify/format errors in the changed files
-  - Repeat the following steps until all checks pass
-  - `git add <file name(s)>`
-  - `git commit`
-- Add message at the prompt and save/exit the commit file
-- When you are ready to push changes to the remote host, run `git push origin <branch name>`. This will perform additional linting/formatting checks.
-  - Repeat the following steps until all checks pass
-  - `git push origin <branch name>`
-  - `git add <file name(s)>`
-  - `git commit`
-- Add message at the prompt and save/exit the commit file
-- `git push origin <branch name>` until all checks pass
+* Make your changes and `git add <file name(s)>`
+* `git commit` to identify/format errors in the changed files
+    * Repeat the following steps until all checks pass
+    * `git add <file name(s)>`
+    * `git commit`
+* Add message at the prompt and save/exit the commit file
+* When you are ready to push changes to the remote host, run `git push origin <branch name>`. This will perform additional linting/formatting checks.
+    * Repeat the following steps until all checks pass
+    * `git push origin <branch name>`
+    * `git add <file name(s)>`
+    * `git commit`
+* Add message at the prompt and save/exit the commit file
+* `git push origin <branch name>` until all checks pass
 
 ## Releasing
 
