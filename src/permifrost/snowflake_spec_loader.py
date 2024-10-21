@@ -1,3 +1,4 @@
+from concurrent.futures import ALL_COMPLETED, ThreadPoolExecutor, as_completed, wait
 from typing import Any, Dict, List, Optional, cast
 
 import click
@@ -16,13 +17,17 @@ class SnowflakeSpecLoader:
     def __init__(
         self,
         spec_path: str,
-        conn: Optional[SnowflakeConnector] = None,
+        conn: SnowflakeConnector,
         roles: Optional[List[str]] = None,
         users: Optional[List[str]] = None,
         run_list: Optional[List[str]] = None,
         ignore_memberships: Optional[bool] = False,
         spec_test: Optional[bool] = False,
+        tpe: Optional[ThreadPoolExecutor] = None,
     ) -> None:
+        self.conn = conn
+        self.tpe = tpe or ThreadPoolExecutor(max_workers=32)
+
         run_list = run_list or ["users", "roles"]
         # Load the specification file and check for (syntactical) errors
         click.secho("Loading spec file", fg="green")
@@ -38,7 +43,7 @@ class SnowflakeSpecLoader:
         # Connect to Snowflake to make sure that the current user has correct
         # permissions
         click.secho("Checking permissions on current snowflake connection", fg="green")
-        self.check_permissions_on_snowflake_server(conn)
+        self.check_permissions_on_snowflake_server()
 
         # Connect to Snowflake to make sure that all entities defined in the
         # spec file are also defined in Snowflake (no missing databases, etc)
@@ -46,7 +51,7 @@ class SnowflakeSpecLoader:
             "Checking that all entities in the spec file are defined in Snowflake",
             fg="green",
         )
-        self.check_entities_on_snowflake_server(conn)
+        self.check_entities_on_snowflake_server()
 
         # Get the privileges granted to users and roles in the Snowflake account
         # Used in order to figure out which permissions in the spec file are
@@ -68,7 +73,7 @@ class SnowflakeSpecLoader:
         self, conn: Optional[SnowflakeConnector] = None
     ) -> None:
         if conn is None:
-            conn = SnowflakeConnector()
+            conn = self.conn
         error_messages = []
 
         click.secho(f"  Current user is: {conn.get_current_user()}.", fg="green")
@@ -215,28 +220,35 @@ class SnowflakeSpecLoader:
         error_messages = []
 
         if conn is None:
-            conn = SnowflakeConnector()
+            conn = self.conn
 
-        error_messages.extend(self.check_warehouse_entities(conn))
-        error_messages.extend(self.check_integration_entities(conn))
-        error_messages.extend(self.check_database_entities(conn))
-        error_messages.extend(self.check_schema_ref_entities(conn))
-        error_messages.extend(self.check_table_ref_entities(conn))
-        error_messages.extend(self.check_role_entities(conn))
-        error_messages.extend(self.check_users_entities(conn))
+        jobs = [
+            self.tpe.submit(self.check_warehouse_entities, conn),
+            self.tpe.submit(self.check_integration_entities, conn),
+            self.tpe.submit(self.check_database_entities, conn),
+            self.tpe.submit(self.check_schema_ref_entities, conn),
+            self.tpe.submit(self.check_table_ref_entities, conn),
+            self.tpe.submit(self.check_role_entities, conn),
+            self.tpe.submit(self.check_users_entities, conn),
+        ]
+
+        for job in as_completed(jobs):
+            error_messages.extend(job.result())
 
         if error_messages:
             raise SpecLoadingError("\n".join(error_messages))
 
     def get_role_privileges_from_snowflake_server(
         self,
-        conn: SnowflakeConnector,
+        conn: Optional[SnowflakeConnector] = None,
         roles: Optional[List[str]] = None,
         ignore_memberships: Optional[bool] = False,
     ) -> None:
+        if conn is None:
+            conn = self.conn
         future_grants: Dict[str, Any] = {}
 
-        for database in self.entities["database_refs"]:
+        def _get_future_grants(database):
             logger.info(f"Fetching future grants for database: {database}")
             grant_results = conn.show_future_grants(database=database)
             grant_results = (
@@ -297,9 +309,13 @@ class SnowflakeSpecLoader:
                                 )
                             )
 
-        for role in self.entities["roles"]:
-            if (roles and role not in roles) or ignore_memberships:
-                continue
+        jobs = [
+            self.tpe.submit(_get_future_grants, database)
+            for database in self.entities["database_refs"]
+        ]
+        wait(jobs, return_when=ALL_COMPLETED)
+
+        def _get_grants_for_role(role):
             logger.info(f"Fetching all grants for role {role}")
             role_grants = conn.show_grants_to_role(role)
             for privilege in role_grants:
@@ -316,18 +332,34 @@ class SnowflakeSpecLoader:
                         )
                     )
 
+        jobs = [
+            self.tpe.submit(_get_grants_for_role, role)
+            for role in self.entities["roles"]
+            if not ((roles and role not in roles) or ignore_memberships)
+        ]
+        wait(jobs, return_when=ALL_COMPLETED)
+
         self.grants_to_role = future_grants
 
     def get_user_privileges_from_snowflake_server(
-        self, conn: SnowflakeConnector, users: Optional[List[str]] = None
+        self,
+        conn: Optional[SnowflakeConnector] = None,
+        users: Optional[List[str]] = None,
     ) -> None:
+        if conn is None:
+            conn = self.conn
         user_entities = self.entities["users"]
-        with click.progressbar(user_entities) as users_bar:
-            for user in users_bar:
-                if users and user not in users:
-                    continue
-                logger.info(f"Fetching user privileges for user: {user}")
-                self.roles_granted_to_user[user] = conn.show_roles_granted_to_user(user)
+
+        def _get(user):
+            logger.info(f"Fetching user privileges for user: {user}")
+            self.roles_granted_to_user[user] = conn.show_roles_granted_to_user(user)
+
+        jobs = [
+            self.tpe.submit(_get, user)
+            for user in user_entities
+            if not (users and user not in users)
+        ]
+        wait(jobs, return_when=ALL_COMPLETED)
 
     def get_privileges_from_snowflake_server(
         self,
@@ -342,9 +374,9 @@ class SnowflakeSpecLoader:
         Gets the future privileges granted in all database and schema objects
         Consolidates role and future privileges into a single object for self.grants_to_role
         """
-        run_list = run_list or ["users", "roles"]
         if conn is None:
-            conn = SnowflakeConnector()
+            conn = self.conn
+        run_list = run_list or ["users", "roles"]
 
         if "users" in run_list and not ignore_memberships:
             logger.info("Fetching user privileges from Snowflake")
@@ -418,13 +450,32 @@ class SnowflakeSpecLoader:
             self.grants_to_role,
             self.roles_granted_to_user,
             ignore_memberships=ignore_memberships,
+            tpe=self.tpe,
+            conn=self.conn,
         )
 
         click.secho("Generating permission Queries:", fg="green")
 
-        # For each permission in the spec, check if we have to generate an
-        #  SQL command granting that permission
+        # For each permission in the spec, check if we have to generate a
+        # SQL command granting that permission
 
+        def _process(entity_type, entity_name, config, all_entities):
+            if (
+                entity_type == "roles"
+                and "roles" in (run_list or [])
+                and (not roles or entity_name in roles)
+            ):
+                return self.process_roles(
+                    generator, entity_type, entity_name, config, all_entities
+                )
+            elif (
+                entity_type == "users"
+                and "users" in (run_list or [])
+                and (not users or entity_name in users)
+            ):
+                return self.process_users(generator, entity_type, entity_name, config)
+
+        jobs = []
         for entity_type, entry in self.spec.items():
             if entity_type in [
                 "require-owner",
@@ -446,30 +497,14 @@ class SnowflakeSpecLoader:
                     if config
                 ]
                 for entity_name, config in entity_configs:
-                    if (
-                        entity_type == "roles"
-                        and "roles" in run_list
-                        and (not roles or entity_name in roles)
-                    ):
-                        sql_commands.extend(
-                            self.process_roles(
-                                generator,
-                                entity_type,
-                                entity_name,
-                                config,
-                                all_entities,
-                            )
+                    jobs.append(
+                        self.tpe.submit(
+                            _process, entity_type, entity_name, config, all_entities
                         )
-                    elif (
-                        entity_type == "users"
-                        and "users" in run_list
-                        and (not users or entity_name in users)
-                    ):
-                        sql_commands.extend(
-                            self.process_users(
-                                generator, entity_type, entity_name, config
-                            )
-                        )
+                    )
+
+        for job in as_completed(jobs):
+            sql_commands.extend(job.result())
 
         return self.remove_duplicate_queries(sql_commands)
 

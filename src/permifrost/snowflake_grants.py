@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from permifrost.logger import GLOBAL_LOGGER as logger
@@ -32,6 +33,8 @@ class SnowflakeGrantsGenerator:
         grants_to_role: Dict,
         roles_granted_to_user: Dict[str, List[str]],
         ignore_memberships: Optional[bool] = False,
+        tpe: Optional[ThreadPoolExecutor] = None,
+        conn: Optional[SnowflakeConnector] = None,
     ) -> None:
         """
         Initializes a grants generator, used to generate SQL for generating grants
@@ -46,10 +49,11 @@ class SnowflakeGrantsGenerator:
         ignore_memberships: bool, whether to skip role grant/revoke of memberships
 
         """
+        self.conn = conn or SnowflakeConnector()
+        self.tpe = tpe or ThreadPoolExecutor(max_workers=32)
         self.grants_to_role = grants_to_role
         self.roles_granted_to_user = roles_granted_to_user
         self.ignore_memberships = ignore_memberships
-        self.conn = SnowflakeConnector()
 
     def is_granted_privilege(
         self, role: str, privilege: str, entity_type: str, entity_name: str
@@ -115,8 +119,7 @@ class SnowflakeGrantsGenerator:
 
         Returns: a list of all roles to include for the entity
         """
-        conn = SnowflakeConnector()
-        show_roles = conn.show_roles()
+        show_roles = self.conn.show_roles()
         member_include_list = [
             role for role in show_roles if role in all_entities and role != entity
         ]
@@ -748,8 +751,7 @@ class SnowflakeGrantsGenerator:
             if database in shared_dbs:
                 continue
 
-            conn = SnowflakeConnector()
-            fetched_schemas = conn.full_schema_list(schema)
+            fetched_schemas = self.conn.full_schema_list(schema)
             read_grant_schemas.extend(fetched_schemas)
 
             if name_parts[1] == "*":
@@ -822,8 +824,7 @@ class SnowflakeGrantsGenerator:
             if database in shared_dbs:
                 continue
 
-            conn = SnowflakeConnector()
-            fetched_schemas = conn.full_schema_list(schema)
+            fetched_schemas = self.conn.full_schema_list(schema)
             write_grant_schemas.extend(fetched_schemas)
 
             if name_parts[1] == "*":
@@ -1052,7 +1053,7 @@ class SnowflakeGrantsGenerator:
 
         return sql_commands
 
-    def _generate_table_read_grants(self, conn, tables, shared_dbs, role):
+    def _generate_table_read_grants(self, tables, shared_dbs, role):
         sql_commands = []
         read_grant_tables_full = []
         read_grant_views_full = []
@@ -1080,7 +1081,9 @@ class SnowflakeGrantsGenerator:
             read_table_list = []
             read_view_list = []
 
-            fetched_schemas = conn.full_schema_list(f"{database_name}.{schema_name}")
+            fetched_schemas = self.conn.full_schema_list(
+                f"{database_name}.{schema_name}"
+            )
 
             # For grants at the database level for tables
             future_database_table = "{database}.<table>".format(database=database_name)
@@ -1101,7 +1104,7 @@ class SnowflakeGrantsGenerator:
                 sql_commands.append(
                     {
                         "already_granted": table_already_granted,
-                        "sql": GRANT_FUTURE_PRIVILEGES_TEMPLATE.format(
+                        "sql": GRANT_FUTURE_PRIVILEGES_TEMPLATE.format(  # type: ignore
                             privileges=read_privileges,
                             resource_type="table",
                             grouping_type="database",
@@ -1114,7 +1117,7 @@ class SnowflakeGrantsGenerator:
                 sql_commands.append(
                     {
                         "already_granted": table_already_granted,
-                        "sql": GRANT_ALL_PRIVILEGES_TEMPLATE.format(
+                        "sql": GRANT_ALL_PRIVILEGES_TEMPLATE.format(  # type: ignore
                             privileges=read_privileges,
                             resource_type="table",
                             grouping_type="database",
@@ -1128,7 +1131,7 @@ class SnowflakeGrantsGenerator:
                 sql_commands.append(
                     {
                         "already_granted": view_already_granted,
-                        "sql": GRANT_FUTURE_PRIVILEGES_TEMPLATE.format(
+                        "sql": GRANT_FUTURE_PRIVILEGES_TEMPLATE.format(  # type: ignore
                             privileges=read_privileges,
                             resource_type="view",
                             grouping_type="database",
@@ -1141,7 +1144,7 @@ class SnowflakeGrantsGenerator:
                 sql_commands.append(
                     {
                         "already_granted": view_already_granted,
-                        "sql": GRANT_ALL_PRIVILEGES_TEMPLATE.format(
+                        "sql": GRANT_ALL_PRIVILEGES_TEMPLATE.format(  # type: ignore
                             privileges=read_privileges,
                             resource_type="view",
                             grouping_type="database",
@@ -1156,8 +1159,8 @@ class SnowflakeGrantsGenerator:
                 # to the read_tables_list[] and read_views_list[] variables.
                 # This is so we can check that a table given in the config
                 # Is valid
-                read_table_list.extend(conn.show_tables(schema=schema))
-                read_view_list.extend(conn.show_views(schema=schema))
+                read_table_list.extend(self.conn.show_tables(schema=schema))
+                read_view_list.extend(self.conn.show_views(schema=schema))
 
             if table_view_name == "*":
                 # If <schema_name>.* then you add all tables to grant list and then grant future
@@ -1293,7 +1296,7 @@ class SnowflakeGrantsGenerator:
         return (sql_commands, read_grant_tables_full, read_grant_views_full)
 
     #  TODO: This method remains complex, could use extra refactoring
-    def _generate_table_write_grants(self, conn, tables, shared_dbs, role):  # noqa
+    def _generate_table_write_grants(self, tables, shared_dbs, role):  # noqa
         sql_commands = []
         write_grant_tables_full = []
         write_grant_views_full = []
@@ -1324,7 +1327,9 @@ class SnowflakeGrantsGenerator:
             write_table_list = []
             write_view_list = []
 
-            fetched_schemas = conn.full_schema_list(f"{database_name}.{name_parts[1]}")
+            fetched_schemas = self.conn.full_schema_list(
+                f"{database_name}.{name_parts[1]}"
+            )
 
             # For grants at the database level
             future_database_table = "{database}.<table>".format(database=database_name)
@@ -1349,7 +1354,7 @@ class SnowflakeGrantsGenerator:
                 sql_commands.append(
                     {
                         "already_granted": table_already_granted,
-                        "sql": GRANT_FUTURE_PRIVILEGES_TEMPLATE.format(
+                        "sql": GRANT_FUTURE_PRIVILEGES_TEMPLATE.format(  # type: ignore
                             privileges=write_privileges,
                             resource_type="table",
                             grouping_type="database",
@@ -1362,7 +1367,7 @@ class SnowflakeGrantsGenerator:
                 sql_commands.append(
                     {
                         "already_granted": table_already_granted,
-                        "sql": GRANT_ALL_PRIVILEGES_TEMPLATE.format(
+                        "sql": GRANT_ALL_PRIVILEGES_TEMPLATE.format(  # type: ignore
                             privileges=write_privileges,
                             resource_type="table",
                             grouping_type="database",
@@ -1376,7 +1381,7 @@ class SnowflakeGrantsGenerator:
                 sql_commands.append(
                     {
                         "already_granted": view_already_granted,
-                        "sql": GRANT_FUTURE_PRIVILEGES_TEMPLATE.format(
+                        "sql": GRANT_FUTURE_PRIVILEGES_TEMPLATE.format(  # type: ignore
                             privileges="select",
                             resource_type="view",
                             grouping_type="database",
@@ -1389,7 +1394,7 @@ class SnowflakeGrantsGenerator:
                 sql_commands.append(
                     {
                         "already_granted": view_already_granted,
-                        "sql": GRANT_ALL_PRIVILEGES_TEMPLATE.format(
+                        "sql": GRANT_ALL_PRIVILEGES_TEMPLATE.format(  # type: ignore
                             privileges="select",
                             resource_type="view",
                             grouping_type="database",
@@ -1404,8 +1409,8 @@ class SnowflakeGrantsGenerator:
                 # to the write_tables_list[] and write_views_list[] variables.
                 # This is so we can check that a table given in the config
                 # Is valid
-                write_table_list.extend(conn.show_tables(schema=schema))
-                write_view_list.extend(conn.show_views(schema=schema))
+                write_table_list.extend(self.conn.show_tables(schema=schema))
+                write_view_list.extend(self.conn.show_views(schema=schema))
 
             if table_view_name == "*":
                 # If <schema_name>.* then you add all tables to grant list and then grant future
@@ -1725,11 +1730,9 @@ class SnowflakeGrantsGenerator:
         write_grant_tables_full = []
         write_grant_views_full = []
 
-        conn = SnowflakeConnector()
-
         read_tables = tables.get("read", [])
         read_command, read_table, read_views = self._generate_table_read_grants(
-            conn, read_tables, shared_dbs, role
+            read_tables, shared_dbs, role
         )
         sql_commands.extend(read_command)
         read_grant_tables_full.extend(read_table)
@@ -1737,7 +1740,7 @@ class SnowflakeGrantsGenerator:
 
         write_tables = tables.get("write", [])
         write_command, write_table, write_views = self._generate_table_write_grants(
-            conn, write_tables, shared_dbs, role
+            write_tables, shared_dbs, role
         )
         sql_commands.extend(write_command)
         write_grant_tables_full.extend(write_table)
@@ -1831,7 +1834,7 @@ class SnowflakeGrantsGenerator:
             )
         return sql_commands
 
-    def _generate_ownership_grant_schema(self, conn, role, schema_refs) -> List[Dict]:
+    def _generate_ownership_grant_schema(self, role, schema_refs) -> List[Dict]:
         sql_commands = []
         for schema in schema_refs:
             name_parts = schema.split(".")
@@ -1840,7 +1843,7 @@ class SnowflakeGrantsGenerator:
             schemas = []
 
             if name_parts[1] == "*":
-                db_schemas = conn.show_schemas(name_parts[0])
+                db_schemas = self.conn.show_schemas(name_parts[0])
 
                 for db_schema in db_schemas:
                     if db_schema != info_schema:
@@ -1865,11 +1868,9 @@ class SnowflakeGrantsGenerator:
                 )
         return sql_commands
 
-    def _generate_ownership_grant_table(
-        self, conn: SnowflakeConnector, role, table_refs
-    ) -> List[Dict]:
+    def _generate_ownership_grant_table(self, role, table_refs) -> List[Dict]:
         sql_commands = []
-
+        schemas = []
         tables = []
 
         for table in table_refs:
@@ -1880,7 +1881,7 @@ class SnowflakeGrantsGenerator:
                 schemas = []
 
                 if name_parts[1] == "*":
-                    db_schemas = conn.show_schemas(name_parts[0])
+                    db_schemas = self.conn.show_schemas(name_parts[0])
 
                     for schema in db_schemas:
                         if schema != info_schema:
@@ -1889,14 +1890,14 @@ class SnowflakeGrantsGenerator:
                     schemas = [f"{name_parts[0]}.{name_parts[1]}"]
 
                 for schema in schemas:
-                    tables.extend(conn.show_tables(schema=schema))
+                    tables.extend(self.conn.show_tables(schema=schema))
             else:
                 schemas = [f"{name_parts[0]}.{name_parts[1]}"]
                 tables.append(table)
 
         existing_views = []
         for schema in schemas:
-            existing_views = conn.show_views(schema=schema)
+            existing_views = self.conn.show_views(schema=schema)
 
         # And then grant ownership to all tables
         for db_table in tables:
@@ -1943,14 +1944,14 @@ class SnowflakeGrantsGenerator:
         schema_refs = config.get("owns", {}).get("schemas")
         if schema_refs:
             schema_ownership_grants = self._generate_ownership_grant_schema(
-                self.conn, role, schema_refs
+                role, schema_refs
             )
             sql_commands.extend(schema_ownership_grants)
 
         table_refs = config.get("owns", {}).get("tables")
         if table_refs:
             table_ownership_grants = self._generate_ownership_grant_table(
-                self.conn, role, table_refs
+                role, table_refs
             )
             sql_commands.extend(table_ownership_grants)
         return sql_commands

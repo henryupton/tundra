@@ -1,4 +1,5 @@
 import sys
+from concurrent.futures import ThreadPoolExecutor
 
 import click
 
@@ -60,8 +61,16 @@ def print_command(command, diff, dry=False):
     help="Do not handle role membership grants/revokes",
     is_flag=True,
 )
+@click.option(
+    "--parallel",
+    help="Number of threads to use for parallel execution of GRANT commands",
+    type=int,
+    default=1,
+)
 @click.pass_context
-def run(ctx, spec, dry, diff, role, user, ignore_memberships, print_skipped=False):
+def run(
+    ctx, spec, dry, diff, role, user, ignore_memberships, parallel, print_skipped=False
+):
     """
     Grant the permissions provided in the provided specification file for specific users and roles
     """
@@ -83,6 +92,7 @@ def run(ctx, spec, dry, diff, role, user, ignore_memberships, print_skipped=Fals
         users=user,
         run_list=run_list,
         ignore_memberships=ignore_memberships,
+        parallel=parallel,
         print_skipped=print_skipped,
     )
 
@@ -126,7 +136,9 @@ def spec_test(spec, role, user, run_list, ignore_memberships):
     )
 
 
-def load_specs(spec, role, user, run_list, ignore_memberships, do_spec_test):
+def load_specs(
+    spec, role, user, run_list, ignore_memberships, do_spec_test, conn=None, tpe=None
+):
     """
     Load specs separately.
     """
@@ -139,6 +151,8 @@ def load_specs(spec, role, user, run_list, ignore_memberships, do_spec_test):
             run_list=run_list,
             ignore_memberships=ignore_memberships,
             spec_test=do_spec_test,
+            tpe=tpe,
+            conn=conn,  # type: ignore
         )
         click.secho("Snowflake specs successfully loaded", fg="green")
     except SpecLoadingError as exc:
@@ -150,9 +164,12 @@ def load_specs(spec, role, user, run_list, ignore_memberships, do_spec_test):
 
 
 def permifrost_grants(
-    spec, dry, diff, roles, users, run_list, ignore_memberships, print_skipped
+    spec, dry, diff, roles, users, run_list, ignore_memberships, parallel, print_skipped
 ):
     """Grant the permissions provided in the provided specification file."""
+    conn = SnowflakeConnector(pool_size=parallel)
+    tpe = ThreadPoolExecutor(max_workers=parallel)
+
     spec_loader = load_specs(
         spec,
         role=roles,
@@ -160,6 +177,8 @@ def permifrost_grants(
         run_list=run_list,
         ignore_memberships=ignore_memberships,
         do_spec_test=False,
+        conn=conn,
+        tpe=tpe,
     )
 
     sql_grant_queries = spec_loader.generate_permission_queries(
@@ -178,8 +197,7 @@ def permifrost_grants(
         click.secho("SQL Commands generated for given spec file:")
     click.secho()
 
-    conn = SnowflakeConnector()
-    for query in sql_grant_queries:
+    def apply(query: dict):
         if not dry:
             status = None
             if not query.get("already_granted"):
@@ -192,13 +210,19 @@ def permifrost_grants(
                 ran_query = query
                 ran_query["run_status"] = status
                 print_command(ran_query, diff)
-            # If already granted, print command
             elif print_skipped:
                 print_command(query, diff)
-        # If dry, print commands
         else:
             if not query.get("already_granted") or print_skipped:
                 print_command(query, diff, dry=True)
+        return True
+
+    if parallel == 1:
+        for query in sql_grant_queries:
+            apply(query)
+    else:
+        list(tpe.map(apply, sql_grant_queries))
+    tpe.shutdown(wait=True)
 
 
 cli.add_command(spec_test)  # type: ignore
