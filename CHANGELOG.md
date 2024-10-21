@@ -9,10 +9,12 @@ Changelog](http://keepachangelog.com/).
 ---
 
 ### New
-
+ 
 - Permifrost parallel execution.
   - By passing `--parallel <threads:int>` to `permifrost run`, Snowflake grants can now be done in a multi-threaded approach
-
+- [#194](https://gitlab.com/gitlab-data/permifrost/-/issues/194)
+  - Spec file inheritance/inclusion
+  
 ### Fixes
 
 ### Changes
