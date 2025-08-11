@@ -1791,6 +1791,7 @@ class SnowflakeGrantsGenerator:
             "default_warehouse",
             "default_namespace",
             "default_role",
+            "type",
         ]:
             if conf in config:
                 property_name = str.upper(conf)
