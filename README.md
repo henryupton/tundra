@@ -279,6 +279,7 @@ users:
         default_warehouse: string
         default_namespace: string
         default_role: string
+        type: string
         meta:
             some_key: some_value
             ...
