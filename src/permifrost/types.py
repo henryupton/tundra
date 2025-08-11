@@ -61,6 +61,7 @@ class UserSchema(UserSchemaBase, total=False):
     default_warehouse: str
     default_namespace: str
     default_role: str
+    type: str
 
 
 class WarehouseSchemaBase(TypedDict):

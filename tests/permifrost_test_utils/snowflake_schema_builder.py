@@ -53,6 +53,7 @@ class SnowflakeSchemaBuilder:
                 "default_warehouse",
                 "default_namespace",
                 "default_role",
+                "type",
             ]:
                 if user[conf] is not None:
                     spec_yaml.append(f"      {conf}: {user[conf]}")
@@ -289,6 +290,7 @@ class SnowflakeSchemaBuilder:
         default_warehouse: Optional[str] = None,
         default_namespace: Optional[str] = None,
         default_role: Optional[str] = None,
+        type: Optional[str] = None,
     ):
         """
         Adds user to spec file
@@ -307,6 +309,7 @@ class SnowflakeSchemaBuilder:
                 "default_warehouse": default_warehouse,
                 "default_namespace": default_namespace,
                 "default_role": default_role,
+                "type": type,
             }
         )
         return self

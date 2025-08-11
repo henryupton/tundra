@@ -12,6 +12,9 @@ Changelog](http://keepachangelog.com/).
  
 - [#194](https://gitlab.com/gitlab-data/permifrost/-/issues/194)
   - Spec file inheritance/inclusion
+
+- [#229](https://gitlab.com/gitlab-data/permifrost/-/issues/229)
+  - User TYPE management
   
 ### Fixes
 
