@@ -69,6 +69,12 @@ def test_roles_spec_file():
             email="wba@bsg.com",
             comment="Not a Cylon",
         )
+        .add_user(name="test_user_with_person_type", type="PERSON")
+        .add_user(
+            name="test_user_with_service_type_and_no_password",
+            type="SERVICE",
+            has_password=False,
+        )
         .build()
     )
     yield spec_file_data
@@ -93,6 +99,8 @@ def test_roles_mock_connector(mocker):
             "test_user_with_full_name",
             "test_user_with_email",
             "test_user_with_multiple_properties",
+            "test_user_with_person_type",
+            "test_user_with_service_type_and_no_password",
         ],
     )
     yield mock_connector
@@ -297,5 +305,46 @@ class TestSnowflakeUserProperties:
                 "DEFAULT_WAREHOUSE = 'ftl', "
                 "DEFAULT_NAMESPACE = 'public', "
                 "DEFAULT_ROLE = 'role1'",
+            }
+        ]
+
+    def test_user_with_person_type_set(
+        self, mocker, test_roles_mock_connector, test_roles_spec_file
+    ):
+        """Make sure if the type property is set to Person then the type is set."""
+
+        print(f"Spec File Data is:\n{test_roles_spec_file}")
+        mocker.patch("builtins.open", mocker.mock_open(read_data=test_roles_spec_file))
+        spec_loader = SnowflakeSpecLoader(spec_path="", conn=test_roles_mock_connector)
+        queries = spec_loader.generate_permission_queries(
+            users=["test_user_with_person_type"], run_list=["users"]
+        )
+
+        assert queries == [
+            {
+                "already_granted": False,
+                "sql": "ALTER USER test_user_with_person_type SET DISABLED = FALSE, TYPE = 'PERSON'",
+            }
+        ]
+
+    def test_user_with_service_type_and_no_password(
+        self, mocker, test_roles_mock_connector, test_roles_spec_file
+    ):
+        """Make sure that if the type property is set to Service and the has_password
+        property is set to False then the password is set to NULL and the type is set."""
+
+        print(f"Spec File Data is:\n{test_roles_spec_file}")
+        mocker.patch("builtins.open", mocker.mock_open(read_data=test_roles_spec_file))
+        spec_loader = SnowflakeSpecLoader(spec_path="", conn=test_roles_mock_connector)
+        queries = spec_loader.generate_permission_queries(
+            users=["test_user_with_service_type_and_no_password"], run_list=["users"]
+        )
+
+        assert queries == [
+            {
+                "already_granted": False,
+                "sql": "ALTER USER test_user_with_service_type_and_no_password SET DISABLED = FALSE, "
+                "PASSWORD = NULL, "
+                "TYPE = 'SERVICE'",
             }
         ]

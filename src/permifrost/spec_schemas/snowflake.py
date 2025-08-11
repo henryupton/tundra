@@ -175,6 +175,9 @@ SNOWFLAKE_SPEC_USER_SCHEMA = """
     default_role:
         type: string
         required: False
+    type:
+        type: string
+        required: False
     meta:
         type: dict
         required: False
