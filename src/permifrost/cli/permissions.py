@@ -63,7 +63,8 @@ def print_command(command, diff, dry=False):
 @click.pass_context
 def run(ctx, spec, dry, diff, role, user, ignore_memberships, print_skipped=False):
     """
-    Grant the permissions provided in the provided specification file for specific users and roles
+    Grant the permissions provided in the provided specification file for specific users and roles.
+    This fork includes support for Iceberg tables, external volumes, and catalog integrations.
     """
     if role and user:
         run_list = ["roles", "users"]
@@ -115,6 +116,7 @@ def run(ctx, spec, dry, diff, role, user, ignore_memberships, print_skipped=Fals
 def spec_test(spec, role, user, run_list, ignore_memberships):
     """
     Load SnowFlake spec based on the roles.yml provided. CLI use only for confirming specifications are valid.
+    This fork includes validation for Iceberg tables, external volumes, and catalog integrations.
     """
     load_specs(
         spec,

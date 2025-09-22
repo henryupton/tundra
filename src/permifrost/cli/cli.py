@@ -10,7 +10,10 @@ from permifrost.logger import GLOBAL_LOGGER as logger
 @click.option(
     "-v", "--verbose", help="Increases log level with count, e.g -vv", count=True
 )
-@click.version_option(version=permifrost.__version__, prog_name="permifrost")
+@click.version_option(
+    version=permifrost.__version__, prog_name="tundra",
+    message="%(prog)s %(version)s - Snowflake permissions with Iceberg table support"
+)
 @click.pass_context
 def cli(ctx, verbose):
     logger.setLevel(logging.WARNING)

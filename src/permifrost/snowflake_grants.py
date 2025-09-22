@@ -415,6 +415,19 @@ class SnowflakeGrantsGenerator:
                 )
             )
 
+        try:
+            external_volumes = config["external_volumes"]
+            new_commands = self.generate_external_volume_grants(
+                role=role, external_volumes=external_volumes
+            )
+            sql_commands.extend(new_commands)
+        except KeyError:
+            logger.debug(
+                "`external_volumes` not found for role {}, skipping generation of External Volume GRANT statements.".format(
+                    role
+                )
+            )
+
         database_commands = self._generate_database_commands(
             role, config, shared_dbs, spec_dbs
         )
@@ -525,6 +538,56 @@ class SnowflakeGrantsGenerator:
                             resource_type="integration",
                             resource_name=SnowflakeConnector.snowflaky(
                                 granted_integration
+                            ),
+                            role=SnowflakeConnector.snowflaky_user_role(role),
+                        ),
+                    }
+                )
+
+        return sql_commands
+
+    def generate_external_volume_grants(
+        self, role: str, external_volumes: list
+    ) -> List[Dict[str, Any]]:
+        """
+        Generate the GRANT statements for External Volume usage.
+
+        role: the name of the role the privileges are GRANTed to
+        external_volumes: list of external volumes for the specified role
+
+        Returns the SQL command generated
+        """
+        sql_commands: List[Dict] = []
+
+        for external_volume in external_volumes:
+            already_granted = self.is_granted_privilege(
+                role, "usage", "external volume", external_volume
+            )
+
+            sql_commands.append(
+                {
+                    "already_granted": already_granted,
+                    "sql": GRANT_PRIVILEGES_TEMPLATE.format(
+                        privileges="usage",
+                        resource_type="external volume",
+                        resource_name=SnowflakeConnector.snowflaky(external_volume),
+                        role=SnowflakeConnector.snowflaky_user_role(role),
+                    ),
+                }
+            )
+
+        for granted_external_volume in (
+            self.grants_to_role.get(role, {}).get("usage", {}).get("external volume", [])
+        ):
+            if granted_external_volume not in external_volumes:
+                sql_commands.append(
+                    {
+                        "already_granted": False,
+                        "sql": REVOKE_PRIVILEGES_TEMPLATE.format(
+                            privileges="usage",
+                            resource_type="external volume",
+                            resource_name=SnowflakeConnector.snowflaky(
+                                granted_external_volume
                             ),
                             role=SnowflakeConnector.snowflaky_user_role(role),
                         ),
@@ -953,7 +1016,7 @@ class SnowflakeGrantsGenerator:
         write_grant_schemas = []
 
         partial_write_privileges = (
-            "monitor, create table,"
+            "monitor, create table, create iceberg table,"
             " create view, create stage, create file format,"
             " create sequence, create function, create pipe"
         )
@@ -995,6 +1058,7 @@ class SnowflakeGrantsGenerator:
         other_privileges = [
             "monitor",
             "create table",
+            "create iceberg table",
             "create view",
             "create stage",
             "create file format",
@@ -1056,6 +1120,7 @@ class SnowflakeGrantsGenerator:
         sql_commands = []
         read_grant_tables_full = []
         read_grant_views_full = []
+        read_grant_iceberg_tables_full = []
         read_privileges = "select"
 
         for table in tables:
@@ -1071,14 +1136,16 @@ class SnowflakeGrantsGenerator:
             if database_name in shared_dbs:
                 continue
 
-            # Gather the tables/views that privileges will be granted to
+            # Gather the tables/views/iceberg tables that privileges will be granted to
             # for the given table schema
             read_grant_tables = []
             read_grant_views = []
+            read_grant_iceberg_tables = []
 
-            # List of all tables/views in schema for validation
+            # List of all tables/views/iceberg tables in schema for validation
             read_table_list = []
             read_view_list = []
+            read_iceberg_table_list = []
 
             fetched_schemas = conn.full_schema_list(f"{database_name}.{schema_name}")
 
@@ -1095,6 +1162,13 @@ class SnowflakeGrantsGenerator:
                 role, read_privileges, "view", future_database_view
             )
             read_grant_views_full.append(future_database_view)
+
+            # For grants at the database level for iceberg tables
+            future_database_iceberg_table = "{database}.<iceberg table>".format(database=database_name)
+            iceberg_table_already_granted = self.is_granted_privilege(
+                role, read_privileges, "iceberg table", future_database_iceberg_table
+            )
+            read_grant_iceberg_tables_full.append(future_database_iceberg_table)
 
             if schema_name == "*" and table_view_name == "*":
                 # Tables
@@ -1151,6 +1225,33 @@ class SnowflakeGrantsGenerator:
                     }
                 )
 
+                # Iceberg tables
+                sql_commands.append(
+                    {
+                        "already_granted": iceberg_table_already_granted,
+                        "sql": GRANT_FUTURE_PRIVILEGES_TEMPLATE.format(
+                            privileges=read_privileges,
+                            resource_type="iceberg table",
+                            grouping_type="database",
+                            grouping_name=SnowflakeConnector.snowflaky(database_name),
+                            role=SnowflakeConnector.snowflaky_user_role(role),
+                        ),
+                    }
+                )
+
+                sql_commands.append(
+                    {
+                        "already_granted": iceberg_table_already_granted,
+                        "sql": GRANT_ALL_PRIVILEGES_TEMPLATE.format(
+                            privileges=read_privileges,
+                            resource_type="iceberg table",
+                            grouping_type="database",
+                            grouping_name=SnowflakeConnector.snowflaky(database_name),
+                            role=SnowflakeConnector.snowflaky_user_role(role),
+                        ),
+                    }
+                )
+
             for schema in fetched_schemas:
                 # Fetch all tables from Snowflake for each schema and add
                 # to the read_tables_list[] and read_views_list[] variables.
@@ -1158,6 +1259,7 @@ class SnowflakeGrantsGenerator:
                 # Is valid
                 read_table_list.extend(conn.show_tables(schema=schema))
                 read_view_list.extend(conn.show_views(schema=schema))
+                read_iceberg_table_list.extend(conn.show_iceberg_tables(schema=schema))
 
             if table_view_name == "*":
                 # If <schema_name>.* then you add all tables to grant list and then grant future
@@ -1168,13 +1270,16 @@ class SnowflakeGrantsGenerator:
                 # the grant list AND the full grant list
                 read_grant_tables_full.extend(read_table_list)
                 read_grant_views_full.extend(read_view_list)
+                read_grant_iceberg_tables_full.extend(read_iceberg_table_list)
 
                 for schema in fetched_schemas:
                     # Adds the future grant table format to the granted lists
                     future_table = f"{schema}.<table>"
                     future_view = f"{schema}.<view>"
+                    future_iceberg_table = f"{schema}.<iceberg table>"
                     read_grant_tables_full.append(future_table)
                     read_grant_views_full.append(future_view)
+                    read_grant_iceberg_tables_full.append(future_iceberg_table)
 
                     table_already_granted = self.is_granted_privilege(
                         role, read_privileges, "table", future_table
@@ -1240,6 +1345,38 @@ class SnowflakeGrantsGenerator:
                         }
                     )
 
+                    iceberg_table_already_granted = self.is_granted_privilege(
+                        role, read_privileges, "iceberg table", future_iceberg_table
+                    )
+
+                    # Grant future on all iceberg tables
+                    sql_commands.append(
+                        {
+                            "already_granted": iceberg_table_already_granted,
+                            "sql": GRANT_FUTURE_PRIVILEGES_TEMPLATE.format(
+                                privileges=read_privileges,
+                                resource_type="iceberg table",
+                                grouping_type="schema",
+                                grouping_name=SnowflakeConnector.snowflaky(schema),
+                                role=SnowflakeConnector.snowflaky_user_role(role),
+                            ),
+                        }
+                    )
+
+                    # Grant select on all iceberg tables
+                    sql_commands.append(
+                        {
+                            "already_granted": iceberg_table_already_granted,
+                            "sql": GRANT_ALL_PRIVILEGES_TEMPLATE.format(
+                                privileges=read_privileges,
+                                resource_type="iceberg table",
+                                grouping_type="schema",
+                                grouping_name=SnowflakeConnector.snowflaky(schema),
+                                role=SnowflakeConnector.snowflaky_user_role(role),
+                            ),
+                        }
+                    )
+
             # TODO Future elif to have partial table name
 
             else:
@@ -1251,6 +1388,9 @@ class SnowflakeGrantsGenerator:
                 if table in read_view_list:
                     read_grant_views = [table]
                     read_grant_views_full.append(table)
+                if table in read_iceberg_table_list:
+                    read_grant_iceberg_tables = [table]
+                    read_grant_iceberg_tables_full.append(table)
 
             # Grant privileges to all tables flagged for granting.
             # We have this loop b/c we explicitly grant to each table
@@ -1290,13 +1430,32 @@ class SnowflakeGrantsGenerator:
                     }
                 )
 
-        return (sql_commands, read_grant_tables_full, read_grant_views_full)
+            # Grant privileges to all flagged iceberg tables
+            for db_iceberg_table in read_grant_iceberg_tables:
+                already_granted = self.is_granted_privilege(
+                    role, read_privileges, "iceberg table", db_iceberg_table
+                )
+
+                sql_commands.append(
+                    {
+                        "already_granted": already_granted,
+                        "sql": GRANT_PRIVILEGES_TEMPLATE.format(
+                            privileges=read_privileges,
+                            resource_type="iceberg table",
+                            resource_name=SnowflakeConnector.snowflaky(db_iceberg_table),
+                            role=SnowflakeConnector.snowflaky_user_role(role),
+                        ),
+                    }
+                )
+
+        return sql_commands, read_grant_tables_full, read_grant_views_full, read_grant_iceberg_tables_full
 
     #  TODO: This method remains complex, could use extra refactoring
     def _generate_table_write_grants(self, conn, tables, shared_dbs, role):  # noqa
         sql_commands = []
         write_grant_tables_full = []
         write_grant_views_full = []
+        write_grant_iceberg_tables_full = []
 
         read_privileges = "select"
         write_partial_privileges = "insert, update, delete, truncate, references"
@@ -1316,19 +1475,22 @@ class SnowflakeGrantsGenerator:
             if database_name in shared_dbs:
                 continue
 
-            # Gather the tables/views that privileges will be granted to
+            # Gather the tables/views/iceberg tables that privileges will be granted to
             write_grant_tables = []
             write_grant_views = []
+            write_grant_iceberg_tables = []
 
-            # List of all tables/views in schema
+            # List of all tables/views/iceberg tables in schema
             write_table_list = []
             write_view_list = []
+            write_iceberg_table_list = []
 
             fetched_schemas = conn.full_schema_list(f"{database_name}.{name_parts[1]}")
 
             # For grants at the database level
             future_database_table = "{database}.<table>".format(database=database_name)
             future_database_view = "{database}.<view>".format(database=database_name)
+            future_database_iceberg_table = "{database}.<iceberg table>".format(database=database_name)
 
             table_already_granted = True
             for privilege in write_privileges_array:
@@ -1343,6 +1505,11 @@ class SnowflakeGrantsGenerator:
                 role, "select", "view", future_database_view
             )
             write_grant_views_full.append(future_database_view)
+
+            iceberg_table_already_granted = self.is_granted_privilege(
+                role, "select", "iceberg table", future_database_iceberg_table
+            )
+            write_grant_iceberg_tables_full.append(future_database_iceberg_table)
 
             if schema_name == "*" and table_view_name == "*":
                 # Tables
@@ -1399,6 +1566,33 @@ class SnowflakeGrantsGenerator:
                     }
                 )
 
+                # Iceberg tables - only select privilege
+                sql_commands.append(
+                    {
+                        "already_granted": iceberg_table_already_granted,
+                        "sql": GRANT_FUTURE_PRIVILEGES_TEMPLATE.format(
+                            privileges="select",
+                            resource_type="iceberg table",
+                            grouping_type="database",
+                            grouping_name=SnowflakeConnector.snowflaky(database_name),
+                            role=SnowflakeConnector.snowflaky_user_role(role),
+                        ),
+                    }
+                )
+
+                sql_commands.append(
+                    {
+                        "already_granted": iceberg_table_already_granted,
+                        "sql": GRANT_ALL_PRIVILEGES_TEMPLATE.format(
+                            privileges="select",
+                            resource_type="iceberg table",
+                            grouping_type="database",
+                            grouping_name=SnowflakeConnector.snowflaky(database_name),
+                            role=SnowflakeConnector.snowflaky_user_role(role),
+                        ),
+                    }
+                )
+
             for schema in fetched_schemas:
                 # Fetch all tables from Snowflake for each schema and add
                 # to the write_tables_list[] and write_views_list[] variables.
@@ -1406,6 +1600,7 @@ class SnowflakeGrantsGenerator:
                 # Is valid
                 write_table_list.extend(conn.show_tables(schema=schema))
                 write_view_list.extend(conn.show_views(schema=schema))
+                write_iceberg_table_list.extend(conn.show_iceberg_tables(schema=schema))
 
             if table_view_name == "*":
                 # If <schema_name>.* then you add all tables to grant list and then grant future
@@ -1416,13 +1611,16 @@ class SnowflakeGrantsGenerator:
                 # the grant list AND the full grant list
                 write_grant_tables_full.extend(write_table_list)
                 write_grant_views_full.extend(write_view_list)
+                write_grant_iceberg_tables_full.extend(write_iceberg_table_list)
 
                 for schema in fetched_schemas:
                     # Adds the future grant table format to the granted lists
                     future_table = f"{schema}.<table>"
                     future_view = f"{schema}.<view>"
+                    future_iceberg_table = f"{schema}.<iceberg table>"
                     write_grant_tables_full.append(future_table)
                     write_grant_views_full.append(future_view)
+                    write_grant_iceberg_tables_full.append(future_iceberg_table)
 
                     table_already_granted = True
                     for privilege in write_privileges_array:
@@ -1490,16 +1688,55 @@ class SnowflakeGrantsGenerator:
                         }
                     )
 
+                    iceberg_table_already_granted = True
+                    for privilege in write_privileges_array:
+                        # If any of the privileges are not granted, set already_granted to False
+                        if not self.is_granted_privilege(
+                            role, privilege, "iceberg table", future_iceberg_table
+                        ):
+                            iceberg_table_already_granted = False
+
+                    # Grant future on all iceberg tables. Full write privileges for write access
+                    sql_commands.append(
+                        {
+                            "already_granted": iceberg_table_already_granted,
+                            "sql": GRANT_FUTURE_PRIVILEGES_TEMPLATE.format(
+                                privileges=write_privileges,
+                                resource_type="iceberg table",
+                                grouping_type="schema",
+                                grouping_name=SnowflakeConnector.snowflaky(schema),
+                                role=SnowflakeConnector.snowflaky_user_role(role),
+                            ),
+                        }
+                    )
+
+                    # Grant privileges on all iceberg tables. Full write privileges for write access
+                    sql_commands.append(
+                        {
+                            "already_granted": iceberg_table_already_granted,
+                            "sql": GRANT_ALL_PRIVILEGES_TEMPLATE.format(
+                                privileges=write_privileges,
+                                resource_type="iceberg table",
+                                grouping_type="schema",
+                                grouping_name=SnowflakeConnector.snowflaky(schema),
+                                role=SnowflakeConnector.snowflaky_user_role(role),
+                            ),
+                        }
+                    )
+
             # TODO Future elif to have partial table name
 
             else:
-                # Only one table/view to be granted permissions to
+                # Only one table/view/iceberg table to be granted permissions to
                 if table in write_table_list:
                     write_grant_tables = [table]
                     write_grant_tables_full.append(table)
                 if table in write_view_list:
                     write_grant_views = [table]
                     write_grant_views_full.append(table)
+                if table in write_iceberg_table_list:
+                    write_grant_iceberg_tables = [table]
+                    write_grant_iceberg_tables_full.append(table)
 
             # Grant privileges to all tables flagged for granting.
             # We have this loop b/c we explicitly grant to each table
@@ -1545,7 +1782,30 @@ class SnowflakeGrantsGenerator:
                     }
                 )
 
-        return (sql_commands, write_grant_tables_full, write_grant_views_full)
+            # Grant privileges to all iceberg tables in that schema.
+            # For write access, iceberg tables get full write privileges like regular tables
+            for db_iceberg_table in write_grant_iceberg_tables:
+                iceberg_table_already_granted = True
+                for privilege in write_privileges_array:
+                    # If any of the privileges are not granted, set already_granted to False
+                    if not self.is_granted_privilege(
+                        role, privilege, "iceberg table", db_iceberg_table
+                    ):
+                        iceberg_table_already_granted = False
+
+                sql_commands.append(
+                    {
+                        "already_granted": iceberg_table_already_granted,
+                        "sql": GRANT_PRIVILEGES_TEMPLATE.format(
+                            privileges=write_privileges,
+                            resource_type="iceberg table",
+                            resource_name=SnowflakeConnector.snowflaky(db_iceberg_table),
+                            role=SnowflakeConnector.snowflaky_user_role(role),
+                        ),
+                    }
+                )
+
+        return (sql_commands, write_grant_tables_full, write_grant_views_full, write_grant_iceberg_tables_full)
 
     def _generate_revoke_select_privs(
         self,
@@ -1639,7 +1899,9 @@ class SnowflakeGrantsGenerator:
         spec_dbs: Set[Any],
         all_grant_tables: List[str],
         all_grant_views: List[str],
+        all_grant_iceberg_tables: List[str],
         write_grant_tables_full: List[str],
+        write_grant_iceberg_tables_full: List[str],
     ) -> List[Dict[str, Any]]:
         read_privileges = "select"
         write_partial_privileges = "insert, update, delete, truncate, references"
@@ -1674,6 +1936,22 @@ class SnowflakeGrantsGenerator:
             )
         )
 
+        # Revoke iceberg table privileges
+        granted_resources = list(
+            set(self.grants_to_role.get(role, {}).get("select", {}).get("iceberg table", []))
+        )
+        sql_commands.extend(
+            self._generate_revoke_select_privs(
+                role=role,
+                all_grant_resources=all_grant_iceberg_tables,
+                shared_dbs=shared_dbs,
+                spec_dbs=spec_dbs,
+                privilege_set=read_privileges,
+                resource_type="iceberg table",
+                granted_resources=granted_resources,
+            )
+        )
+
         all_write_privs_granted_tables = []
         for privilege in write_partial_privileges.split(", "):
             table_names = (
@@ -1682,7 +1960,7 @@ class SnowflakeGrantsGenerator:
             all_write_privs_granted_tables += table_names
         all_write_privs_granted_tables = list(set(all_write_privs_granted_tables))
 
-        # Write Privileges
+        # Write Privileges for tables
         # Only need to revoke write privileges for tables since SELECT is the
         # only privilege available for views
         sql_commands.extend(
@@ -1694,6 +1972,28 @@ class SnowflakeGrantsGenerator:
                 privilege_set=write_partial_privileges,
                 resource_type="table",
                 granted_resources=all_write_privs_granted_tables,
+            )
+        )
+
+        # Write Privileges for iceberg tables
+        # Iceberg tables can also have write privileges like regular tables
+        all_write_privs_granted_iceberg_tables = []
+        for privilege in write_partial_privileges.split(", "):
+            iceberg_table_names = (
+                self.grants_to_role.get(role, {}).get(privilege, {}).get("iceberg table", [])
+            )
+            all_write_privs_granted_iceberg_tables += iceberg_table_names
+        all_write_privs_granted_iceberg_tables = list(set(all_write_privs_granted_iceberg_tables))
+
+        sql_commands.extend(
+            self._generate_revoke_select_privs(
+                role=role,
+                all_grant_resources=write_grant_iceberg_tables_full,
+                shared_dbs=shared_dbs,
+                spec_dbs=spec_dbs,
+                privilege_set=write_partial_privileges,
+                resource_type="iceberg table",
+                granted_resources=all_write_privs_granted_iceberg_tables,
             )
         )
 
@@ -1721,6 +2021,7 @@ class SnowflakeGrantsGenerator:
         # and store in these variables
         read_grant_tables_full = []
         read_grant_views_full = []
+        read_grant_iceberg_tables_full = []
 
         write_grant_tables_full = []
         write_grant_views_full = []
@@ -1728,23 +2029,26 @@ class SnowflakeGrantsGenerator:
         conn = SnowflakeConnector()
 
         read_tables = tables.get("read", [])
-        read_command, read_table, read_views = self._generate_table_read_grants(
+        read_command, read_table, read_views, read_iceberg_tables = self._generate_table_read_grants(
             conn, read_tables, shared_dbs, role
         )
         sql_commands.extend(read_command)
         read_grant_tables_full.extend(read_table)
         read_grant_views_full.extend(read_views)
+        read_grant_iceberg_tables_full.extend(read_iceberg_tables)
 
         write_tables = tables.get("write", [])
-        write_command, write_table, write_views = self._generate_table_write_grants(
+        write_command, write_table, write_views, write_iceberg_tables = self._generate_table_write_grants(
             conn, write_tables, shared_dbs, role
         )
         sql_commands.extend(write_command)
         write_grant_tables_full.extend(write_table)
         write_grant_views_full.extend(write_views)
+        write_grant_iceberg_tables_full = write_iceberg_tables
 
         all_grant_tables = read_grant_tables_full + write_grant_tables_full
         all_grant_views = read_grant_views_full + write_grant_views_full
+        all_grant_iceberg_tables = read_grant_iceberg_tables_full + write_grant_iceberg_tables_full
 
         sql_commands.extend(
             self.generate_revoke_privs(
@@ -1753,7 +2057,9 @@ class SnowflakeGrantsGenerator:
                 spec_dbs,
                 all_grant_tables,
                 all_grant_views,
+                all_grant_iceberg_tables,
                 write_grant_tables_full,
+                write_grant_iceberg_tables_full,
             )
         )
         return sql_commands

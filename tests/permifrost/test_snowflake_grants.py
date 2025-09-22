@@ -637,6 +637,7 @@ class TestGenerateTableAndViewGrants:
             side_effect=[["database_1.schema_1.table_1"], []],
         )
         mocker.patch.object(mock_connector, "show_views", side_effect=[[], []])
+        mocker.patch.object(mock_connector, "show_iceberg_tables", side_effect=[[], []])
 
         config = {
             "read": ["database_1.schema_1.table_1"],
@@ -664,6 +665,7 @@ class TestGenerateTableAndViewGrants:
             side_effect=[["database_1.schema_1.table_1"], []],
         )
         mocker.patch.object(mock_connector, "show_views", side_effect=[[], []])
+        mocker.patch.object(mock_connector, "show_iceberg_tables", side_effect=[[], []])
 
         config = {
             "read": [],
@@ -690,6 +692,7 @@ class TestGenerateTableAndViewGrants:
             return_value=["database_1.schema_1.table_1"],
         )
         mocker.patch.object(MockSnowflakeConnector, "show_views", return_value=[])
+        mocker.patch.object(MockSnowflakeConnector, "show_iceberg_tables", return_value=[])
 
         config = {
             "read": ["database_1.schema_1.table_1"],
@@ -715,6 +718,7 @@ class TestGenerateTableAndViewGrants:
             return_value=["shared_database_1.public.table_1"],
         )
         mocker.patch.object(MockSnowflakeConnector, "show_views", return_value=[])
+        mocker.patch.object(MockSnowflakeConnector, "show_iceberg_tables", return_value=[])
 
         config = {
             "read": ["shared_database_1.public.table_1"],
@@ -737,6 +741,7 @@ class TestGenerateTableAndViewGrants:
             return_value=["database_1.schema_1.table_1", "database_1.schema_1.table_2"],
         )
         mocker.patch.object(MockSnowflakeConnector, "show_views", return_value=[])
+        mocker.patch.object(MockSnowflakeConnector, "show_iceberg_tables", return_value=[])
 
         config = {
             "read": [
@@ -767,6 +772,7 @@ class TestGenerateTableAndViewGrants:
             return_value=["database_1.schema_1.table_1", "database_1.schema_1.table_2"],
         )
         mocker.patch.object(MockSnowflakeConnector, "show_views", return_value=[])
+        mocker.patch.object(MockSnowflakeConnector, "show_iceberg_tables", return_value=[])
 
         config = {
             "read": [],
@@ -797,6 +803,7 @@ class TestGenerateTableAndViewGrants:
             return_value=["database_1.schema_1.table_1", "database_1.schema_1.table_2"],
         )
         mocker.patch.object(MockSnowflakeConnector, "show_views", return_value=[])
+        mocker.patch.object(MockSnowflakeConnector, "show_iceberg_tables", return_value=[])
 
         config = {
             "read": [
@@ -837,6 +844,7 @@ class TestGenerateTableAndViewGrants:
             "show_views",
             return_value=["database_1.schema_1.view_1"],
         )
+        mocker.patch.object(MockSnowflakeConnector, "show_iceberg_tables", return_value=[])
 
         config = {
             "read": [
@@ -886,6 +894,11 @@ class TestGenerateTableAndViewGrants:
             mock_connector,
             "show_views",
             return_value=["database_1.schema_1.view_1"],
+        )
+        mocker.patch.object(
+            mock_connector,
+            "show_iceberg_tables",
+            return_value=[],
         )
         mocker.patch(
             "permifrost.snowflake_grants.SnowflakeConnector.show_schemas",
@@ -966,6 +979,9 @@ class TestGenerateTableAndViewGrants:
         mocker.patch.object(
             mock_connector, "show_views", return_value=["raw.public.view_1"]
         )
+        mocker.patch.object(
+            mock_connector, "show_iceberg_tables", return_value=[]
+        )
         mocker.patch(
             "permifrost.snowflake_grants.SnowflakeConnector.show_schemas",
             mock_connector.show_schemas,
@@ -1044,6 +1060,9 @@ class TestGenerateTableAndViewGrants:
         mocker.patch.object(
             mock_connector, "show_views", return_value=["raw.public.view_1"]
         )
+        mocker.patch.object(
+            mock_connector, "show_iceberg_tables", return_value=[]
+        )
         mocker.patch(
             "permifrost.snowflake_grants.SnowflakeConnector.show_schemas",
             mock_connector.show_schemas,
@@ -1101,6 +1120,7 @@ class TestGenerateTableAndViewGrants:
             ],
         )
         mocker.patch.object(mock_connector, "show_views", return_value=[])
+        mocker.patch.object(mock_connector, "show_iceberg_tables", return_value=[])
 
         config = {
             "read": [],
@@ -1166,6 +1186,11 @@ class TestGenerateTableAndViewGrants:
         mocker.patch(
             "permifrost.snowflake_grants.SnowflakeConnector.show_views",
             mock_connector.show_views,
+        )
+
+        mocker.patch(
+            "permifrost.snowflake_grants.SnowflakeConnector.show_iceberg_tables",
+            mock_connector.show_iceberg_tables,
         )
 
         tables_and_views_list = generator.generate_table_and_view_grants(
@@ -2699,6 +2724,11 @@ class TestSnowflakeOwnershipGrants:
             mock_connector,
             "show_views",
             side_effect=[["database_1.schema_1.view_1"], []],
+        )
+        mocker.patch.object(
+            mock_connector,
+            "show_iceberg_tables",
+            side_effect=[[], []],
         )
 
         (
