@@ -32,9 +32,10 @@ class OwnsSchema(TypedDict):
     tables: List[str]
 
 
-class RoleSchemaBase(TypedDict):
+class RoleSchemaBase(TypedDict, total=False):
     warehouses: List[str]
     integrations: List[str]
+    external_volumes: List[str]
     member_of: Union[MemberDictType, List[str]]
     privileges: PrivilegeSchema
     owns: OwnsSchema
@@ -80,6 +81,14 @@ class IntegrationSchema(IntegrationSchemaBase, total=False):
     owner: str
 
 
+class ExternalVolumeSchemaBase(TypedDict):
+    storage_provider: str
+
+
+class ExternalVolumeSchema(ExternalVolumeSchemaBase, total=False):
+    owner: str
+
+
 class PermifrostSpecSchemaBase(TypedDict):
     databases: List[Dict[str, DatabaseSchema]]
     roles: List[Dict[str, RoleSchema]]
@@ -91,3 +100,4 @@ class PermifrostSpecSchemaBase(TypedDict):
 class PermifrostSpecSchema(PermifrostSpecSchemaBase, total=False):
     version: str
     require_owner: bool
+    external_volumes: List[Dict[str, ExternalVolumeSchema]]

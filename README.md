@@ -1,19 +1,46 @@
-# `permifrost`
+# Tundra
 
-We welcome contributions, so please feel free to submit MRs or [issues](https://gitlab.com/gitlab-data/permifrost/-/issues/new) if you'd like to help in any way. To get started with contributions read the [Contributing](#contributing) section at the bottom of this README to get started.
+**Snowflake permissions management tool with Apache Iceberg table support**
+
+Tundra is a modern fork of permifrost that adds comprehensive support for Apache Iceberg tables in Snowflake, while maintaining all the original functionality for managing permissions on databases, schemas, tables, and views.
+
+We welcome contributions! Please submit issues or pull requests on [GitHub](https://github.com/henryupton/tundra/issues).
 
 ## Installation
 
-Install the most stable version using the following command:
+Install the latest version using:
 
-```
-pip install permifrost
+```bash
+pip install tundra
 ```
 
-If you would like to work with the most up-to-date functionality in permifrost install directly from GitLab using the following command:
+For development or latest features, install directly from GitHub:
 
+```bash
+pip install git+https://github.com/henryupton/tundra.git
 ```
-pip install git+https://gitlab.com/gitlab-data/permifrost.git
+
+## ⭐ What's New: Iceberg Table Support
+
+Tundra extends the original permifrost functionality with comprehensive support for **Apache Iceberg tables** in Snowflake:
+
+- 🔍 **Discovery**: Automatically discovers Iceberg tables using `SHOW ICEBERG TABLES`
+- 📊 **Permissions**: Grants both read (`SELECT`) and write (`INSERT`, `UPDATE`, `DELETE`, etc.) privileges
+- 🌟 **Wildcards**: Includes Iceberg tables in schema-level wildcards (`database.schema.*`)
+- 🔄 **Revocation**: Properly revokes Iceberg table permissions when configurations change
+- 🧪 **Testing**: Full test coverage for all Iceberg table scenarios
+
+Example configuration:
+```yaml
+roles:
+  data_scientist:
+    privileges:
+      tables:
+        read:
+          - analytics.public.customer_iceberg_table  # Specific Iceberg table
+          - analytics.staging.*                       # Includes all Iceberg tables in schema
+        write:
+          - analytics.public.output_iceberg_table     # Write access to Iceberg table
 ```
 
 ## Usage
@@ -21,12 +48,12 @@ pip install git+https://gitlab.com/gitlab-data/permifrost.git
 Use this command to check and manage the permissions of a Snowflake account.
 
 ```bash
-permifrost [-v] run <spec_file> [--role] [--dry] [--diff] [--user] [--ignore-memberships]
+tundra [-v] run <spec_file> [--role] [--dry] [--diff] [--user] [--ignore-memberships]
 ```
 
 ```shell
-#> permifrost run --help
-Usage: permifrost run [OPTIONS] SPEC
+#> tundra run --help
+Usage: tundra run [OPTIONS] SPEC
 
   Grant the permissions provided in the provided specification file for
   specific users and roles
@@ -46,12 +73,12 @@ Options:
 
 Use this utility command to run the SnowFlake specification loader to confirm that your `roles.yml` file is valid.
 ```bash
-permifrost [-v] spec-test <spec_file> [--role] [--user] [--ignore-memberships]
+tundra [-v] spec-test <spec_file> [--role] [--user] [--ignore-memberships]
 ```
 
 ```shell
-#>  permifrost spec-test --help
-Usage: permifrost spec-test [OPTIONS] SPEC
+#>  tundra spec-test --help
+Usage: tundra spec-test [OPTIONS] SPEC
 
   Load SnowFlake spec based on the roles.yml provided. CLI use only for confirming specifications are valid.
 

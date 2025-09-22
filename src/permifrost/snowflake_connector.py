@@ -90,8 +90,9 @@ class SnowflakeConnector:
                 )
             )
 
+    @staticmethod
     def generate_private_key(
-        self, key_path: str, key_passphrase: Union[str, None]
+            key_path: str, key_passphrase: Union[str, None]
     ) -> bytes:
         with open(key_path, "rb") as key:
             encoded_key = None
@@ -131,6 +132,31 @@ class SnowflakeConnector:
 
     def show_integrations(self) -> List[str]:
         return self.show_query("INTEGRATIONS")
+
+    def show_external_volumes(self) -> List[str]:
+        return self.show_query("EXTERNAL VOLUMES")
+
+    def show_iceberg_tables(
+        self, database: Optional[str] = None, schema: Optional[str] = None
+    ) -> List[str]:
+        names = []
+
+        if schema:
+            query = f"SHOW ICEBERG TABLES IN SCHEMA {schema}"
+        elif database:
+            query = f"SHOW ICEBERG TABLES IN DATABASE {database}"
+        else:
+            query = "SHOW ICEBERG TABLES IN ACCOUNT"
+
+        results = self.run_query(query).fetchall()
+
+        for result in results:
+            table_identifier = (
+                f"{result['database_name']}.{result['schema_name']}.{result['name']}"
+            )
+            names.append(SnowflakeConnector.snowflaky(table_identifier))
+
+        return names
 
     def show_users(self) -> List[str]:
         return self.show_query("USERS")
@@ -207,7 +233,7 @@ class SnowflakeConnector:
         else:
             pass
 
-        results = self.run_query(query).fetchall()
+        results = self.run_query(query).fetchall() # noqa
 
         for result in results:
             if result["grant_to"] == "ROLE":
@@ -268,7 +294,12 @@ class SnowflakeConnector:
         results = self.run_query(query).fetchall()
 
         for result in results:
-            roles.append(SnowflakeConnector.snowflaky(result["role"]))
+            role_value = result.get("role")
+
+            # Skip None, empty, or whitespace-only role values, occurs with personal workspaces e.g. USER$<Database name>
+            if not role_value or not str(role_value).strip():
+                logger.warning(f"Skipping empty/None role value for user {user}: {role_value}")
+                continue
 
         return roles
 
@@ -295,9 +326,10 @@ class SnowflakeConnector:
         return roles
 
     def run_query(self, query: str):
+        from sqlalchemy import text
         with self.engine.connect() as connection:
             logger.debug(f"Running query: {query}")
-            result = connection.execute(query)
+            result = connection.execute(text(query))
 
         return result
 
@@ -347,7 +379,7 @@ class SnowflakeConnector:
                     if db_schema != info_schema:
                         fetched_schemas.append(db_schema)
 
-        # TODO Handle more complicated matches
+        # TODO: Handle more complicated matches
 
         else:
             # If no * in name, then return provided schema name

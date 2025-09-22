@@ -64,8 +64,9 @@ class SnowflakeSpecLoader:
                 ignore_memberships=ignore_memberships,
             )
 
+    @staticmethod
     def check_permissions_on_snowflake_server(
-        self, conn: Optional[SnowflakeConnector] = None
+        conn: Optional[SnowflakeConnector] = None
     ) -> None:
         if conn is None:
             conn = SnowflakeConnector()
@@ -496,7 +497,8 @@ class SnowflakeSpecLoader:
         )
         return sql_commands
 
-    def process_users(self, generator, entity_type, entity_name, config):
+    @staticmethod
+    def process_users(generator, entity_type, entity_name, config):
         sql_commands = []
         click.secho(f"     Processing user {entity_name}", fg="green")
         sql_commands.extend(generator.generate_alter_user(entity_name, config))

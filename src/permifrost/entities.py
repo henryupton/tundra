@@ -19,6 +19,8 @@ class EntitySchema(TypedDict):
     warehouse_refs: Set[str]
     integrations: Set[str]
     integration_refs: Set[str]
+    external_volumes: Set[str]
+    external_volume_refs: Set[str]
     require_owner: bool
 
 
@@ -39,6 +41,8 @@ class EntityGenerator:
             "warehouse_refs": set(),
             "integrations": set(),
             "integration_refs": set(),
+            "external_volumes": set(),
+            "external_volume_refs": set(),
             "require_owner": False,
         }
         self.error_messages: List[str] = []
@@ -149,6 +153,9 @@ class EntityGenerator:
         self.generate_integrations(
             self.filter_grouped_entities_by_type(entities_by_type, "integrations")
         )
+        self.generate_external_volumes(
+            self.filter_grouped_entities_by_type(entities_by_type, "external_volumes")
+        )
         self.generate_users(
             self.filter_grouped_entities_by_type(entities_by_type, "users")
         )
@@ -226,7 +233,8 @@ class EntityGenerator:
 
         return error_messages
 
-    def ensure_valid_references(self, entities: EntitySchema) -> List[str]:
+    @staticmethod
+    def ensure_valid_references(entities: EntitySchema) -> List[str]:
         """
         Make sure that all references are well defined.
 
@@ -260,6 +268,13 @@ class EntityGenerator:
             if integration not in entities["integrations"]:
                 error_messages.append(
                     f"Reference error: Integration {integration} is referenced "
+                    "in the spec but not defined"
+                )
+
+        for external_volume in entities["external_volume_refs"]:
+            if external_volume not in entities["external_volumes"]:
+                error_messages.append(
+                    f"Reference error: External Volume {external_volume} is referenced "
                     "in the spec but not defined"
                 )
 
@@ -308,6 +323,11 @@ class EntityGenerator:
         for integration_entry in integration_list:
             for integration_name, _ in integration_entry.items():
                 self.entities["integrations"].add(integration_name)
+
+    def generate_external_volumes(self, external_volume_list: List[Dict[str, Dict]]) -> None:
+        for external_volume_entry in external_volume_list:
+            for external_volume_name, _ in external_volume_entry.items():
+                self.entities["external_volumes"].add(external_volume_name)
 
     def generate_databases(self, db_list: List[Dict[str, Dict]]) -> None:
         for db_entry in db_list:
@@ -364,6 +384,17 @@ class EntityGenerator:
                 )
             )
 
+    def generate_external_volume_roles(self, config, role_name):
+        try:
+            for external_volume in config["external_volumes"]:
+                self.entities["external_volume_refs"].add(external_volume)
+        except KeyError:
+            logger.debug(
+                "`external_volumes` not found for role {}, skipping External Volume Reference generation.".format(
+                    role_name
+                )
+            )
+
     def generate_database_roles(self, config, role_name):
         try:
             for schema in config["privileges"]["databases"]["read"]:
@@ -384,7 +415,8 @@ class EntityGenerator:
                 )
             )
 
-    def generate_read_write_database_names(self, config):
+    @staticmethod
+    def generate_read_write_database_names(config):
         read_databases = (
             config.get("privileges", {}).get("databases", {}).get("read", [])
         )
@@ -392,7 +424,7 @@ class EntityGenerator:
         write_databases = (
             config.get("privileges", {}).get("databases", {}).get("write", [])
         )
-        return (read_databases, write_databases)
+        return read_databases, write_databases
 
     def generate_schema_roles(self, config, role_name):
         read_databases, write_databases = self.generate_read_write_database_names(
@@ -505,8 +537,8 @@ class EntityGenerator:
 
     def generate_roles(self, role_list):  # noqa
         """
-        Generate all of the role entities.
-        Also can populate the role_refs, database_refs,
+        Generate all the role entities.
+        Also, can populate the role_refs, database_refs,
         schema_refs, table_refs, warehouse_refs & integration_refs
         """
 
@@ -516,6 +548,7 @@ class EntityGenerator:
                 self.generate_member_of_roles(config, role_name)
                 self.generate_warehouse_roles(config, role_name)
                 self.generate_integration_roles(config, role_name)
+                self.generate_external_volume_roles(config, role_name)
                 self.generate_database_roles(config, role_name)
                 self.generate_schema_roles(config, role_name)
                 self.generate_table_roles(config, role_name)
@@ -534,8 +567,8 @@ class EntityGenerator:
 
     def generate_users(self, user_list):
         """
-        Generate all of the user entities.
-        Also can populate the role_refs, database_refs, schema_refs & table_refs
+        Generate all the user entities.
+        Also, can populate the role_refs, database_refs, schema_refs & table_refs
         """
 
         for user_entry in user_list:
