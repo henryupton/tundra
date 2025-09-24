@@ -53,6 +53,14 @@ SNOWFLAKE_SPEC_SCHEMA = """
                 type: string
             valuesrules:
                 type: dict
+    external_volumes:
+        type: list
+        schema:
+            type: dict
+            keyschema:
+                type: string
+            valuesrules:
+                type: dict
     """
 
 SNOWFLAKE_SPEC_DATABASE_SCHEMA = """
@@ -79,6 +87,10 @@ SNOWFLAKE_SPEC_ROLE_SCHEMA = """
         schema:
             type: string
     integrations:
+        type: list
+        schema:
+            type: string
+    external_volumes:
         type: list
         schema:
             type: string
@@ -198,6 +210,18 @@ SNOWFLAKE_SPEC_WAREHOUSE_SCHEMA = """
         keyschema:
             type: string
     """
+
+SNOWFLAKE_SPEC_EXTERNAL_VOLUME_SCHEMA = """
+    owner:
+        type: string
+        required: False
+    meta:
+        type: dict
+        required: False
+        keyschema:
+            type: string
+    """
+
 
 SNOWFLAKE_SPEC_INTEGRATION_SCHEMA = """
     owner:

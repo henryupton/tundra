@@ -294,12 +294,7 @@ class SnowflakeConnector:
         results = self.run_query(query).fetchall()
 
         for result in results:
-            role_value = result.get("role")
-
-            # Skip None, empty, or whitespace-only role values, occurs with personal workspaces e.g. USER$<Database name>
-            if not role_value or not str(role_value).strip():
-                logger.warning(f"Skipping empty/None role value for user {user}: {role_value}")
-                continue
+            roles.append(SnowflakeConnector.snowflaky(result["role"]))
 
         return roles
 
@@ -401,12 +396,21 @@ class SnowflakeConnector:
         Pronounced /snəʊfleɪkɪ/ like saying very fast snowflak[e and clarif]y
         Permission granted to use snowflaky as a verb.
         """
-        name_parts = name.split(".")
+        if name is not None:
+            name_parts = name.split(".")
+        else:
+            name_parts = []
 
         # We do not currently support identifiers that include periods (i.e. db_1.schema_1."table.with.period")
         if len(name_parts) > 3:
             warnings.warn(
                 f"Unsupported object identifier: {name} contains additional periods within identifier.",
+                SyntaxWarning,
+            )
+
+        if len(name_parts) == 0:
+            warnings.warn(
+                "Object identifier is Null",
                 SyntaxWarning,
             )
 

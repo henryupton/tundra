@@ -301,7 +301,7 @@ class EntityGenerator:
             for entity_type, entry in self.spec.items()
             if entry
             and entity_type
-            in ["databases", "roles", "users", "warehouses", "integrations"]
+            in ["databases", "roles", "users", "warehouses", "integrations", "external_volumes"]
         ]
 
         for entity_type, entry in entities_by_type:

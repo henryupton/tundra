@@ -432,6 +432,7 @@ class SnowflakeSpecLoader:
                 "databases",
                 "warehouses",
                 "integrations",
+                "external_volumes",
                 "version",
             ]:
                 continue
