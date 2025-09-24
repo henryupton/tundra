@@ -20,27 +20,41 @@ For development or latest features, install directly from GitHub:
 pip install git+https://github.com/henryupton/tundra.git
 ```
 
-## ⭐ What's New: Iceberg Table Support
+## ⭐ What's New: Iceberg Table & External Volume Support
 
-Tundra extends the original permifrost functionality with comprehensive support for **Apache Iceberg tables** in Snowflake:
+Tundra extends the original permifrost functionality with comprehensive support for **Apache Iceberg tables** and **External Volumes** in Snowflake:
 
+### 🏔️ Iceberg Table Support
 - 🔍 **Discovery**: Automatically discovers Iceberg tables using `SHOW ICEBERG TABLES`
 - 📊 **Permissions**: Grants both read (`SELECT`) and write (`INSERT`, `UPDATE`, `DELETE`, etc.) privileges
 - 🌟 **Wildcards**: Includes Iceberg tables in schema-level wildcards (`database.schema.*`)
 - 🔄 **Revocation**: Properly revokes Iceberg table permissions when configurations change
-- 🧪 **Testing**: Full test coverage for all Iceberg table scenarios
+
+### 📦 External Volume Support
+- 🔗 **Storage Access**: Grants `USAGE` privileges on external volumes (S3, Azure, GCS)
+- ⚡ **Essential for Iceberg**: External volumes are required for Iceberg table operations
+- 🔄 **Auto-revocation**: Automatically revokes unused external volume access
+- 🛡️ **Security**: Manages fine-grained access to external storage locations
 
 Example configuration:
 ```yaml
+# Define external volumes for Iceberg tables
+external_volumes:
+  - s3_iceberg_volume:
+      storage_provider: s3
+      owner: sysadmin
+
 roles:
-  data_scientist:
+  data_engineer:
+    # Grant access to external volumes (required for Iceberg tables)
+    external_volumes:
+      - s3_iceberg_volume
     privileges:
       tables:
         read:
-          - analytics.public.customer_iceberg_table  # Specific Iceberg table
-          - analytics.staging.*                       # Includes all Iceberg tables in schema
+          - analytics.public.*           # Includes Iceberg tables
         write:
-          - analytics.public.output_iceberg_table     # Write access to Iceberg table
+          - analytics.public.output_*    # Write access to Iceberg tables
 ```
 
 ## Usage
@@ -341,9 +355,39 @@ integrations:
     ... ... ...
 ```
 
-For a working example, you can check [the Snowflake specification
-file](https://gitlab.com/gitlab-data/permifrost/blob/master/tests/permifrost/specs/snowflake_spec.yml)
-that we are using for testing `permifrost permissions`.
+# External Volumes
+External volumes provide access to external storage locations (S3, Azure Blob Storage, Google Cloud Storage) and are essential for Apache Iceberg table operations. They are defined at the top level and referenced in roles.
+
+```yaml
+# External volume definitions
+external_volumes:
+    - s3_iceberg_volume:
+        storage_provider: s3
+        owner: sysadmin
+    - azure_data_lake:
+        storage_provider: azure
+        owner: data_admin
+    - gcs_analytics:
+        storage_provider: gcs
+        owner: analytics_admin
+
+# Role configuration with external volume access
+roles:
+    - data_engineer:
+        external_volumes:
+            - s3_iceberg_volume
+            - azure_data_lake
+        privileges:
+            tables:
+                read:
+                    - analytics.public.*    # Includes Iceberg tables
+                write:
+                    - analytics.staging.*   # Write to Iceberg tables
+```
+
+**Important**: External volumes are required for Iceberg table operations. Roles that need to read from or write to Iceberg tables must have `USAGE` privileges on the appropriate external volumes where the Iceberg table data is stored.
+
+For a working example with external volumes, check the [`examples/external_volumes_example.yml`](examples/external_volumes_example.yml) file.
 
 Note: The spec file must all be in lowercase.
 

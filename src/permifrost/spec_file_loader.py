@@ -12,6 +12,7 @@ from permifrost.spec_schemas.snowflake import (
     SNOWFLAKE_SPEC_SCHEMA,
     SNOWFLAKE_SPEC_USER_SCHEMA,
     SNOWFLAKE_SPEC_WAREHOUSE_SCHEMA,
+    SNOWFLAKE_SPEC_EXTERNAL_VOLUME_SCHEMA,
 )
 from permifrost.types import PermifrostSpecSchema
 
@@ -60,6 +61,7 @@ def ensure_valid_schema(spec: Dict) -> List[str]:
         "users": yaml.safe_load(SNOWFLAKE_SPEC_USER_SCHEMA),
         "warehouses": yaml.safe_load(SNOWFLAKE_SPEC_WAREHOUSE_SCHEMA),
         "integrations": yaml.safe_load(SNOWFLAKE_SPEC_INTEGRATION_SCHEMA),
+        "external_volumes": yaml.safe_load(SNOWFLAKE_SPEC_EXTERNAL_VOLUME_SCHEMA),
     }
 
     validators = {
@@ -68,6 +70,7 @@ def ensure_valid_schema(spec: Dict) -> List[str]:
         "users": cerberus.Validator(schema["users"]),
         "warehouses": cerberus.Validator(schema["warehouses"]),
         "integrations": cerberus.Validator(schema["integrations"]),
+        "external_volumes": cerberus.Validator(schema["external_volumes"]),
     }
 
     entities_by_type = []
@@ -78,6 +81,7 @@ def ensure_valid_schema(spec: Dict) -> List[str]:
             "users",
             "warehouses",
             "integrations",
+            "external_volumes",
         ]:
             entities_by_type.append((entity_type, entities))
 
@@ -127,6 +131,7 @@ def load_spec(spec_path: str) -> PermifrostSpecSchema:
             "users",
             "warehouses",
             "integrations",
+            "external_volumes",
         ]:
             for entity in entities:
                 entity.pop("meta", None)
