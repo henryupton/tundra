@@ -753,8 +753,10 @@ class TestGenerateTableAndViewGrants:
         role = "functional_role"
 
         expected = [
+            "GRANT select ON ALL iceberg tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON ALL tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON ALL views IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT select ON FUTURE iceberg tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON FUTURE tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON FUTURE views IN schema database_1.schema_1 TO ROLE functional_role",
         ]
@@ -786,7 +788,9 @@ class TestGenerateTableAndViewGrants:
         expected = [
             "GRANT select ON ALL views IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON FUTURE views IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT select, insert, update, delete, truncate, references ON ALL iceberg tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select, insert, update, delete, truncate, references ON ALL tables IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT select, insert, update, delete, truncate, references ON FUTURE iceberg tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select, insert, update, delete, truncate, references ON FUTURE tables IN schema database_1.schema_1 TO ROLE functional_role",
         ]
 
@@ -817,13 +821,17 @@ class TestGenerateTableAndViewGrants:
         role = "functional_role"
 
         expected = [
+            "GRANT select ON ALL iceberg tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON ALL tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON ALL views IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON ALL views IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT select ON FUTURE iceberg tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON FUTURE tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON FUTURE views IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON FUTURE views IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT select, insert, update, delete, truncate, references ON ALL iceberg tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select, insert, update, delete, truncate, references ON ALL tables IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT select, insert, update, delete, truncate, references ON FUTURE iceberg tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select, insert, update, delete, truncate, references ON FUTURE tables IN schema database_1.schema_1 TO ROLE functional_role",
         ]
 
@@ -858,13 +866,17 @@ class TestGenerateTableAndViewGrants:
         role = "functional_role"
 
         expected = [
+            "GRANT select ON ALL iceberg tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON ALL tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON ALL views IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON ALL views IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT select ON FUTURE iceberg tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON FUTURE tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON FUTURE views IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON FUTURE views IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT select, insert, update, delete, truncate, references ON ALL iceberg tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select, insert, update, delete, truncate, references ON ALL tables IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT select, insert, update, delete, truncate, references ON FUTURE iceberg tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select, insert, update, delete, truncate, references ON FUTURE tables IN schema database_1.schema_1 TO ROLE functional_role",
         ]
 
@@ -916,6 +928,9 @@ class TestGenerateTableAndViewGrants:
         role = "functional_role"
 
         expected = [
+            "GRANT select ON ALL iceberg tables IN database database_1 TO ROLE functional_role",
+            "GRANT select ON ALL iceberg tables IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT select ON ALL iceberg tables IN schema database_1.schema_2 TO ROLE functional_role",
             "GRANT select ON ALL tables IN database database_1 TO ROLE functional_role",
             "GRANT select ON ALL tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON ALL tables IN schema database_1.schema_2 TO ROLE functional_role",
@@ -925,6 +940,9 @@ class TestGenerateTableAndViewGrants:
             "GRANT select ON ALL views IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON ALL views IN schema database_1.schema_2 TO ROLE functional_role",
             "GRANT select ON ALL views IN schema database_1.schema_2 TO ROLE functional_role",
+            "GRANT select ON FUTURE iceberg tables IN database database_1 TO ROLE functional_role",
+            "GRANT select ON FUTURE iceberg tables IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT select ON FUTURE iceberg tables IN schema database_1.schema_2 TO ROLE functional_role",
             "GRANT select ON FUTURE tables IN database database_1 TO ROLE functional_role",
             "GRANT select ON FUTURE tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON FUTURE tables IN schema database_1.schema_2 TO ROLE functional_role",
@@ -934,9 +952,15 @@ class TestGenerateTableAndViewGrants:
             "GRANT select ON FUTURE views IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON FUTURE views IN schema database_1.schema_2 TO ROLE functional_role",
             "GRANT select ON FUTURE views IN schema database_1.schema_2 TO ROLE functional_role",
+            "GRANT select, insert, update, delete, truncate, references ON ALL iceberg tables IN database database_1 TO ROLE functional_role",
+            "GRANT select, insert, update, delete, truncate, references ON ALL iceberg tables IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT select, insert, update, delete, truncate, references ON ALL iceberg tables IN schema database_1.schema_2 TO ROLE functional_role",
             "GRANT select, insert, update, delete, truncate, references ON ALL tables IN database database_1 TO ROLE functional_role",
             "GRANT select, insert, update, delete, truncate, references ON ALL tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select, insert, update, delete, truncate, references ON ALL tables IN schema database_1.schema_2 TO ROLE functional_role",
+            "GRANT select, insert, update, delete, truncate, references ON FUTURE iceberg tables IN database database_1 TO ROLE functional_role",
+            "GRANT select, insert, update, delete, truncate, references ON FUTURE iceberg tables IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT select, insert, update, delete, truncate, references ON FUTURE iceberg tables IN schema database_1.schema_2 TO ROLE functional_role",
             "GRANT select, insert, update, delete, truncate, references ON FUTURE tables IN database database_1 TO ROLE functional_role",
             "GRANT select, insert, update, delete, truncate, references ON FUTURE tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select, insert, update, delete, truncate, references ON FUTURE tables IN schema database_1.schema_2 TO ROLE functional_role",
@@ -998,6 +1022,9 @@ class TestGenerateTableAndViewGrants:
         role = "functional_role"
 
         expected = [
+            "GRANT select ON ALL iceberg tables IN database raw TO ROLE functional_role",
+            "GRANT select ON ALL iceberg tables IN schema raw.public TO ROLE functional_role",
+            "GRANT select ON ALL iceberg tables IN schema raw.public_1 TO ROLE functional_role",
             "GRANT select ON ALL tables IN database raw TO ROLE functional_role",
             "GRANT select ON ALL tables IN schema raw.public TO ROLE functional_role",
             "GRANT select ON ALL tables IN schema raw.public_1 TO ROLE functional_role",
@@ -1005,6 +1032,9 @@ class TestGenerateTableAndViewGrants:
             "GRANT select ON ALL views IN schema raw.public TO ROLE functional_role",
             "GRANT select ON ALL views IN schema raw.public TO ROLE functional_role",
             "GRANT select ON ALL views IN schema raw.public_1 TO ROLE functional_role",
+            "GRANT select ON FUTURE iceberg tables IN database raw TO ROLE functional_role",
+            "GRANT select ON FUTURE iceberg tables IN schema raw.public TO ROLE functional_role",
+            "GRANT select ON FUTURE iceberg tables IN schema raw.public_1 TO ROLE functional_role",
             "GRANT select ON FUTURE tables IN database raw TO ROLE functional_role",
             "GRANT select ON FUTURE tables IN schema raw.public TO ROLE functional_role",
             "GRANT select ON FUTURE tables IN schema raw.public_1 TO ROLE functional_role",
@@ -1012,7 +1042,9 @@ class TestGenerateTableAndViewGrants:
             "GRANT select ON FUTURE views IN schema raw.public TO ROLE functional_role",
             "GRANT select ON FUTURE views IN schema raw.public TO ROLE functional_role",
             "GRANT select ON FUTURE views IN schema raw.public_1 TO ROLE functional_role",
+            "GRANT select, insert, update, delete, truncate, references ON ALL iceberg tables IN schema raw.public TO ROLE functional_role",
             "GRANT select, insert, update, delete, truncate, references ON ALL tables IN schema raw.public TO ROLE functional_role",
+            "GRANT select, insert, update, delete, truncate, references ON FUTURE iceberg tables IN schema raw.public TO ROLE functional_role",
             "GRANT select, insert, update, delete, truncate, references ON FUTURE tables IN schema raw.public TO ROLE functional_role",
         ]
 
@@ -1135,7 +1167,9 @@ class TestGenerateTableAndViewGrants:
         expected = [
             "GRANT select ON ALL views IN schema database_1.schema_2 TO ROLE role_with_future_grants",
             "GRANT select ON FUTURE views IN schema database_1.schema_2 TO ROLE role_with_future_grants",
+            "GRANT select, insert, update, delete, truncate, references ON ALL iceberg tables IN schema database_1.schema_2 TO ROLE role_with_future_grants",
             "GRANT select, insert, update, delete, truncate, references ON ALL tables IN schema database_1.schema_2 TO ROLE role_with_future_grants",
+            "GRANT select, insert, update, delete, truncate, references ON FUTURE iceberg tables IN schema database_1.schema_2 TO ROLE role_with_future_grants",
             "GRANT select, insert, update, delete, truncate, references ON FUTURE tables IN schema database_1.schema_2 TO ROLE role_with_future_grants",
         ]
 
@@ -2225,7 +2259,7 @@ class TestGenerateSchemaRevokes:
         }
 
         expected = [
-            "REVOKE monitor, create table, create view, create stage, create file format, create sequence, create function, create pipe ON schema database_1.schema_1 FROM ROLE functional_role"
+            "REVOKE monitor, create table, create iceberg table, create view, create stage, create file format, create sequence, create function, create pipe ON schema database_1.schema_1 FROM ROLE functional_role"
         ]
 
         return [
@@ -2255,7 +2289,7 @@ class TestGenerateSchemaRevokes:
         }
 
         expected = [
-            "REVOKE monitor, create table, create view, create stage, create file format, create sequence, create function, create pipe ON schema database_1.schema_1 FROM ROLE functional_role",
+            "REVOKE monitor, create table, create iceberg table, create view, create stage, create file format, create sequence, create function, create pipe ON schema database_1.schema_1 FROM ROLE functional_role",
             "REVOKE usage ON schema database_1.schema_1 FROM ROLE functional_role",
         ]
 
@@ -2347,8 +2381,8 @@ class TestGenerateSchemaRevokes:
         }
 
         expected = [
-            "REVOKE monitor, create table, create view, create stage, create file format, create sequence, create function, create pipe ON schema database_1.schema_1 FROM ROLE functional_role",
-            "REVOKE monitor, create table, create view, create stage, create file format, create sequence, create function, create pipe ON schema database_2.schema_2 FROM ROLE functional_role",
+            "REVOKE monitor, create table, create iceberg table, create view, create stage, create file format, create sequence, create function, create pipe ON schema database_1.schema_1 FROM ROLE functional_role",
+            "REVOKE monitor, create table, create iceberg table, create view, create stage, create file format, create sequence, create function, create pipe ON schema database_2.schema_2 FROM ROLE functional_role",
             "REVOKE usage ON schema database_1.schema_1 FROM ROLE functional_role",
         ]
 
