@@ -73,18 +73,6 @@ jobs:
           echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
           echo "New version: $NEW_VERSION"
 
-      - name: Update README
-        run: |
-          NEW_VERSION="${{ steps.new-version.outputs.new_version }}"
-          
-          # Update the version in packages.yml example  
-          sed -i "s/version: \[\".*\"\]/version: [\"$NEW_VERSION\"]/" README.md
-          
-          # Update the revision line in Git installation section
-          sed -i "s/revision: .*/revision: $NEW_VERSION/" README.md
-          
-          echo "Updated README.md with version and revision: $NEW_VERSION"
-
       - name: Create and push new tag
         run: |
           NEW_VERSION="${{ steps.new-version.outputs.new_version }}"
@@ -92,10 +80,6 @@ jobs:
           # Configure git
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          
-          # Add and commit changes
-          git add README.md
-          git commit -m "Update README revision to $NEW_VERSION"
           
           # Create and push the new tag
           git tag "$NEW_VERSION"
