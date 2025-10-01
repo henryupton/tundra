@@ -129,6 +129,7 @@ class TestSnowflakeConnector:
         )
 
     def test_run_query_executes_desired_query(self, mocker):
+        from sqlalchemy import text
         mocker.patch("sqlalchemy.create_engine")
         config = {
             "user": "test",
@@ -147,7 +148,11 @@ class TestSnowflakeConnector:
 
         conn.run_query(query)
 
-        conn.engine.assert_has_calls([mocker.call.connect().__enter__().execute(query)])
+        # Check that execute was called with a TextClause containing the query
+        call_args = conn.engine.connect().__enter__().execute.call_args_list
+        assert len(call_args) == 1
+        executed_query = call_args[0][0][0]
+        assert str(executed_query) == query
 
     def test_run_query_returns_results(self, mocker):
         mocker.patch("sqlalchemy.create_engine")
