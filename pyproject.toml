@@ -3,7 +3,7 @@ requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "tundra"
+name = "tundra-cli"
 description = "Snowflake permissions management tool with Apache Iceberg table support"
 authors = [
     {name = "Henry Upton", email = "henryupton@gmail.com"}
