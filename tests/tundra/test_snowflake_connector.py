@@ -452,17 +452,14 @@ class TestSnowflakeConnector:
             "authenticator": None,
         }
         conn = SnowflakeConnector(config)
-        conn.run_query = mocker.MagicMock()
-        mocker.patch.object(
-            conn.run_query(),
-            "fetchall",
-            return_value=[
-                {"role": "TEST_ROLE"},
-                {"role": "SUPERADMIN"},
-                {"role": "ROLE WITH SPACES"},
-                {"role": "lowercase role with spaces"},
-            ],
-        )
+        mock_result = mocker.MagicMock()
+        mock_result.fetchall.return_value = [
+            {"role": "TEST_ROLE"},
+            {"role": "SUPERADMIN"},
+            {"role": "ROLE WITH SPACES"},
+            {"role": "lowercase role with spaces"},
+        ]
+        conn.run_query = mocker.MagicMock(return_value=mock_result)
 
         roles_granted_to_user = conn.show_roles_granted_to_user("test_user")
 
