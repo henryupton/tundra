@@ -11,7 +11,7 @@ We welcome contributions! Please submit issues or pull requests on [GitHub](http
 Install the latest version using:
 
 ```bash
-pip install tundra-cli==0.0.3
+pip install tundra-cli==0.0.4
 ```
 
 For development or latest features, install directly from GitHub:
