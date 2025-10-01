@@ -73,19 +73,44 @@ jobs:
           echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
           echo "New version: $NEW_VERSION"
 
-      - name: Create and push new tag
+      - name: Update VERSION file and README
         run: |
           NEW_VERSION="${{ steps.new-version.outputs.new_version }}"
-          
+
+          # Update VERSION file
+          echo "$NEW_VERSION" > VERSION
+
+          # Update README.md with new version
+          sed -i "s/pip install tundra-cli==.*/pip install tundra-cli==$NEW_VERSION/" README.md
+
+          echo "Updated VERSION to $NEW_VERSION and README.md"
+
+      - name: Commit and push version changes
+        run: |
+          NEW_VERSION="${{ steps.new-version.outputs.new_version }}"
+
           # Configure git
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          
+
+          # Add and commit changes
+          git add VERSION README.md
+          git commit -m "Bump version to $NEW_VERSION" || echo "No changes to commit"
+
+          # Push changes
+          git push origin main
+
+      - name: Create and push new tag
+        run: |
+          NEW_VERSION="${{ steps.new-version.outputs.new_version }}"
+
+          # Pull latest changes to ensure we're in sync
+          git pull origin main
+
           # Create and push the new tag
           git tag "$NEW_VERSION"
-          git push origin main
           git push origin "$NEW_VERSION"
-          
+
           echo "Created and pushed tag: $NEW_VERSION"
 
       - name: Create GitHub Release
@@ -110,10 +135,17 @@ jobs:
       id-token: write  # Required for trusted publishing to PyPI
 
     steps:
+      - name: Get latest tag
+        id: get-latest-tag
+        run: |
+          LATEST_TAG=$(git ls-remote --tags origin | grep -o 'refs/tags/[^{}]*$' | sed 's|refs/tags/||' | sort -V | tail -n 1)
+          echo "latest_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+          echo "Latest tag: $LATEST_TAG"
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ steps.get-latest-tag.outputs.latest_tag }}
           fetch-depth: 0
 
       - name: Set up Python
