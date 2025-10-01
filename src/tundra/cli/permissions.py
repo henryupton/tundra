@@ -39,7 +39,7 @@ def print_command(command, diff, dry=False):
 
 @cli.command()  # type: ignore
 @click.argument("spec")
-@click.option("--dry", help="Do not actually run, just check.", is_flag=True)
+@click.option("--dry", "--dryrun", help="Do not actually run, just check.", is_flag=True)
 @click.option(
     "--diff", help="Show full diff, both new and existing permissions.", is_flag=True
 )
