@@ -1571,7 +1571,7 @@ class SnowflakeGrantsGenerator:
                     {
                         "already_granted": iceberg_table_already_granted,
                         "sql": GRANT_FUTURE_PRIVILEGES_TEMPLATE.format(
-                            privileges="select",
+                            privileges=write_privileges,
                             resource_type="iceberg table",
                             grouping_type="database",
                             grouping_name=SnowflakeConnector.snowflaky(database_name),
@@ -1584,7 +1584,7 @@ class SnowflakeGrantsGenerator:
                     {
                         "already_granted": iceberg_table_already_granted,
                         "sql": GRANT_ALL_PRIVILEGES_TEMPLATE.format(
-                            privileges="select",
+                            privileges=write_privileges,
                             resource_type="iceberg table",
                             grouping_type="database",
                             grouping_name=SnowflakeConnector.snowflaky(database_name),
