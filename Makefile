@@ -10,7 +10,7 @@ REMOTE = $(shell git ls-remote --get-url)
 # Remove the start of the string
 URL_END = $(shell echo "${REMOTE}" | sed -e "s/git@gitlab.com:/''/g")
 # Remove the end of the string.
-DEFAULT_ORG = $(shell echo "${URL_END}" | sed -e "s/\/permifrost.git/''/g")
+DEFAULT_ORG = $(shell echo "${URL_END}" | sed -e "s/\/tundra.git/''/g")
 
 help:
 	@echo "base-image -> builds gitlab-data/base"
@@ -18,18 +18,18 @@ help:
 	@echo "docker-images -> builds the base and prod images"
 	@echo "install-dev -> installs local package with dev dependencies"
 	@echo "initial-setup -> installs local package with dev dependencies and pre-commit hooks"
-	@echo "permifrost -> starts a shell in a container with the local Permifrost installed"
+	@echo "tundra -> starts a shell in a container with the local Tundra installed"
 	@echo 'requirements.txt -> pins dependency versions in `requirements.txt`'
-	@echo "prod-image -> builds gitlab-data/permifrost which is an all-in-one production image"
+	@echo "prod-image -> builds gitlab-data/tundra which is an all-in-one production image"
 	@echo "test -> runs pytest"
 	@echo "local-lint -> runs local linting suite to refactor code"
 	@echo "local-show-lint -> shows linting suite results"
-	@echo "show-coverage -> runs pytest coverage report inside docker instance when permifrost local initiated"
+	@echo "show-coverage -> runs pytest coverage report inside docker instance when tundra local initiated"
 
 #########################################################
 ################### Development #########################
 #########################################################
-.PHONY: compose-down permifrost
+.PHONY: compose-down tundra
 
 compose-build:
 	@docker-compose build
@@ -37,8 +37,8 @@ compose-build:
 compose-down:
 	@docker-compose down
 
-permifrost: compose-down compose-build
-	@docker-compose run permifrost /bin/bash -c "pip install -e . && clear && /bin/bash"
+tundra: compose-down compose-build
+	@docker-compose run tundra /bin/bash -c "pip install -e . && clear && /bin/bash"
 
 #########################################################
 #################### CI Tests ###########################
@@ -46,21 +46,21 @@ permifrost: compose-down compose-build
 .PHONY: base-image prod-image lint show_lint test clean docker-images release
 
 ifdef DOCKER_REGISTRY
-base_image_tag = ${DOCKER_REGISTRY}/${DEFAULT_ORG}/permifrost/base
-prod_image_tag = ${DOCKER_REGISTRY}/${DEFAULT_ORG}/permifrost
+base_image_tag = ${DOCKER_REGISTRY}/${DEFAULT_ORG}/tundra/base
+prod_image_tag = ${DOCKER_REGISTRY}/${DEFAULT_ORG}/tundra
 else
-base_image_tag = ${DEFAULT_ORG}/permifrost/base
-prod_image_tag = ${DEFAULT_ORG}/permifrost
+base_image_tag = ${DEFAULT_ORG}/tundra/base
+prod_image_tag = ${DEFAULT_ORG}/tundra
 endif
 
 # Testing
 test: compose-down compose-build
-	@docker-compose run permifrost /bin/bash \
+	@docker-compose run tundra /bin/bash \
 		-c "pip install -e . && pytest -x -v --disable-pytest-warnings"
 
 typecheck: compose-build
-	@docker-compose run permifrost /bin/bash \
-		-c "pip install -e . && mypy src/permifrost/ --ignore-missing-imports"
+	@docker-compose run tundra /bin/bash \
+		-c "pip install -e . && mypy src/tundra/ --ignore-missing-imports"
 
 # Docker
 docker-images: prod-image
@@ -80,16 +80,16 @@ prod-image: base-image
 
 
 # Linting
-BLACK_RUN = black src/permifrost tests/
+BLACK_RUN = black src/tundra tests/
 MYPY_RUN = mypy src
 FLAKE8_RUN = flake8 src/ tests/
 ISORT_RUN = isort src/
 
 lint: compose-build
-	@docker-compose run permifrost /bin/bash -c "make local-lint"
+	@docker-compose run tundra /bin/bash -c "make local-lint"
 
 show-lint: compose-build
-	@docker-compose run permifrost /bin/bash -c "make local-show-lint"
+	@docker-compose run tundra /bin/bash -c "make local-show-lint"
 
 local-lint:
 	pre-commit run --hook-stage push
@@ -120,7 +120,7 @@ ci-lint:
 	${FLAKE8_RUN}
 
 show-coverage:
-	pytest --disable-pytest-warnings --cov-report term-missing --cov permifrost
+	pytest --disable-pytest-warnings --cov-report term-missing --cov tundra
 
 #########################################################
 #################### Deployment #########################
@@ -128,7 +128,7 @@ show-coverage:
 
 # Packaging Related
 requirements.txt: setup.py
-	@docker-compose run permifrost /bin/bash \
+	@docker-compose run tundra /bin/bash \
 		-c "pip install -e .'[dev]' && pip freeze --exclude-editable > $@"
 
 install-dev:
@@ -145,7 +145,7 @@ initial-setup:
 # and follow the instructions to determine what type of semantic release to perform
 
 suggest:
-	@(echo "Permifrost version " && changelog current && echo " should be updated to: " \
+	@(echo "Tundra version " && changelog current && echo " should be updated to: " \
 		&& changelog suggest) | tr -d "\n" && echo "\n"
 
 # The `make release` command requires a type of release.
@@ -162,9 +162,9 @@ release:
 	bumpversion --tag --allow-dirty --new-version `changelog current` $(type)
 
 dist: compose-build
-	@docker-compose run permifrost /bin/bash \
+	@docker-compose run tundra /bin/bash \
 		-c "python setup.py sdist"
 
 docker-clean:
-	@docker-compose run permifrost /bin/bash \
+	@docker-compose run tundra /bin/bash \
 		-c "rm -rf dist"

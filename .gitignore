@@ -129,4 +129,4 @@ venv.bak/
 # mypy
 .mypy_cache/
 
-permifrost.log.*
+tundra.log.*

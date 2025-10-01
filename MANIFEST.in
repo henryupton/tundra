@@ -2,7 +2,7 @@ include *.py
 include LICENSE
 include VERSION
 
-graft src/permifrost
+graft src/tundra
 graft tests
 
 global-exclude __pycache__
