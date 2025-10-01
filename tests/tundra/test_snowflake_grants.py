@@ -135,12 +135,28 @@ def test_grants_to_role():
             "select": {
                 "table": ["database_1.schema_1.<table>"],
                 "view": ["database_1.schema_1.<view>"],
+                "iceberg table": ['database_1.schema_1."<iceberg table>"'],
             },
-            "insert": {"table": ["database_1.schema_1.<table>"]},
-            "update": {"table": ["database_1.schema_1.<table>"]},
-            "delete": {"table": ["database_1.schema_1.<table>"]},
-            "truncate": {"table": ["database_1.schema_1.<table>"]},
-            "references": {"table": ["database_1.schema_1.<table>"]},
+            "insert": {
+                "table": ["database_1.schema_1.<table>"],
+                "iceberg table": ['database_1.schema_1."<iceberg table>"'],
+            },
+            "update": {
+                "table": ["database_1.schema_1.<table>"],
+                "iceberg table": ['database_1.schema_1."<iceberg table>"'],
+            },
+            "delete": {
+                "table": ["database_1.schema_1.<table>"],
+                "iceberg table": ['database_1.schema_1."<iceberg table>"'],
+            },
+            "truncate": {
+                "table": ["database_1.schema_1.<table>"],
+                "iceberg table": ['database_1.schema_1."<iceberg table>"'],
+            },
+            "references": {
+                "table": ["database_1.schema_1.<table>"],
+                "iceberg table": ['database_1.schema_1."<iceberg table>"'],
+            },
         },
     }
 
@@ -929,7 +945,6 @@ class TestGenerateTableAndViewGrants:
 
         expected = [
             "GRANT select ON ALL iceberg tables IN database database_1 TO ROLE functional_role",
-            "GRANT select ON ALL iceberg tables IN database database_1 TO ROLE functional_role",
             "GRANT select ON ALL iceberg tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON ALL iceberg tables IN schema database_1.schema_2 TO ROLE functional_role",
             "GRANT select ON ALL tables IN database database_1 TO ROLE functional_role",
@@ -942,10 +957,7 @@ class TestGenerateTableAndViewGrants:
             "GRANT select ON ALL views IN schema database_1.schema_2 TO ROLE functional_role",
             "GRANT select ON ALL views IN schema database_1.schema_2 TO ROLE functional_role",
             "GRANT select ON FUTURE iceberg tables IN database database_1 TO ROLE functional_role",
-            "GRANT select ON FUTURE iceberg tables IN database database_1 TO ROLE functional_role",
             "GRANT select ON FUTURE iceberg tables IN schema database_1.schema_1 TO ROLE functional_role",
-            "GRANT select ON FUTURE iceberg tables IN schema database_1.schema_1 TO ROLE functional_role",
-            "GRANT select ON FUTURE iceberg tables IN schema database_1.schema_2 TO ROLE functional_role",
             "GRANT select ON FUTURE iceberg tables IN schema database_1.schema_2 TO ROLE functional_role",
             "GRANT select ON FUTURE tables IN database database_1 TO ROLE functional_role",
             "GRANT select ON FUTURE tables IN schema database_1.schema_1 TO ROLE functional_role",
@@ -957,19 +969,13 @@ class TestGenerateTableAndViewGrants:
             "GRANT select ON FUTURE views IN schema database_1.schema_2 TO ROLE functional_role",
             "GRANT select ON FUTURE views IN schema database_1.schema_2 TO ROLE functional_role",
             "GRANT select, insert, update, delete, truncate, references ON ALL iceberg tables IN database database_1 TO ROLE functional_role",
-            "GRANT select, insert, update, delete, truncate, references ON ALL iceberg tables IN database database_1 TO ROLE functional_role",
             "GRANT select, insert, update, delete, truncate, references ON ALL iceberg tables IN schema database_1.schema_1 TO ROLE functional_role",
-            "GRANT select, insert, update, delete, truncate, references ON ALL iceberg tables IN schema database_1.schema_1 TO ROLE functional_role",
-            "GRANT select, insert, update, delete, truncate, references ON ALL iceberg tables IN schema database_1.schema_2 TO ROLE functional_role",
             "GRANT select, insert, update, delete, truncate, references ON ALL iceberg tables IN schema database_1.schema_2 TO ROLE functional_role",
             "GRANT select, insert, update, delete, truncate, references ON ALL tables IN database database_1 TO ROLE functional_role",
             "GRANT select, insert, update, delete, truncate, references ON ALL tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select, insert, update, delete, truncate, references ON ALL tables IN schema database_1.schema_2 TO ROLE functional_role",
             "GRANT select, insert, update, delete, truncate, references ON FUTURE iceberg tables IN database database_1 TO ROLE functional_role",
-            "GRANT select, insert, update, delete, truncate, references ON FUTURE iceberg tables IN database database_1 TO ROLE functional_role",
             "GRANT select, insert, update, delete, truncate, references ON FUTURE iceberg tables IN schema database_1.schema_1 TO ROLE functional_role",
-            "GRANT select, insert, update, delete, truncate, references ON FUTURE iceberg tables IN schema database_1.schema_1 TO ROLE functional_role",
-            "GRANT select, insert, update, delete, truncate, references ON FUTURE iceberg tables IN schema database_1.schema_2 TO ROLE functional_role",
             "GRANT select, insert, update, delete, truncate, references ON FUTURE iceberg tables IN schema database_1.schema_2 TO ROLE functional_role",
             "GRANT select, insert, update, delete, truncate, references ON FUTURE tables IN database database_1 TO ROLE functional_role",
             "GRANT select, insert, update, delete, truncate, references ON FUTURE tables IN schema database_1.schema_1 TO ROLE functional_role",
