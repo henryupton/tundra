@@ -867,7 +867,7 @@ class SnowflakeGrantsGenerator:
 
         read_privileges = "usage"
         partial_write_privileges = (
-            "monitor, create table,"
+            "monitor, create table, create iceberg table,"
             " create view, create stage, create file format,"
             " create sequence, create function, create pipe"
         )
