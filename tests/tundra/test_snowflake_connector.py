@@ -130,7 +130,19 @@ class TestSnowflakeConnector:
 
     def test_run_query_executes_desired_query(self, mocker):
         mocker.patch("sqlalchemy.create_engine")
-        conn = SnowflakeConnector()
+        config = {
+            "user": "test",
+            "password": "test",
+            "account": "test",
+            "database": "test",
+            "role": "test",
+            "warehouse": "test",
+            "oauth_token": None,
+            "key_path": None,
+            "key_passphrase": None,
+            "authenticator": None,
+        }
+        conn = SnowflakeConnector(config)
         query = "MY FUN TESTING QUERY"
 
         conn.run_query(query)
@@ -422,7 +434,19 @@ class TestSnowflakeConnector:
 
     def test_show_roles_granted_to_user(self, mocker):
         mocker.patch("sqlalchemy.create_engine")
-        conn = SnowflakeConnector()
+        config = {
+            "user": "test",
+            "password": "test",
+            "account": "test",
+            "database": "test",
+            "role": "test",
+            "warehouse": "test",
+            "oauth_token": None,
+            "key_path": None,
+            "key_passphrase": None,
+            "authenticator": None,
+        }
+        conn = SnowflakeConnector(config)
         conn.run_query = mocker.MagicMock()
         mocker.patch.object(
             conn.run_query(),

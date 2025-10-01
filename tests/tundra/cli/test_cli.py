@@ -5,7 +5,7 @@ from tundra.cli import cli
 def test_version(cli_runner):
     cli_version = cli_runner.invoke(cli, ["--version"])
 
-    assert cli_version.output == f"tundra {tundra.__version__} - Snowflake permissions with Iceberg table support"
+    assert cli_version.output == f"tundra {tundra.__version__} - Snowflake permissions with Iceberg table support\n"
 
 
 def test_run_command(cli_runner):
