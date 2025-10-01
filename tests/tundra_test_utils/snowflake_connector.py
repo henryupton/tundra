@@ -3,6 +3,10 @@ from tundra.snowflake_connector import SnowflakeConnector
 
 
 class MockSnowflakeConnector(SnowflakeConnector):
+    def __init__(self, config: Optional[Dict] = None) -> None:
+        # Override parent __init__ to avoid requiring environment variables
+        pass
+
     def show_databases(self) -> List[str]:
         return []
 
