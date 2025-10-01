@@ -308,7 +308,6 @@ class SnowflakeConnector:
         results = self.run_query(query).fetchall()
 
         for result in results:
-            roles.append(SnowflakeConnector.snowflaky(result["role"]))
             if bool(re.match("^[a-zA-Z0-9_]*$", result["role"])):
                 clean_role = SnowflakeConnector.snowflaky(result["role"].lower())
             else:
