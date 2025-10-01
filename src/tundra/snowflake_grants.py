@@ -2087,22 +2087,34 @@ class SnowflakeGrantsGenerator:
         if "has_password" in config:
             if not config.get("has_password"):
                 alter_privileges.append("PASSWORD = NULL")
-        for conf in [
+
+        identifiers = [
+            "default_warehouse",
+            "default_namespace",
+            "default_role",
+        ]
+
+        others =  [
             "display_name",
             "first_name",
             "middle_name",
             "last_name",
             "email",
             "comment",
-            "default_warehouse",
-            "default_namespace",
-            "default_role",
             "type",
-        ]:
-            if conf in config:
-                property_name = str.upper(conf)
-                property_value = config.get(conf)
+        ]
+
+        for other in others:
+            if other in config:
+                property_name = str.upper(other)
+                property_value = config.get(other)
                 alter_privileges.append(f"{property_name} = '{property_value}'")
+
+        for identifier in identifiers:
+            if identifier in config:
+                property_name = str.upper(identifier)
+                property_value = config.get(identifier)
+                alter_privileges.append(f"{property_name} = {SnowflakeConnector.snowflaky(property_value)}")
 
         if alter_privileges:
             sql_commands.append(

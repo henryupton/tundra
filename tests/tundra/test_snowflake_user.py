@@ -42,7 +42,7 @@ def test_roles_spec_file():
         )
         .add_user(
             name="test_user_defaults",
-            default_warehouse="ftl",
+            default_warehouse="Ftl",
             default_namespace="public",
             default_role="role1",
         )
@@ -302,9 +302,9 @@ class TestSnowflakeUserProperties:
             {
                 "already_granted": False,
                 "sql": "ALTER USER test_user_defaults SET DISABLED = FALSE, "
-                "DEFAULT_WAREHOUSE = 'ftl', "
-                "DEFAULT_NAMESPACE = 'public', "
-                "DEFAULT_ROLE = 'role1'",
+                'DEFAULT_WAREHOUSE = "Ftl", '
+                "DEFAULT_NAMESPACE = public, "
+                "DEFAULT_ROLE = role1",
             }
         ]
 
