@@ -215,6 +215,9 @@ SNOWFLAKE_SPEC_EXTERNAL_VOLUME_SCHEMA = """
     owner:
         type: string
         required: False
+    storage_provider:
+        type: string
+        required: False
     meta:
         type: dict
         required: False
