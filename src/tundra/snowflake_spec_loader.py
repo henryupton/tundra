@@ -22,6 +22,7 @@ class SnowflakeSpecLoader:
         run_list: Optional[List[str]] = None,
         ignore_memberships: Optional[bool] = False,
         spec_test: Optional[bool] = False,
+        skip_validation: Optional[bool] = False,
     ) -> None:
         run_list = run_list or ["users", "roles"]
         # Load the specification file and check for (syntactical) errors
@@ -42,11 +43,17 @@ class SnowflakeSpecLoader:
 
         # Connect to Snowflake to make sure that all entities defined in the
         # spec file are also defined in Snowflake (no missing databases, etc)
-        click.secho(
-            "Checking that all entities in the spec file are defined in Snowflake",
-            fg="green",
-        )
-        self.check_entities_on_snowflake_server(conn)
+        if not skip_validation:
+            click.secho(
+                "Checking that all entities in the spec file are defined in Snowflake",
+                fg="green",
+            )
+            self.check_entities_on_snowflake_server(conn)
+        else:
+            click.secho(
+                "Skipping entity validation checks (--skip-validation flag set)",
+                fg="yellow",
+            )
 
         # Get the privileges granted to users and roles in the Snowflake account
         # Used in order to figure out which permissions in the spec file are
