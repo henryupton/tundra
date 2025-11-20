@@ -23,6 +23,7 @@ class SnowflakeSpecLoader:
         ignore_memberships: Optional[bool] = False,
         spec_test: Optional[bool] = False,
         skip_validation: Optional[bool] = False,
+        ignore_missing_objects: Optional[bool] = False,
     ) -> None:
         run_list = run_list or ["users", "roles"]
         # Load the specification file and check for (syntactical) errors
@@ -43,12 +44,23 @@ class SnowflakeSpecLoader:
 
         # Connect to Snowflake to make sure that all entities defined in the
         # spec file are also defined in Snowflake (no missing databases, etc)
+        # Store missing entities for filtering if ignore_missing_objects is set
+        self.missing_entities: Dict[str, Any] = {
+            "warehouses": set(),
+            "integrations": set(),
+            "databases": set(),
+            "schemas": set(),
+            "tables": set(),
+            "roles": set(),
+            "users": set(),
+        }
+
         if not skip_validation:
             click.secho(
                 "Checking that all entities in the spec file are defined in Snowflake",
                 fg="green",
             )
-            self.check_entities_on_snowflake_server(conn)
+            self.check_entities_on_snowflake_server(conn, ignore_missing_objects)
         else:
             click.secho(
                 "Skipping entity validation checks (--skip-validation flag set)",
@@ -98,6 +110,7 @@ class SnowflakeSpecLoader:
             warehouses = conn.show_warehouses()
             for warehouse in self.entities["warehouses"]:
                 if warehouse not in warehouses:
+                    self.missing_entities["warehouses"].add(warehouse)
                     error_messages.append(
                         f"Missing Entity Error: Warehouse {warehouse} was not found on"
                         " Snowflake Server. Please create it before continuing."
@@ -114,6 +127,7 @@ class SnowflakeSpecLoader:
             integrations = conn.show_integrations()
             for integration in self.entities["integrations"]:
                 if integration not in integrations:
+                    self.missing_entities["integrations"].add(integration)
                     error_messages.append(
                         f"Missing Entity Error: Integration {integration} was not found on"
                         " Snowflake Server. Please create it before continuing."
@@ -130,6 +144,7 @@ class SnowflakeSpecLoader:
             databases = conn.show_databases()
             for db in self.entities["databases"]:
                 if db not in databases:
+                    self.missing_entities["databases"].add(db)
                     error_messages.append(
                         f"Missing Entity Error: Database {db} was not found on"
                         " Snowflake Server. Please create it before continuing."
@@ -144,6 +159,7 @@ class SnowflakeSpecLoader:
             schemas = conn.show_schemas()
             for schema in self.entities["schema_refs"]:
                 if "*" not in schema and schema not in schemas:
+                    self.missing_entities["schemas"].add(schema)
                     error_messages.append(
                         f"Missing Entity Error: Schema {schema} was not found on"
                         " Snowflake Server. Please create it before continuing."
@@ -165,6 +181,7 @@ class SnowflakeSpecLoader:
                         and table not in existing_tables
                         and table not in views
                     ):
+                        self.missing_entities["tables"].add(table)
                         error_messages.append(
                             f"Missing Entity Error: Table/View {table} was not found on"
                             " Snowflake Server. Please create it before continuing."
@@ -180,6 +197,7 @@ class SnowflakeSpecLoader:
             for role in self.spec["roles"]:
                 for role_name, config in role.items():
                     if role_name not in roles:
+                        self.missing_entities["roles"].add(role_name)
                         error_messages.append(
                             f"Missing Entity Error: Role {role_name} was not found on"
                             " Snowflake Server. Please create it before continuing."
@@ -202,6 +220,7 @@ class SnowflakeSpecLoader:
             users = conn.show_users()
             for user in self.entities["users"]:
                 if user not in users:
+                    self.missing_entities["users"].add(user)
                     error_messages.append(
                         f"Missing Entity Error: User {user} was not found on"
                         " Snowflake Server. Please create it before continuing."
@@ -211,14 +230,17 @@ class SnowflakeSpecLoader:
         return error_messages
 
     def check_entities_on_snowflake_server(  # noqa
-        self, conn: Optional[SnowflakeConnector] = None
+        self, conn: Optional[SnowflakeConnector] = None, ignore_missing: bool = False
     ) -> None:
         """
         Make sure that all [warehouses, integrations, dbs, schemas, tables, users, roles]
         referenced in the spec are defined in Snowflake.
 
+        If ignore_missing is True, stores missing entities in self.missing_entities
+        instead of raising errors.
+
         Raises a SpecLoadingError with all the errors found while checking
-        Snowflake for missing entities.
+        Snowflake for missing entities (only if ignore_missing is False).
         """
         error_messages = []
 
@@ -234,7 +256,15 @@ class SnowflakeSpecLoader:
         error_messages.extend(self.check_users_entities(conn))
 
         if error_messages:
-            raise SpecLoadingError("\n".join(error_messages))
+            if ignore_missing:
+                click.secho(
+                    f"Warning: {len(error_messages)} missing entities found, ignoring them (--ignore-missing-objects flag set)",
+                    fg="yellow",
+                )
+                for msg in error_messages:
+                    logger.info(msg)
+            else:
+                raise SpecLoadingError("\n".join(error_messages))
 
     def get_role_privileges_from_snowflake_server(
         self,
@@ -404,6 +434,60 @@ class SnowflakeSpecLoader:
                 if item and ("." not in item or item.split(".")[0] in database_refs)
             ]
 
+    def filter_config_for_missing_entities(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Filter out missing entities from a role/user config.
+        Returns a new config with missing entities removed.
+        """
+        if not any(self.missing_entities.values()):
+            # No missing entities, return config as-is
+            return config
+
+        filtered_config = config.copy()
+
+        # Filter warehouses
+        if "warehouses" in filtered_config:
+            filtered_config["warehouses"] = [
+                w for w in filtered_config["warehouses"]
+                if w not in self.missing_entities["warehouses"]
+            ]
+
+        # Filter integrations
+        if "integrations" in filtered_config:
+            filtered_config["integrations"] = [
+                i for i in filtered_config["integrations"]
+                if i not in self.missing_entities["integrations"]
+            ]
+
+        # Filter privileges.databases
+        if "privileges" in filtered_config and "databases" in filtered_config["privileges"]:
+            for access_type in ["read", "write"]:
+                if access_type in filtered_config["privileges"]["databases"]:
+                    filtered_config["privileges"]["databases"][access_type] = [
+                        db for db in filtered_config["privileges"]["databases"][access_type]
+                        if db not in self.missing_entities["databases"]
+                    ]
+
+        # Filter privileges.schemas
+        if "privileges" in filtered_config and "schemas" in filtered_config["privileges"]:
+            for access_type in ["read", "write"]:
+                if access_type in filtered_config["privileges"]["schemas"]:
+                    filtered_config["privileges"]["schemas"][access_type] = [
+                        s for s in filtered_config["privileges"]["schemas"][access_type]
+                        if s not in self.missing_entities["schemas"]
+                    ]
+
+        # Filter privileges.tables
+        if "privileges" in filtered_config and "tables" in filtered_config["privileges"]:
+            for access_type in ["read", "write"]:
+                if access_type in filtered_config["privileges"]["tables"]:
+                    filtered_config["privileges"]["tables"][access_type] = [
+                        t for t in filtered_config["privileges"]["tables"][access_type]
+                        if t not in self.missing_entities["tables"]
+                    ]
+
+        return filtered_config
+
     def generate_permission_queries(
         self,
         roles: Optional[List[str]] = None,
@@ -455,6 +539,17 @@ class SnowflakeSpecLoader:
                     if config
                 ]
                 for entity_name, config in entity_configs:
+                    # Skip missing roles/users
+                    if entity_type == "roles" and entity_name in self.missing_entities["roles"]:
+                        logger.info(f"Skipping missing role: {entity_name}")
+                        continue
+                    if entity_type == "users" and entity_name in self.missing_entities["users"]:
+                        logger.info(f"Skipping missing user: {entity_name}")
+                        continue
+
+                    # Filter out missing entities from config
+                    filtered_config = self.filter_config_for_missing_entities(config)
+
                     if (
                         entity_type == "roles"
                         and "roles" in run_list
@@ -465,7 +560,7 @@ class SnowflakeSpecLoader:
                                 generator,
                                 entity_type,
                                 entity_name,
-                                config,
+                                filtered_config,
                                 all_entities,
                             )
                         )
@@ -476,7 +571,7 @@ class SnowflakeSpecLoader:
                     ):
                         sql_commands.extend(
                             self.process_users(
-                                generator, entity_type, entity_name, config
+                                generator, entity_type, entity_name, filtered_config
                             )
                         )
 

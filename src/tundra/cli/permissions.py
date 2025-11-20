@@ -65,8 +65,13 @@ def print_command(command, diff, dry=False):
     help="Skip validation checks for entity existence in Snowflake",
     is_flag=True,
 )
+@click.option(
+    "--ignore-missing-objects",
+    help="Ignore grants for objects that don't exist in Snowflake instead of failing",
+    is_flag=True,
+)
 @click.pass_context
-def run(ctx, spec, dry, diff, role, user, ignore_memberships, skip_validation, print_skipped=False):
+def run(ctx, spec, dry, diff, role, user, ignore_memberships, skip_validation, ignore_missing_objects, print_skipped=False):
     """
     Grant the permissions provided in the provided specification file for specific users and roles.
     This fork includes support for Iceberg tables, external volumes, and catalog integrations.
@@ -90,6 +95,7 @@ def run(ctx, spec, dry, diff, role, user, ignore_memberships, skip_validation, p
         run_list=run_list,
         ignore_memberships=ignore_memberships,
         skip_validation=skip_validation,
+        ignore_missing_objects=ignore_missing_objects,
         print_skipped=print_skipped,
     )
 
@@ -134,7 +140,7 @@ def spec_test(spec, role, user, run_list, ignore_memberships):
     )
 
 
-def load_specs(spec, role, user, run_list, ignore_memberships, do_spec_test, skip_validation=False):
+def load_specs(spec, role, user, run_list, ignore_memberships, do_spec_test, skip_validation=False, ignore_missing_objects=False):
     """
     Load specs separately.
     """
@@ -148,6 +154,7 @@ def load_specs(spec, role, user, run_list, ignore_memberships, do_spec_test, ski
             ignore_memberships=ignore_memberships,
             spec_test=do_spec_test,
             skip_validation=skip_validation,
+            ignore_missing_objects=ignore_missing_objects,
         )
         click.secho("Snowflake specs successfully loaded", fg="green")
     except SpecLoadingError as exc:
@@ -159,7 +166,7 @@ def load_specs(spec, role, user, run_list, ignore_memberships, do_spec_test, ski
 
 
 def tundra_grants(
-    spec, dry, diff, roles, users, run_list, ignore_memberships, skip_validation, print_skipped
+    spec, dry, diff, roles, users, run_list, ignore_memberships, skip_validation, ignore_missing_objects, print_skipped
 ):
     """Grant the permissions provided in the provided specification file."""
     spec_loader = load_specs(
@@ -169,6 +176,7 @@ def tundra_grants(
         run_list=run_list,
         ignore_memberships=ignore_memberships,
         skip_validation=skip_validation,
+        ignore_missing_objects=ignore_missing_objects,
         do_spec_test=False,
     )
 
