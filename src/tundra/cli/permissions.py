@@ -60,8 +60,13 @@ def print_command(command, diff, dry=False):
     help="Do not handle role membership grants/revokes",
     is_flag=True,
 )
+@click.option(
+    "--skip-validation",
+    help="Skip validation checks for entity existence in Snowflake",
+    is_flag=True,
+)
 @click.pass_context
-def run(ctx, spec, dry, diff, role, user, ignore_memberships, print_skipped=False):
+def run(ctx, spec, dry, diff, role, user, ignore_memberships, skip_validation, print_skipped=False):
     """
     Grant the permissions provided in the provided specification file for specific users and roles.
     This fork includes support for Iceberg tables, external volumes, and catalog integrations.
@@ -84,6 +89,7 @@ def run(ctx, spec, dry, diff, role, user, ignore_memberships, print_skipped=Fals
         users=user,
         run_list=run_list,
         ignore_memberships=ignore_memberships,
+        skip_validation=skip_validation,
         print_skipped=print_skipped,
     )
 
@@ -128,7 +134,7 @@ def spec_test(spec, role, user, run_list, ignore_memberships):
     )
 
 
-def load_specs(spec, role, user, run_list, ignore_memberships, do_spec_test):
+def load_specs(spec, role, user, run_list, ignore_memberships, do_spec_test, skip_validation=False):
     """
     Load specs separately.
     """
@@ -141,6 +147,7 @@ def load_specs(spec, role, user, run_list, ignore_memberships, do_spec_test):
             run_list=run_list,
             ignore_memberships=ignore_memberships,
             spec_test=do_spec_test,
+            skip_validation=skip_validation,
         )
         click.secho("Snowflake specs successfully loaded", fg="green")
     except SpecLoadingError as exc:
@@ -152,7 +159,7 @@ def load_specs(spec, role, user, run_list, ignore_memberships, do_spec_test):
 
 
 def tundra_grants(
-    spec, dry, diff, roles, users, run_list, ignore_memberships, print_skipped
+    spec, dry, diff, roles, users, run_list, ignore_memberships, skip_validation, print_skipped
 ):
     """Grant the permissions provided in the provided specification file."""
     spec_loader = load_specs(
@@ -161,6 +168,7 @@ def tundra_grants(
         user=users,
         run_list=run_list,
         ignore_memberships=ignore_memberships,
+        skip_validation=skip_validation,
         do_spec_test=False,
     )
 
