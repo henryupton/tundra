@@ -75,6 +75,18 @@ def test_roles_spec_file():
             type="SERVICE",
             has_password=False,
         )
+        .add_user(
+            name="test_user_with_secondary_roles",
+            default_secondary_roles=["developer", "analyst"],
+        )
+        .add_user(
+            name="test_user_with_empty_secondary_roles",
+            default_secondary_roles=[],
+        )
+        .add_user(
+            name="test_user_with_single_secondary_role",
+            default_secondary_roles=["viewer"],
+        )
         .build()
     )
     yield spec_file_data
@@ -101,6 +113,9 @@ def test_roles_mock_connector(mocker):
             "test_user_with_multiple_properties",
             "test_user_with_person_type",
             "test_user_with_service_type_and_no_password",
+            "test_user_with_secondary_roles",
+            "test_user_with_empty_secondary_roles",
+            "test_user_with_single_secondary_role",
         ],
     )
     yield mock_connector
@@ -346,5 +361,65 @@ class TestSnowflakeUserProperties:
                 "sql": "ALTER USER test_user_with_service_type_and_no_password SET DISABLED = FALSE, "
                 "PASSWORD = NULL, "
                 "TYPE = 'SERVICE'",
+            }
+        ]
+
+    def test_user_with_secondary_roles(
+        self, mocker, test_roles_mock_connector, test_roles_spec_file
+    ):
+        """Make sure that default_secondary_roles is set correctly with multiple roles."""
+
+        print(f"Spec File Data is:\n{test_roles_spec_file}")
+        mocker.patch("builtins.open", mocker.mock_open(read_data=test_roles_spec_file))
+        spec_loader = SnowflakeSpecLoader(spec_path="", conn=test_roles_mock_connector)
+        queries = spec_loader.generate_permission_queries(
+            users=["test_user_with_secondary_roles"], run_list=["users"]
+        )
+
+        assert queries == [
+            {
+                "already_granted": False,
+                "sql": "ALTER USER test_user_with_secondary_roles SET DISABLED = FALSE, "
+                "DEFAULT_SECONDARY_ROLES = ('developer', 'analyst')",
+            }
+        ]
+
+    def test_user_with_empty_secondary_roles(
+        self, mocker, test_roles_mock_connector, test_roles_spec_file
+    ):
+        """Make sure that empty default_secondary_roles list produces empty parentheses."""
+
+        print(f"Spec File Data is:\n{test_roles_spec_file}")
+        mocker.patch("builtins.open", mocker.mock_open(read_data=test_roles_spec_file))
+        spec_loader = SnowflakeSpecLoader(spec_path="", conn=test_roles_mock_connector)
+        queries = spec_loader.generate_permission_queries(
+            users=["test_user_with_empty_secondary_roles"], run_list=["users"]
+        )
+
+        assert queries == [
+            {
+                "already_granted": False,
+                "sql": "ALTER USER test_user_with_empty_secondary_roles SET DISABLED = FALSE, "
+                "DEFAULT_SECONDARY_ROLES = ()",
+            }
+        ]
+
+    def test_user_with_single_secondary_role(
+        self, mocker, test_roles_mock_connector, test_roles_spec_file
+    ):
+        """Make sure that default_secondary_roles works with a single role."""
+
+        print(f"Spec File Data is:\n{test_roles_spec_file}")
+        mocker.patch("builtins.open", mocker.mock_open(read_data=test_roles_spec_file))
+        spec_loader = SnowflakeSpecLoader(spec_path="", conn=test_roles_mock_connector)
+        queries = spec_loader.generate_permission_queries(
+            users=["test_user_with_single_secondary_role"], run_list=["users"]
+        )
+
+        assert queries == [
+            {
+                "already_granted": False,
+                "sql": "ALTER USER test_user_with_single_secondary_role SET DISABLED = FALSE, "
+                "DEFAULT_SECONDARY_ROLES = ('viewer')",
             }
         ]

@@ -187,6 +187,11 @@ SNOWFLAKE_SPEC_USER_SCHEMA = """
     default_role:
         type: string
         required: False
+    default_secondary_roles:
+        type: list
+        required: False
+        schema:
+            type: string
     type:
         type: string
         required: False
