@@ -58,6 +58,14 @@ class SnowflakeSchemaBuilder:
                 if user[conf] is not None:
                     spec_yaml.append(f"      {conf}: {user[conf]}")
 
+            if user["default_secondary_roles"] is not None:
+                if user["default_secondary_roles"]:
+                    spec_yaml.append("      default_secondary_roles:")
+                    for role in user["default_secondary_roles"]:
+                        spec_yaml.append(f"        - {role}")
+                else:
+                    spec_yaml.append("      default_secondary_roles: []")
+
         if len(self.warehouses) > 0:
             spec_yaml.append("warehouses:")
         for warehouse in self.warehouses:
@@ -290,6 +298,7 @@ class SnowflakeSchemaBuilder:
         default_warehouse: Optional[str] = None,
         default_namespace: Optional[str] = None,
         default_role: Optional[str] = None,
+        default_secondary_roles: Optional[List[str]] = None,
         type: Optional[str] = None,
     ):
         """
@@ -309,6 +318,7 @@ class SnowflakeSchemaBuilder:
                 "default_warehouse": default_warehouse,
                 "default_namespace": default_namespace,
                 "default_role": default_role,
+                "default_secondary_roles": default_secondary_roles,
                 "type": type,
             }
         )

@@ -62,6 +62,7 @@ class UserSchema(UserSchemaBase, total=False):
     default_warehouse: str
     default_namespace: str
     default_role: str
+    default_secondary_roles: List[str]
     type: str
 
 
