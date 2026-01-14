@@ -87,6 +87,26 @@ def test_roles_spec_file():
             name="test_user_with_single_secondary_role",
             default_secondary_roles=["viewer"],
         )
+        .add_user(
+            name="test_user_with_lowercase_type",
+            type="person",
+        )
+        .add_user(
+            name="test_user_with_service_lowercase",
+            type="service",
+        )
+        .add_user(
+            name="test_user_with_legacy_service_type",
+            type="legacy_service",
+        )
+        .add_user(
+            name="test_user_with_legacy_service_mixed_case",
+            type="Legacy_Service",
+        )
+        .add_user(
+            name="test_user_with_invalid_type",
+            type="INVALID_TYPE",
+        )
         .build()
     )
     yield spec_file_data
@@ -116,6 +136,11 @@ def test_roles_mock_connector(mocker):
             "test_user_with_secondary_roles",
             "test_user_with_empty_secondary_roles",
             "test_user_with_single_secondary_role",
+            "test_user_with_lowercase_type",
+            "test_user_with_service_lowercase",
+            "test_user_with_legacy_service_type",
+            "test_user_with_legacy_service_mixed_case",
+            "test_user_with_invalid_type",
         ],
     )
     yield mock_connector
@@ -134,7 +159,7 @@ class TestSnowflakeUserProperties:
         assert queries == [
             {
                 "already_granted": False,
-                "sql": "ALTER USER base_user_test SET DISABLED = FALSE",
+                "sql": "ALTER USER base_user_test SET DISABLED = FALSE, TYPE = 'PERSON', DEFAULT_SECONDARY_ROLES = ()",
             }
         ]
 
@@ -152,7 +177,7 @@ class TestSnowflakeUserProperties:
         assert queries == [
             {
                 "already_granted": False,
-                "sql": "ALTER USER test_user_with_password_disabled SET DISABLED = FALSE, PASSWORD = NULL",
+                "sql": "ALTER USER test_user_with_password_disabled SET DISABLED = FALSE, PASSWORD = NULL, TYPE = 'PERSON', DEFAULT_SECONDARY_ROLES = ()",
             }
         ]
 
@@ -171,7 +196,7 @@ class TestSnowflakeUserProperties:
         assert queries == [
             {
                 "already_granted": False,
-                "sql": "ALTER USER test_user_with_display_name SET DISABLED = FALSE, DISPLAY_NAME = 'Gaius'",
+                "sql": "ALTER USER test_user_with_display_name SET DISABLED = FALSE, DISPLAY_NAME = 'Gaius', TYPE = 'PERSON', DEFAULT_SECONDARY_ROLES = ()",
             }
         ]
 
@@ -190,7 +215,7 @@ class TestSnowflakeUserProperties:
         assert queries == [
             {
                 "already_granted": False,
-                "sql": "ALTER USER test_user_with_comment SET DISABLED = FALSE, COMMENT = 'I am a comment'",
+                "sql": "ALTER USER test_user_with_comment SET DISABLED = FALSE, COMMENT = 'I am a comment', TYPE = 'PERSON', DEFAULT_SECONDARY_ROLES = ()",
             }
         ]
 
@@ -209,7 +234,7 @@ class TestSnowflakeUserProperties:
         assert queries == [
             {
                 "already_granted": False,
-                "sql": "ALTER USER test_user_with_comment_password_disabled SET DISABLED = FALSE, PASSWORD = NULL, COMMENT = 'I am a comment'",
+                "sql": "ALTER USER test_user_with_comment_password_disabled SET DISABLED = FALSE, PASSWORD = NULL, COMMENT = 'I am a comment', TYPE = 'PERSON', DEFAULT_SECONDARY_ROLES = ()",
             }
         ]
 
@@ -229,7 +254,7 @@ class TestSnowflakeUserProperties:
             {
                 "already_granted": False,
                 "sql": "ALTER USER test_user_with_full_name SET DISABLED = FALSE, FIRST_NAME = 'Kara', "
-                "MIDDLE_NAME = 'Starbuck', LAST_NAME = 'Thrace'",
+                "MIDDLE_NAME = 'Starbuck', LAST_NAME = 'Thrace', TYPE = 'PERSON', DEFAULT_SECONDARY_ROLES = ()",
             }
         ]
 
@@ -248,7 +273,7 @@ class TestSnowflakeUserProperties:
         assert queries == [
             {
                 "already_granted": False,
-                "sql": "ALTER USER test_user_with_email SET DISABLED = FALSE, EMAIL = 'It is not validated'",
+                "sql": "ALTER USER test_user_with_email SET DISABLED = FALSE, EMAIL = 'It is not validated', TYPE = 'PERSON', DEFAULT_SECONDARY_ROLES = ()",
             }
         ]
 
@@ -269,7 +294,8 @@ class TestSnowflakeUserProperties:
                 "already_granted": False,
                 "sql": "ALTER USER test_user_with_password_display_name_comment SET DISABLED = FALSE, "
                 "DISPLAY_NAME = 'Boomer', "
-                "COMMENT = 'Please do not disable the password, for some reason can not proceed after the CAPTCHA.'",
+                "COMMENT = 'Please do not disable the password, for some reason can not proceed after the CAPTCHA.', "
+                "TYPE = 'PERSON', DEFAULT_SECONDARY_ROLES = ()",
             }
         ]
 
@@ -296,7 +322,8 @@ class TestSnowflakeUserProperties:
                 "MIDDLE_NAME = 'Bill', "
                 "LAST_NAME = 'Adama', "
                 "EMAIL = 'wba@bsg.com', "
-                "COMMENT = 'Not a Cylon'",
+                "COMMENT = 'Not a Cylon', "
+                "TYPE = 'PERSON', DEFAULT_SECONDARY_ROLES = ()",
             }
         ]
 
@@ -319,7 +346,8 @@ class TestSnowflakeUserProperties:
                 "sql": "ALTER USER test_user_defaults SET DISABLED = FALSE, "
                 'DEFAULT_WAREHOUSE = "Ftl", '
                 "DEFAULT_NAMESPACE = public, "
-                "DEFAULT_ROLE = role1",
+                "DEFAULT_ROLE = role1, "
+                "TYPE = 'PERSON', DEFAULT_SECONDARY_ROLES = ()",
             }
         ]
 
@@ -338,7 +366,7 @@ class TestSnowflakeUserProperties:
         assert queries == [
             {
                 "already_granted": False,
-                "sql": "ALTER USER test_user_with_person_type SET DISABLED = FALSE, TYPE = 'PERSON'",
+                "sql": "ALTER USER test_user_with_person_type SET DISABLED = FALSE, TYPE = 'PERSON', DEFAULT_SECONDARY_ROLES = ()",
             }
         ]
 
@@ -360,7 +388,7 @@ class TestSnowflakeUserProperties:
                 "already_granted": False,
                 "sql": "ALTER USER test_user_with_service_type_and_no_password SET DISABLED = FALSE, "
                 "PASSWORD = NULL, "
-                "TYPE = 'SERVICE'",
+                "TYPE = 'SERVICE', DEFAULT_SECONDARY_ROLES = ()",
             }
         ]
 
@@ -380,7 +408,7 @@ class TestSnowflakeUserProperties:
             {
                 "already_granted": False,
                 "sql": "ALTER USER test_user_with_secondary_roles SET DISABLED = FALSE, "
-                "DEFAULT_SECONDARY_ROLES = ('developer', 'analyst')",
+                "TYPE = 'PERSON', DEFAULT_SECONDARY_ROLES = ('developer', 'analyst')",
             }
         ]
 
@@ -400,7 +428,7 @@ class TestSnowflakeUserProperties:
             {
                 "already_granted": False,
                 "sql": "ALTER USER test_user_with_empty_secondary_roles SET DISABLED = FALSE, "
-                "DEFAULT_SECONDARY_ROLES = ()",
+                "TYPE = 'PERSON', DEFAULT_SECONDARY_ROLES = ()",
             }
         ]
 
@@ -420,6 +448,96 @@ class TestSnowflakeUserProperties:
             {
                 "already_granted": False,
                 "sql": "ALTER USER test_user_with_single_secondary_role SET DISABLED = FALSE, "
-                "DEFAULT_SECONDARY_ROLES = ('viewer')",
+                "TYPE = 'PERSON', DEFAULT_SECONDARY_ROLES = ('viewer')",
             }
         ]
+
+    def test_user_with_lowercase_type(
+        self, mocker, test_roles_mock_connector, test_roles_spec_file
+    ):
+        """Make sure that type is normalized to uppercase when provided in lowercase."""
+
+        print(f"Spec File Data is:\n{test_roles_spec_file}")
+        mocker.patch("builtins.open", mocker.mock_open(read_data=test_roles_spec_file))
+        spec_loader = SnowflakeSpecLoader(spec_path="", conn=test_roles_mock_connector)
+        queries = spec_loader.generate_permission_queries(
+            users=["test_user_with_lowercase_type"], run_list=["users"]
+        )
+
+        assert queries == [
+            {
+                "already_granted": False,
+                "sql": "ALTER USER test_user_with_lowercase_type SET DISABLED = FALSE, TYPE = 'PERSON', DEFAULT_SECONDARY_ROLES = ()",
+            }
+        ]
+
+    def test_user_with_service_lowercase(
+        self, mocker, test_roles_mock_connector, test_roles_spec_file
+    ):
+        """Make sure that type SERVICE works in lowercase."""
+
+        print(f"Spec File Data is:\n{test_roles_spec_file}")
+        mocker.patch("builtins.open", mocker.mock_open(read_data=test_roles_spec_file))
+        spec_loader = SnowflakeSpecLoader(spec_path="", conn=test_roles_mock_connector)
+        queries = spec_loader.generate_permission_queries(
+            users=["test_user_with_service_lowercase"], run_list=["users"]
+        )
+
+        assert queries == [
+            {
+                "already_granted": False,
+                "sql": "ALTER USER test_user_with_service_lowercase SET DISABLED = FALSE, TYPE = 'SERVICE', DEFAULT_SECONDARY_ROLES = ()",
+            }
+        ]
+
+    def test_user_with_legacy_service_type(
+        self, mocker, test_roles_mock_connector, test_roles_spec_file
+    ):
+        """Make sure that type LEGACY_SERVICE is supported."""
+
+        print(f"Spec File Data is:\n{test_roles_spec_file}")
+        mocker.patch("builtins.open", mocker.mock_open(read_data=test_roles_spec_file))
+        spec_loader = SnowflakeSpecLoader(spec_path="", conn=test_roles_mock_connector)
+        queries = spec_loader.generate_permission_queries(
+            users=["test_user_with_legacy_service_type"], run_list=["users"]
+        )
+
+        assert queries == [
+            {
+                "already_granted": False,
+                "sql": "ALTER USER test_user_with_legacy_service_type SET DISABLED = FALSE, TYPE = 'LEGACY_SERVICE', DEFAULT_SECONDARY_ROLES = ()",
+            }
+        ]
+
+    def test_user_with_legacy_service_mixed_case(
+        self, mocker, test_roles_mock_connector, test_roles_spec_file
+    ):
+        """Make sure that type handles mixed case correctly."""
+
+        print(f"Spec File Data is:\n{test_roles_spec_file}")
+        mocker.patch("builtins.open", mocker.mock_open(read_data=test_roles_spec_file))
+        spec_loader = SnowflakeSpecLoader(spec_path="", conn=test_roles_mock_connector)
+        queries = spec_loader.generate_permission_queries(
+            users=["test_user_with_legacy_service_mixed_case"], run_list=["users"]
+        )
+
+        assert queries == [
+            {
+                "already_granted": False,
+                "sql": "ALTER USER test_user_with_legacy_service_mixed_case SET DISABLED = FALSE, TYPE = 'LEGACY_SERVICE', DEFAULT_SECONDARY_ROLES = ()",
+            }
+        ]
+
+    def test_user_with_invalid_type(
+        self, mocker, test_roles_mock_connector, test_roles_spec_file
+    ):
+        """Make sure that invalid type values raise ValueError."""
+
+        print(f"Spec File Data is:\n{test_roles_spec_file}")
+        mocker.patch("builtins.open", mocker.mock_open(read_data=test_roles_spec_file))
+        spec_loader = SnowflakeSpecLoader(spec_path="", conn=test_roles_mock_connector)
+
+        with pytest.raises(ValueError, match="Invalid user type 'INVALID_TYPE'"):
+            spec_loader.generate_permission_queries(
+                users=["test_user_with_invalid_type"], run_list=["users"]
+            )
