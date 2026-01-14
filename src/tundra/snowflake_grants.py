@@ -2101,7 +2101,6 @@ class SnowflakeGrantsGenerator:
             "last_name",
             "email",
             "comment",
-            "type",
         ]
 
         for other in others:
@@ -2116,11 +2115,20 @@ class SnowflakeGrantsGenerator:
                 property_value = config.get(identifier)
                 alter_privileges.append(f"{property_name} = {SnowflakeConnector.snowflaky(property_value)}")
 
-        if "default_secondary_roles" in config:
-            secondary_roles = config.get("default_secondary_roles", [])
-            quoted_roles = [f"'{SnowflakeConnector.snowflaky_user_role(role)}'" for role in secondary_roles]
-            roles_list = ", ".join(quoted_roles)
-            alter_privileges.append(f"DEFAULT_SECONDARY_ROLES = ({roles_list})")
+        # Handle user type with validation (case-insensitive)
+        user_type = config.get("type", "PERSON").upper()
+        allowed_types = ["PERSON", "SERVICE", "LEGACY_SERVICE"]
+        if user_type not in allowed_types:
+            raise ValueError(
+                f"Invalid user type '{config.get('type')}'. "
+                f"Must be one of: {', '.join(allowed_types)} (case-insensitive)"
+            )
+        alter_privileges.append(f"TYPE = '{user_type}'")
+
+        secondary_roles = config.get("default_secondary_roles", [])
+        quoted_roles = [f"'{SnowflakeConnector.snowflaky_user_role(role)}'" for role in secondary_roles]
+        roles_list = ", ".join(quoted_roles)
+        alter_privileges.append(f"DEFAULT_SECONDARY_ROLES = ({roles_list})")
 
         if alter_privileges:
             sql_commands.append(
