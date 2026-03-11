@@ -5,6 +5,8 @@ from tundra.snowflake_connector import SnowflakeConnector
 
 GRANT_ROLE_TEMPLATE = "GRANT ROLE {role_name} TO {type} {entity_name}"
 
+GRANT_DATABASE_ROLE_TEMPLATE = "GRANT DATABASE ROLE {role_name} TO ROLE {entity_name}"
+
 REVOKE_ROLE_TEMPLATE = "REVOKE ROLE {role_name} FROM {type} {entity_name}"
 
 GRANT_PRIVILEGES_TEMPLATE = (
@@ -89,18 +91,18 @@ class SnowflakeGrantsGenerator:
         if isinstance(config.get("member_of", []), dict):
             member_include_list = config.get("member_of", {}).get("include", [])
             member_include_list = [
-                SnowflakeConnector.snowflaky_user_role(role)
+                SnowflakeConnector.snowflaky(role) if "." in role else SnowflakeConnector.snowflaky_user_role(role)
                 for role in member_include_list
             ]
             member_exclude_list = config.get("member_of", {}).get("exclude", [])
             member_exclude_list = [
-                SnowflakeConnector.snowflaky_user_role(role)
+                SnowflakeConnector.snowflaky(role) if "." in role else SnowflakeConnector.snowflaky_user_role(role)
                 for role in member_exclude_list
             ]
         elif isinstance(config.get("member_of", []), list):
             member_include_list = config.get("member_of", [])
             member_include_list = [
-                SnowflakeConnector.snowflaky_user_role(role)
+                SnowflakeConnector.snowflaky(role) if "." in role else SnowflakeConnector.snowflaky_user_role(role)
                 for role in member_include_list
             ]
 
@@ -143,16 +145,18 @@ class SnowflakeGrantsGenerator:
 
         sql_commands = []
         for member_role in member_of_list:
-            granted_role = SnowflakeConnector.snowflaky_user_role(member_role)
+            is_database_role = "." in member_role
+            granted_role = member_role if is_database_role else SnowflakeConnector.snowflaky_user_role(member_role)
             already_granted = False
-            if (
-                entity_type == "users"
-                and granted_role in self.roles_granted_to_user[entity]
-            ) or (
-                entity_type == "roles"
-                and self.is_granted_privilege(entity, "usage", "role", member_role)
-            ):
-                already_granted = True
+            if not is_database_role:
+                if (
+                    entity_type == "users"
+                    and granted_role in self.roles_granted_to_user[entity]
+                ) or (
+                    entity_type == "roles"
+                    and self.is_granted_privilege(entity, "usage", "role", member_role)
+                ):
+                    already_granted = True
 
             # Don't generate grants for Snowflake default roles as this will raise errors
             # on Snowflake
@@ -168,16 +172,28 @@ class SnowflakeGrantsGenerator:
                 and member_role in snowflake_default_roles
             ):
                 continue
-            sql_commands.append(
-                {
-                    "already_granted": already_granted,
-                    "sql": GRANT_ROLE_TEMPLATE.format(
-                        role_name=SnowflakeConnector.snowflaky_user_role(member_role),
-                        type=grant_type,
-                        entity_name=SnowflakeConnector.snowflaky_user_role(entity),
-                    ),
-                }
-            )
+
+            if is_database_role:
+                sql_commands.append(
+                    {
+                        "already_granted": already_granted,
+                        "sql": GRANT_DATABASE_ROLE_TEMPLATE.format(
+                            role_name=member_role,
+                            entity_name=SnowflakeConnector.snowflaky_user_role(entity),
+                        ),
+                    }
+                )
+            else:
+                sql_commands.append(
+                    {
+                        "already_granted": already_granted,
+                        "sql": GRANT_ROLE_TEMPLATE.format(
+                            role_name=SnowflakeConnector.snowflaky_user_role(member_role),
+                            type=grant_type,
+                            entity_name=SnowflakeConnector.snowflaky_user_role(entity),
+                        ),
+                    }
+                )
         return sql_commands
 
     def _generate_revoke_sql_commands_for_user(
