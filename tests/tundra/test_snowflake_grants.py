@@ -402,6 +402,73 @@ class TestGenerateRoleGrants:
             expected,
         ]
 
+    def generate_single_database_role_grant():
+        """
+        Generate GRANT DATABASE ROLE for role_1 to be a member of mydb.db_role_1
+        """
+        entity_type = "roles"
+        entity = "role_1"
+        test_grants_to_role = {
+            "member_of": ["mydb.db_role_1"],
+        }
+        test_roles_granted_to_user = {}
+        ignore_membership = False
+        expected = ["GRANT DATABASE ROLE mydb.db_role_1 TO ROLE role_1"]
+        return [
+            entity_type,
+            entity,
+            test_grants_to_role,
+            test_roles_granted_to_user,
+            ignore_membership,
+            expected,
+        ]
+
+    def generate_mixed_role_and_database_role_grants():
+        """
+        Generate both GRANT ROLE and GRANT DATABASE ROLE when member_of contains
+        regular roles and database roles (identified by containing a dot)
+        """
+        entity_type = "roles"
+        entity = "role_1"
+        test_grants_to_role = {
+            "member_of": ["role_2", "mydb.db_role_1"],
+        }
+        test_roles_granted_to_user = {}
+        ignore_membership = False
+        expected = [
+            "GRANT DATABASE ROLE mydb.db_role_1 TO ROLE role_1",
+            "GRANT ROLE role_2 TO role role_1",
+        ]
+        return [
+            entity_type,
+            entity,
+            test_grants_to_role,
+            test_roles_granted_to_user,
+            ignore_membership,
+            expected,
+        ]
+
+    def generate_database_role_grant_special_chars():
+        """
+        Generate GRANT DATABASE ROLE where identifiers require quoting
+        """
+        entity_type = "roles"
+        entity = "role_1"
+        test_grants_to_role = {
+            "member_of": ["my-db.db-role-1"],
+        }
+        test_roles_granted_to_user = {}
+        ignore_membership = False
+        expected = ['GRANT DATABASE ROLE "my-db"."db-role-1" TO ROLE role_1']
+        return [
+            entity_type,
+            entity,
+            test_grants_to_role,
+            test_roles_granted_to_user,
+            ignore_membership,
+            expected,
+        ]
+
     @pytest.mark.parametrize(
         "config",
         [
@@ -411,6 +478,9 @@ class TestGenerateRoleGrants:
             generate_multi_role_grants,
             generate_multi_user_grants_ignore,
             generate_multi_role_grants_ignore,
+            generate_single_database_role_grant,
+            generate_mixed_role_and_database_role_grants,
+            generate_database_role_grant_special_chars,
         ],
     )
     def test_generate_grant_roles(
