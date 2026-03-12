@@ -338,6 +338,8 @@ class SnowflakeSpecLoader:
         for role in self.entities["roles"]:
             if (roles and role not in roles) or ignore_memberships:
                 continue
+            if "." in role:
+                continue
             logger.info(f"Fetching all grants for role {role}")
             role_grants = conn.show_grants_to_role(role)
             for privilege in role_grants:

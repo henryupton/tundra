@@ -348,13 +348,16 @@ class EntityGenerator:
         try:
             if isinstance(config["member_of"], dict):
                 for member_role in config["member_of"].get("include", []):
-                    self.entities["roles"].add(member_role)
+                    if "." not in member_role:
+                        self.entities["roles"].add(member_role)
                 for member_role in config["member_of"].get("exclude", []):
-                    self.entities["roles"].add(member_role)
+                    if "." not in member_role:
+                        self.entities["roles"].add(member_role)
 
             if isinstance(config["member_of"], list):
                 for member_role in config["member_of"]:
-                    self.entities["roles"].add(member_role)
+                    if "." not in member_role:
+                        self.entities["roles"].add(member_role)
         except KeyError:
             logger.debug(
                 "`member_of` not found for role {}, skipping Role Reference generation.".format(
