@@ -279,6 +279,27 @@ class SnowflakeConnector:
 
         return grants
 
+    def show_grants_to_database_role(self, db_role: str) -> Dict[str, Any]:
+        grants: Dict[str, Any] = {}
+
+        query = f"SHOW GRANTS TO DATABASE ROLE {SnowflakeConnector.snowflaky_database_role(db_role)}"
+        results = self.run_query(query).fetchall()
+
+        for result in results:
+            privilege = result["privilege"].lower()
+            granted_on = result["granted_on"].lower()
+
+            if bool(re.match("^[a-zA-Z0-9_]*$", result["name"])):
+                clean_name = result["name"].lower()
+            else:
+                clean_name = result["name"]
+
+            grants.setdefault(privilege, {}).setdefault(granted_on, []).append(
+                SnowflakeConnector.snowflaky(clean_name)
+            )
+
+        return grants
+
     def show_grants_to_role_with_grant_option(self, role) -> Dict[str, Any]:
         grants: Dict[str, Any] = {}
 
@@ -454,6 +475,34 @@ class SnowflakeConnector:
             ) or part.lower() in SnowflakeConnector.reserved_keywords():
                 new_name_parts.append(f'"{part}"')
 
+            else:
+                new_name_parts.append(part.lower())
+
+        return ".".join(new_name_parts)
+
+    @staticmethod
+    def snowflaky_database_role(name: str) -> str:
+        """
+        Convert a database role FQN (db.role) to a properly quoted Snowflake identifier.
+
+        Unlike snowflaky(), components that require quoting are uppercased first, since
+        Snowflake stores unquoted identifiers as uppercase and reserved keywords like
+        'snowflake' must be referenced as "SNOWFLAKE" to match the stored form.
+
+        e.g. snowflake.organization_billing_viewer --> "SNOWFLAKE".organization_billing_viewer
+             my-db.my-role                         --> "MY-DB"."MY-ROLE"
+        """
+        name_parts = name.split(".")
+        new_name_parts = []
+
+        for part in name_parts:
+            if re.match('^".*"$', part) is not None:
+                new_name_parts.append(part)
+            elif (
+                re.match("^[a-z_][0-9a-z_$]*$", part) is None
+                and re.match("^[A-Z_][0-9A-Z_$]*$", part) is None
+            ) or part.lower() in SnowflakeConnector.reserved_keywords():
+                new_name_parts.append(f'"{part.upper()}"')
             else:
                 new_name_parts.append(part.lower())
 
