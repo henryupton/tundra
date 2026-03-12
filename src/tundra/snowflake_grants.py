@@ -91,18 +91,18 @@ class SnowflakeGrantsGenerator:
         if isinstance(config.get("member_of", []), dict):
             member_include_list = config.get("member_of", {}).get("include", [])
             member_include_list = [
-                SnowflakeConnector.snowflaky(role) if "." in role else SnowflakeConnector.snowflaky_user_role(role)
+                SnowflakeConnector.snowflaky_database_role(role) if "." in role else SnowflakeConnector.snowflaky_user_role(role)
                 for role in member_include_list
             ]
             member_exclude_list = config.get("member_of", {}).get("exclude", [])
             member_exclude_list = [
-                SnowflakeConnector.snowflaky(role) if "." in role else SnowflakeConnector.snowflaky_user_role(role)
+                SnowflakeConnector.snowflaky_database_role(role) if "." in role else SnowflakeConnector.snowflaky_user_role(role)
                 for role in member_exclude_list
             ]
         elif isinstance(config.get("member_of", []), list):
             member_include_list = config.get("member_of", [])
             member_include_list = [
-                SnowflakeConnector.snowflaky(role) if "." in role else SnowflakeConnector.snowflaky_user_role(role)
+                SnowflakeConnector.snowflaky_database_role(role) if "." in role else SnowflakeConnector.snowflaky_user_role(role)
                 for role in member_include_list
             ]
 
@@ -146,9 +146,12 @@ class SnowflakeGrantsGenerator:
         sql_commands = []
         for member_role in member_of_list:
             is_database_role = "." in member_role
-            granted_role = member_role if is_database_role else SnowflakeConnector.snowflaky_user_role(member_role)
             already_granted = False
-            if not is_database_role:
+            if is_database_role:
+                if self.is_granted_privilege(entity, "usage", "database role", member_role):
+                    already_granted = True
+            else:
+                granted_role = SnowflakeConnector.snowflaky_user_role(member_role)
                 if (
                     entity_type == "users"
                     and granted_role in self.roles_granted_to_user[entity]

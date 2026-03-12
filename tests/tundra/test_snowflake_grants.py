@@ -450,7 +450,8 @@ class TestGenerateRoleGrants:
 
     def generate_database_role_grant_special_chars():
         """
-        Generate GRANT DATABASE ROLE where identifiers require quoting
+        Generate GRANT DATABASE ROLE where identifiers require quoting — special chars
+        are uppercased before quoting to match Snowflake's stored form.
         """
         entity_type = "roles"
         entity = "role_1"
@@ -459,7 +460,30 @@ class TestGenerateRoleGrants:
         }
         test_roles_granted_to_user = {}
         ignore_membership = False
-        expected = ['GRANT DATABASE ROLE "my-db"."db-role-1" TO ROLE role_1']
+        expected = ['GRANT DATABASE ROLE "MY-DB"."DB-ROLE-1" TO ROLE role_1']
+        return [
+            entity_type,
+            entity,
+            test_grants_to_role,
+            test_roles_granted_to_user,
+            ignore_membership,
+            expected,
+        ]
+
+    def generate_database_role_grant_reserved_keyword():
+        """
+        Generate GRANT DATABASE ROLE where the database name is a reserved keyword
+        (e.g. 'snowflake'). Must be uppercased when quoted so it matches the Snowflake
+        system database SNOWFLAKE, not a lowercase object named 'snowflake'.
+        """
+        entity_type = "roles"
+        entity = "role_1"
+        test_grants_to_role = {
+            "member_of": ["snowflake.organization_billing_viewer"],
+        }
+        test_roles_granted_to_user = {}
+        ignore_membership = False
+        expected = ['GRANT DATABASE ROLE "SNOWFLAKE".organization_billing_viewer TO ROLE role_1']
         return [
             entity_type,
             entity,
@@ -481,6 +505,7 @@ class TestGenerateRoleGrants:
             generate_single_database_role_grant,
             generate_mixed_role_and_database_role_grants,
             generate_database_role_grant_special_chars,
+            generate_database_role_grant_reserved_keyword,
         ],
     )
     def test_generate_grant_roles(
