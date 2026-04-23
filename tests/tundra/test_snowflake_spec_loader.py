@@ -1004,7 +1004,7 @@ class TestSnowflakeSpecLoaderUserRoleFilters:
             {"already_granted": False, "sql": "GRANT ROLE testrole TO role secondary"},
             {
                 "already_granted": False,
-                "sql": "ALTER USER testusername SET DISABLED = FALSE",
+                "sql": "ALTER USER testusername SET DISABLED = FALSE, TYPE = 'PERSON', DEFAULT_SECONDARY_ROLES = ()",
             },
         ]
         assert results == expected_results
@@ -1028,11 +1028,11 @@ class TestSnowflakeSpecLoaderUserRoleFilters:
             {"already_granted": False, "sql": "GRANT ROLE testrole TO role secondary"},
             {
                 "already_granted": False,
-                "sql": "ALTER USER testusername SET DISABLED = FALSE",
+                "sql": "ALTER USER testusername SET DISABLED = FALSE, TYPE = 'PERSON', DEFAULT_SECONDARY_ROLES = ()",
             },
             {
                 "already_granted": False,
-                "sql": "ALTER USER testuser SET DISABLED = FALSE",
+                "sql": "ALTER USER testuser SET DISABLED = FALSE, TYPE = 'PERSON', DEFAULT_SECONDARY_ROLES = ()",
             },
         ]
 
@@ -1049,7 +1049,7 @@ class TestSnowflakeSpecLoaderUserRoleFilters:
         ) == [
             {
                 "already_granted": False,
-                "sql": "ALTER USER testusername SET DISABLED = FALSE",
+                "sql": "ALTER USER testusername SET DISABLED = FALSE, TYPE = 'PERSON', DEFAULT_SECONDARY_ROLES = ()",
             }
         ]
 
@@ -1067,11 +1067,11 @@ class TestSnowflakeSpecLoaderUserRoleFilters:
         expected_results = [
             {
                 "already_granted": False,
-                "sql": "ALTER USER testusername SET DISABLED = FALSE",
+                "sql": "ALTER USER testusername SET DISABLED = FALSE, TYPE = 'PERSON', DEFAULT_SECONDARY_ROLES = ()",
             },
             {
                 "already_granted": False,
-                "sql": "ALTER USER testuser SET DISABLED = FALSE",
+                "sql": "ALTER USER testuser SET DISABLED = FALSE, TYPE = 'PERSON', DEFAULT_SECONDARY_ROLES = ()",
             },
         ]
         assert results == expected_results
@@ -1093,11 +1093,11 @@ class TestSnowflakeSpecLoaderUserRoleFilters:
             {"already_granted": False, "sql": "GRANT ROLE testrole TO role primary"},
             {
                 "already_granted": False,
-                "sql": "ALTER USER testusername SET DISABLED = FALSE",
+                "sql": "ALTER USER testusername SET DISABLED = FALSE, TYPE = 'PERSON', DEFAULT_SECONDARY_ROLES = ()",
             },
             {
                 "already_granted": False,
-                "sql": "ALTER USER testuser SET DISABLED = FALSE",
+                "sql": "ALTER USER testuser SET DISABLED = FALSE, TYPE = 'PERSON', DEFAULT_SECONDARY_ROLES = ()",
             },
         ]
         assert results == expected_results
@@ -1448,7 +1448,7 @@ class TestSpecFileLoading:
         )
 
         expected = [
-            'ALTER USER "first.last" SET DISABLED = FALSE',
+            'ALTER USER "first.last" SET DISABLED = FALSE, TYPE = \'PERSON\', DEFAULT_SECONDARY_ROLES = ()',
             "GRANT OWNERSHIP ON database database_1 TO ROLE test_role COPY CURRENT GRANTS",
             "GRANT OWNERSHIP ON database shared_database_1 TO ROLE test_role COPY CURRENT GRANTS",
             "GRANT OWNERSHIP ON schema database_1.schema_1 TO ROLE test_role COPY CURRENT GRANTS",

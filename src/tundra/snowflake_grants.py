@@ -34,6 +34,7 @@ class SnowflakeGrantsGenerator:
         grants_to_role: Dict,
         roles_granted_to_user: Dict[str, List[str]],
         ignore_memberships: Optional[bool] = False,
+        conn: Optional[SnowflakeConnector] = None,
     ) -> None:
         """
         Initializes a grants generator, used to generate SQL for generating grants
@@ -47,11 +48,13 @@ class SnowflakeGrantsGenerator:
 
         ignore_memberships: bool, whether to skip role grant/revoke of memberships
 
+        conn: optional SnowflakeConnector instance. If not provided, creates a new one.
+
         """
         self.grants_to_role = grants_to_role
         self.roles_granted_to_user = roles_granted_to_user
         self.ignore_memberships = ignore_memberships
-        self.conn = SnowflakeConnector()
+        self.conn = conn or SnowflakeConnector()
 
     def is_granted_privilege(
         self, role: str, privilege: str, entity_type: str, entity_name: str
@@ -189,7 +192,7 @@ class SnowflakeGrantsGenerator:
                     {
                         "already_granted": already_granted,
                         "sql": GRANT_DATABASE_ROLE_TEMPLATE.format(
-                            role_name=member_role,
+                            role_name=SnowflakeConnector.snowflaky_database_role(member_role),
                             entity_name=SnowflakeConnector.snowflaky_user_role(entity),
                         ),
                     }

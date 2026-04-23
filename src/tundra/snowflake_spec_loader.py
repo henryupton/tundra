@@ -26,6 +26,7 @@ class SnowflakeSpecLoader:
         ignore_missing_objects: Optional[bool] = False,
     ) -> None:
         run_list = run_list or ["users", "roles"]
+        self.conn = conn or SnowflakeConnector()
         # Load the specification file and check for (syntactical) errors
         click.secho("Loading spec file", fg="green")
         self.spec = load_spec(spec_path)
@@ -515,6 +516,7 @@ class SnowflakeSpecLoader:
             self.grants_to_role,
             self.roles_granted_to_user,
             ignore_memberships=ignore_memberships,
+            conn=self.conn,
         )
 
         click.secho("Generating permission Queries:", fg="green")

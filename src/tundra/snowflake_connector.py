@@ -603,6 +603,7 @@ class SnowflakeConnector:
             "schema",
             "select",
             "set",
+            "snowflake",
             "some",
             "start",
             "table",
