@@ -421,6 +421,9 @@ class SnowflakeSpecLoader:
         # Ignore account since currently account grants are not handled
         elif grant_on == "account":
             return filter_set
+        # Database role grants are identified by db.role — pass through as-is
+        elif grant_on == "database role":
+            return filter_set
         else:
             # Everything else should be binary: it has a dot or it doesn't
             # List of strings with `.`s:
