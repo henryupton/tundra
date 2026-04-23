@@ -1,5 +1,5 @@
 # Managed by bumpversion
-__version__ = "0.15.5"
+__version__ = "0.15.6"
 
 from tundra.error import SpecLoadingError
 
