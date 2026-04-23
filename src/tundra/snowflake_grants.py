@@ -91,18 +91,24 @@ class SnowflakeGrantsGenerator:
         if isinstance(config.get("member_of", []), dict):
             member_include_list = config.get("member_of", {}).get("include", [])
             member_include_list = [
-                SnowflakeConnector.snowflaky_database_role(role) if "." in role else SnowflakeConnector.snowflaky_user_role(role)
+                SnowflakeConnector.snowflaky_database_role(role)
+                if "." in role
+                else SnowflakeConnector.snowflaky_user_role(role)
                 for role in member_include_list
             ]
             member_exclude_list = config.get("member_of", {}).get("exclude", [])
             member_exclude_list = [
-                SnowflakeConnector.snowflaky_database_role(role) if "." in role else SnowflakeConnector.snowflaky_user_role(role)
+                SnowflakeConnector.snowflaky_database_role(role)
+                if "." in role
+                else SnowflakeConnector.snowflaky_user_role(role)
                 for role in member_exclude_list
             ]
         elif isinstance(config.get("member_of", []), list):
             member_include_list = config.get("member_of", [])
             member_include_list = [
-                SnowflakeConnector.snowflaky_database_role(role) if "." in role else SnowflakeConnector.snowflaky_user_role(role)
+                SnowflakeConnector.snowflaky_database_role(role)
+                if "." in role
+                else SnowflakeConnector.snowflaky_user_role(role)
                 for role in member_include_list
             ]
 
@@ -148,7 +154,9 @@ class SnowflakeGrantsGenerator:
             is_database_role = "." in member_role
             already_granted = False
             if is_database_role:
-                if self.is_granted_privilege(entity, "usage", "database role", member_role):
+                if self.is_granted_privilege(
+                    entity, "usage", "database role", member_role
+                ):
                     already_granted = True
             else:
                 granted_role = SnowflakeConnector.snowflaky_user_role(member_role)
@@ -191,7 +199,9 @@ class SnowflakeGrantsGenerator:
                     {
                         "already_granted": already_granted,
                         "sql": GRANT_ROLE_TEMPLATE.format(
-                            role_name=SnowflakeConnector.snowflaky_user_role(member_role),
+                            role_name=SnowflakeConnector.snowflaky_user_role(
+                                member_role
+                            ),
                             type=grant_type,
                             entity_name=SnowflakeConnector.snowflaky_user_role(entity),
                         ),
@@ -596,7 +606,9 @@ class SnowflakeGrantsGenerator:
             )
 
         for granted_external_volume in (
-            self.grants_to_role.get(role, {}).get("usage", {}).get("external volume", [])
+            self.grants_to_role.get(role, {})
+            .get("usage", {})
+            .get("external volume", [])
         ):
             if granted_external_volume not in external_volumes:
                 sql_commands.append(
@@ -1183,7 +1195,9 @@ class SnowflakeGrantsGenerator:
             read_grant_views_full.append(future_database_view)
 
             # For grants at the database level for iceberg tables
-            future_database_iceberg_table = "{database}.<iceberg table>".format(database=database_name)
+            future_database_iceberg_table = "{database}.<iceberg table>".format(
+                database=database_name
+            )
             iceberg_table_already_granted = self.is_granted_privilege(
                 role, read_privileges, "iceberg table", future_database_iceberg_table
             )
@@ -1461,13 +1475,20 @@ class SnowflakeGrantsGenerator:
                         "sql": GRANT_PRIVILEGES_TEMPLATE.format(
                             privileges=read_privileges,
                             resource_type="iceberg table",
-                            resource_name=SnowflakeConnector.snowflaky(db_iceberg_table),
+                            resource_name=SnowflakeConnector.snowflaky(
+                                db_iceberg_table
+                            ),
                             role=SnowflakeConnector.snowflaky_user_role(role),
                         ),
                     }
                 )
 
-        return sql_commands, read_grant_tables_full, read_grant_views_full, read_grant_iceberg_tables_full
+        return (
+            sql_commands,
+            read_grant_tables_full,
+            read_grant_views_full,
+            read_grant_iceberg_tables_full,
+        )
 
     #  TODO: This method remains complex, could use extra refactoring
     def _generate_table_write_grants(self, conn, tables, shared_dbs, role):  # noqa
@@ -1509,7 +1530,9 @@ class SnowflakeGrantsGenerator:
             # For grants at the database level
             future_database_table = "{database}.<table>".format(database=database_name)
             future_database_view = "{database}.<view>".format(database=database_name)
-            future_database_iceberg_table = "{database}.<iceberg table>".format(database=database_name)
+            future_database_iceberg_table = "{database}.<iceberg table>".format(
+                database=database_name
+            )
 
             table_already_granted = True
             for privilege in write_privileges_array:
@@ -1818,13 +1841,20 @@ class SnowflakeGrantsGenerator:
                         "sql": GRANT_PRIVILEGES_TEMPLATE.format(
                             privileges=write_privileges,
                             resource_type="iceberg table",
-                            resource_name=SnowflakeConnector.snowflaky(db_iceberg_table),
+                            resource_name=SnowflakeConnector.snowflaky(
+                                db_iceberg_table
+                            ),
                             role=SnowflakeConnector.snowflaky_user_role(role),
                         ),
                     }
                 )
 
-        return (sql_commands, write_grant_tables_full, write_grant_views_full, write_grant_iceberg_tables_full)
+        return (
+            sql_commands,
+            write_grant_tables_full,
+            write_grant_views_full,
+            write_grant_iceberg_tables_full,
+        )
 
     def _generate_revoke_select_privs(
         self,
@@ -1957,7 +1987,11 @@ class SnowflakeGrantsGenerator:
 
         # Revoke iceberg table privileges
         granted_resources = list(
-            set(self.grants_to_role.get(role, {}).get("select", {}).get("iceberg table", []))
+            set(
+                self.grants_to_role.get(role, {})
+                .get("select", {})
+                .get("iceberg table", [])
+            )
         )
         sql_commands.extend(
             self._generate_revoke_select_privs(
@@ -1999,10 +2033,14 @@ class SnowflakeGrantsGenerator:
         all_write_privs_granted_iceberg_tables = []
         for privilege in write_partial_privileges.split(", "):
             iceberg_table_names = (
-                self.grants_to_role.get(role, {}).get(privilege, {}).get("iceberg table", [])
+                self.grants_to_role.get(role, {})
+                .get(privilege, {})
+                .get("iceberg table", [])
             )
             all_write_privs_granted_iceberg_tables += iceberg_table_names
-        all_write_privs_granted_iceberg_tables = list(set(all_write_privs_granted_iceberg_tables))
+        all_write_privs_granted_iceberg_tables = list(
+            set(all_write_privs_granted_iceberg_tables)
+        )
 
         sql_commands.extend(
             self._generate_revoke_select_privs(
@@ -2048,18 +2086,24 @@ class SnowflakeGrantsGenerator:
         conn = SnowflakeConnector()
 
         read_tables = tables.get("read", [])
-        read_command, read_table, read_views, read_iceberg_tables = self._generate_table_read_grants(
-            conn, read_tables, shared_dbs, role
-        )
+        (
+            read_command,
+            read_table,
+            read_views,
+            read_iceberg_tables,
+        ) = self._generate_table_read_grants(conn, read_tables, shared_dbs, role)
         sql_commands.extend(read_command)
         read_grant_tables_full.extend(read_table)
         read_grant_views_full.extend(read_views)
         read_grant_iceberg_tables_full.extend(read_iceberg_tables)
 
         write_tables = tables.get("write", [])
-        write_command, write_table, write_views, write_iceberg_tables = self._generate_table_write_grants(
-            conn, write_tables, shared_dbs, role
-        )
+        (
+            write_command,
+            write_table,
+            write_views,
+            write_iceberg_tables,
+        ) = self._generate_table_write_grants(conn, write_tables, shared_dbs, role)
         sql_commands.extend(write_command)
         write_grant_tables_full.extend(write_table)
         write_grant_views_full.extend(write_views)
@@ -2067,7 +2111,9 @@ class SnowflakeGrantsGenerator:
 
         all_grant_tables = read_grant_tables_full + write_grant_tables_full
         all_grant_views = read_grant_views_full + write_grant_views_full
-        all_grant_iceberg_tables = read_grant_iceberg_tables_full + write_grant_iceberg_tables_full
+        all_grant_iceberg_tables = (
+            read_grant_iceberg_tables_full + write_grant_iceberg_tables_full
+        )
 
         sql_commands.extend(
             self.generate_revoke_privs(
@@ -2113,7 +2159,7 @@ class SnowflakeGrantsGenerator:
             "default_role",
         ]
 
-        others =  [
+        others = [
             "display_name",
             "first_name",
             "middle_name",
@@ -2132,10 +2178,17 @@ class SnowflakeGrantsGenerator:
             if identifier in config:
                 property_name = str.upper(identifier)
                 property_value = config.get(identifier)
-                alter_privileges.append(f"{property_name} = {SnowflakeConnector.snowflaky(property_value)}")
+                alter_privileges.append(
+                    f"{property_name} = {SnowflakeConnector.snowflaky(property_value)}"
+                )
 
         # Handle user type with validation (case-insensitive)
         user_type = config.get("type", "PERSON").upper()
+
+        # SERVICE type cannot have password, convert to LEGACY_SERVICE if needed
+        if config.get("has_password") and user_type == "SERVICE":
+            user_type = "LEGACY_SERVICE"
+
         allowed_types = ["PERSON", "SERVICE", "LEGACY_SERVICE"]
         if user_type not in allowed_types:
             raise ValueError(
@@ -2145,7 +2198,10 @@ class SnowflakeGrantsGenerator:
         alter_privileges.append(f"TYPE = '{user_type}'")
 
         secondary_roles = config.get("default_secondary_roles", [])
-        quoted_roles = [f"'{SnowflakeConnector.snowflaky_user_role(role)}'" for role in secondary_roles]
+        quoted_roles = [
+            f"'{SnowflakeConnector.snowflaky_user_role(role)}'"
+            for role in secondary_roles
+        ]
         roles_list = ", ".join(quoted_roles)
         alter_privileges.append(f"DEFAULT_SECONDARY_ROLES = ({roles_list})")
 
