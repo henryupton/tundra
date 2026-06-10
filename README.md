@@ -165,13 +165,14 @@ Please find below the links between Tundra permissions and Snowflake grants.
 | Databases | read                   | usage                                                                                                               |
 |           | write                  | monitor, create schema                                                                                              |
 | Schemas   | read                   | usage                                                                                                               |
-|           | write                  | monitor, create table, create view, create stage, create file format, create sequence, create function, create pipe |
+|           | write                  | monitor, create table, create view, create iceberg table, create stage, create file format, create sequence, create function, create pipe |
 | Table     | read                   | select                                                                                                              |
 |           | write                  | insert, update, delete, truncate, references                                                                        |
 
 
-Tables and views are listed under `tables` and handled properly behind the
-scenes.
+Tables, views, Iceberg tables, and dynamic tables are all listed under `tables` and handled properly behind the
+scenes. Dynamic tables support `SELECT` only (no `create dynamic table` schema privilege is granted). New
+table-like object types are defined in `src/tundra/table_object_types.py`.
 
 If `*` is provided as the parameter for tables the grant statement will use the
 `ALL <object_type>s in SCHEMA` syntax. It will also grant to future tables and
