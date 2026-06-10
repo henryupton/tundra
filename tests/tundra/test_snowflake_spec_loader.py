@@ -1446,6 +1446,11 @@ class TestSpecFileLoading:
             "show_iceberg_tables",
             return_value=[],
         )
+        mocker.patch.object(
+            SnowflakeConnector,
+            "show_dynamic_tables",
+            return_value=[],
+        )
 
         expected = [
             'ALTER USER "first.last" SET DISABLED = FALSE, TYPE = \'PERSON\', DEFAULT_SECONDARY_ROLES = ()',

@@ -864,9 +864,11 @@ class TestGenerateTableAndViewGrants:
         role = "functional_role"
 
         expected = [
+            "GRANT select ON ALL dynamic tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON ALL iceberg tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON ALL tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON ALL views IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT select ON FUTURE dynamic tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON FUTURE iceberg tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON FUTURE tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON FUTURE views IN schema database_1.schema_1 TO ROLE functional_role",
@@ -897,7 +899,9 @@ class TestGenerateTableAndViewGrants:
         role = "functional_role"
 
         expected = [
+            "GRANT select ON ALL dynamic tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON ALL views IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT select ON FUTURE dynamic tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON FUTURE views IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select, insert, update, delete, truncate, references ON ALL iceberg tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select, insert, update, delete, truncate, references ON ALL tables IN schema database_1.schema_1 TO ROLE functional_role",
@@ -932,10 +936,14 @@ class TestGenerateTableAndViewGrants:
         role = "functional_role"
 
         expected = [
+            "GRANT select ON ALL dynamic tables IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT select ON ALL dynamic tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON ALL iceberg tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON ALL tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON ALL views IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON ALL views IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT select ON FUTURE dynamic tables IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT select ON FUTURE dynamic tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON FUTURE iceberg tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON FUTURE tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON FUTURE views IN schema database_1.schema_1 TO ROLE functional_role",
@@ -977,10 +985,14 @@ class TestGenerateTableAndViewGrants:
         role = "functional_role"
 
         expected = [
+            "GRANT select ON ALL dynamic tables IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT select ON ALL dynamic tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON ALL iceberg tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON ALL tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON ALL views IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON ALL views IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT select ON FUTURE dynamic tables IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT select ON FUTURE dynamic tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON FUTURE iceberg tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON FUTURE tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON FUTURE views IN schema database_1.schema_1 TO ROLE functional_role",
@@ -1039,6 +1051,12 @@ class TestGenerateTableAndViewGrants:
         role = "functional_role"
 
         expected = [
+            "GRANT select ON ALL dynamic tables IN database database_1 TO ROLE functional_role",
+            "GRANT select ON ALL dynamic tables IN database database_1 TO ROLE functional_role",
+            "GRANT select ON ALL dynamic tables IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT select ON ALL dynamic tables IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT select ON ALL dynamic tables IN schema database_1.schema_2 TO ROLE functional_role",
+            "GRANT select ON ALL dynamic tables IN schema database_1.schema_2 TO ROLE functional_role",
             "GRANT select ON ALL iceberg tables IN database database_1 TO ROLE functional_role",
             "GRANT select ON ALL iceberg tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON ALL iceberg tables IN schema database_1.schema_2 TO ROLE functional_role",
@@ -1051,6 +1069,12 @@ class TestGenerateTableAndViewGrants:
             "GRANT select ON ALL views IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON ALL views IN schema database_1.schema_2 TO ROLE functional_role",
             "GRANT select ON ALL views IN schema database_1.schema_2 TO ROLE functional_role",
+            "GRANT select ON FUTURE dynamic tables IN database database_1 TO ROLE functional_role",
+            "GRANT select ON FUTURE dynamic tables IN database database_1 TO ROLE functional_role",
+            "GRANT select ON FUTURE dynamic tables IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT select ON FUTURE dynamic tables IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT select ON FUTURE dynamic tables IN schema database_1.schema_2 TO ROLE functional_role",
+            "GRANT select ON FUTURE dynamic tables IN schema database_1.schema_2 TO ROLE functional_role",
             "GRANT select ON FUTURE iceberg tables IN database database_1 TO ROLE functional_role",
             "GRANT select ON FUTURE iceberg tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON FUTURE iceberg tables IN schema database_1.schema_2 TO ROLE functional_role",
@@ -1133,6 +1157,10 @@ class TestGenerateTableAndViewGrants:
         role = "functional_role"
 
         expected = [
+            "GRANT select ON ALL dynamic tables IN database raw TO ROLE functional_role",
+            "GRANT select ON ALL dynamic tables IN schema raw.public TO ROLE functional_role",
+            "GRANT select ON ALL dynamic tables IN schema raw.public TO ROLE functional_role",
+            "GRANT select ON ALL dynamic tables IN schema raw.public_1 TO ROLE functional_role",
             "GRANT select ON ALL iceberg tables IN database raw TO ROLE functional_role",
             "GRANT select ON ALL iceberg tables IN schema raw.public TO ROLE functional_role",
             "GRANT select ON ALL iceberg tables IN schema raw.public_1 TO ROLE functional_role",
@@ -1143,6 +1171,10 @@ class TestGenerateTableAndViewGrants:
             "GRANT select ON ALL views IN schema raw.public TO ROLE functional_role",
             "GRANT select ON ALL views IN schema raw.public TO ROLE functional_role",
             "GRANT select ON ALL views IN schema raw.public_1 TO ROLE functional_role",
+            "GRANT select ON FUTURE dynamic tables IN database raw TO ROLE functional_role",
+            "GRANT select ON FUTURE dynamic tables IN schema raw.public TO ROLE functional_role",
+            "GRANT select ON FUTURE dynamic tables IN schema raw.public TO ROLE functional_role",
+            "GRANT select ON FUTURE dynamic tables IN schema raw.public_1 TO ROLE functional_role",
             "GRANT select ON FUTURE iceberg tables IN database raw TO ROLE functional_role",
             "GRANT select ON FUTURE iceberg tables IN schema raw.public TO ROLE functional_role",
             "GRANT select ON FUTURE iceberg tables IN schema raw.public_1 TO ROLE functional_role",
@@ -1276,7 +1308,11 @@ class TestGenerateTableAndViewGrants:
         role = "role_with_future_grants"
 
         expected = [
+            "GRANT select ON ALL dynamic tables IN schema database_1.schema_1 TO ROLE role_with_future_grants",
+            "GRANT select ON ALL dynamic tables IN schema database_1.schema_2 TO ROLE role_with_future_grants",
             "GRANT select ON ALL views IN schema database_1.schema_2 TO ROLE role_with_future_grants",
+            "GRANT select ON FUTURE dynamic tables IN schema database_1.schema_1 TO ROLE role_with_future_grants",
+            "GRANT select ON FUTURE dynamic tables IN schema database_1.schema_2 TO ROLE role_with_future_grants",
             "GRANT select ON FUTURE views IN schema database_1.schema_2 TO ROLE role_with_future_grants",
             "GRANT select, insert, update, delete, truncate, references ON ALL iceberg tables IN schema database_1.schema_2 TO ROLE role_with_future_grants",
             "GRANT select, insert, update, delete, truncate, references ON ALL tables IN schema database_1.schema_2 TO ROLE role_with_future_grants",
@@ -1285,6 +1321,44 @@ class TestGenerateTableAndViewGrants:
         ]
 
         return [mock_connector, config, role, expected]
+
+    def dynamic_tables_r_star_schema_config(mocker):
+        """
+        Read access on database_1.schema_1.* must now also cover
+        dynamic tables: future + all SELECT grants.
+        """
+        mocker.patch.object(
+            MockSnowflakeConnector, "show_tables", return_value=[]
+        )
+        mocker.patch.object(MockSnowflakeConnector, "show_views", return_value=[])
+        mocker.patch.object(
+            MockSnowflakeConnector, "show_iceberg_tables", return_value=[]
+        )
+        mocker.patch.object(
+            MockSnowflakeConnector,
+            "show_dynamic_tables",
+            return_value=["database_1.schema_1.dynamic_table_1"],
+        )
+
+        config = {
+            "read": ["database_1.schema_1.*"],
+            "write": [],
+        }
+
+        role = "functional_role"
+
+        expected = [
+            "GRANT select ON ALL dynamic tables IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT select ON ALL iceberg tables IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT select ON ALL tables IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT select ON ALL views IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT select ON FUTURE dynamic tables IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT select ON FUTURE iceberg tables IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT select ON FUTURE tables IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT select ON FUTURE views IN schema database_1.schema_1 TO ROLE functional_role",
+        ]
+
+        return [MockSnowflakeConnector, config, role, expected]
 
     @pytest.mark.parametrize(
         "config",
@@ -1300,6 +1374,7 @@ class TestGenerateTableAndViewGrants:
             future_schemas_tables_views_config,
             partial_rw_future_schemas_tables_views_config,
             future_tables_w_multiple_schemas_existing_grants,
+            dynamic_tables_r_star_schema_config,
         ],
     )
     def test_generate_table_and_view_grants(
@@ -1336,6 +1411,11 @@ class TestGenerateTableAndViewGrants:
         mocker.patch(
             "tundra.snowflake_grants.SnowflakeConnector.show_iceberg_tables",
             mock_connector.show_iceberg_tables,
+        )
+
+        mocker.patch(
+            "tundra.snowflake_grants.SnowflakeConnector.show_dynamic_tables",
+            mock_connector.show_dynamic_tables,
         )
 
         tables_and_views_list = generator.generate_table_and_view_grants(
