@@ -13,6 +13,13 @@ from cryptography.hazmat.primitives import serialization
 from snowflake.sqlalchemy import URL
 
 from tundra.logger import GLOBAL_LOGGER as logger
+from tundra.table_object_types import (
+    DYNAMIC_TABLE,
+    ICEBERG_TABLE,
+    TABLE,
+    VIEW,
+    TableObjectType,
+)
 
 # Don't show all the info log messages from Snowflake
 for logger_name in ["snowflake.connector", "bot", "boto3"]:
@@ -136,27 +143,50 @@ class SnowflakeConnector:
     def show_external_volumes(self) -> List[str]:
         return self.show_query("EXTERNAL VOLUMES")
 
-    def show_iceberg_tables(
-        self, database: Optional[str] = None, schema: Optional[str] = None
+    def show_table_objects(
+        self,
+        object_type: TableObjectType,
+        database: Optional[str] = None,
+        schema: Optional[str] = None,
     ) -> List[str]:
         names = []
 
         if schema:
-            query = f"SHOW ICEBERG TABLES IN SCHEMA {schema}"
+            query = f"SHOW {object_type.show_command} IN SCHEMA {schema}"
         elif database:
-            query = f"SHOW ICEBERG TABLES IN DATABASE {database}"
+            query = f"SHOW {object_type.show_command} IN DATABASE {database}"
         else:
-            query = "SHOW ICEBERG TABLES IN ACCOUNT"
+            query = f"SHOW {object_type.show_command} IN ACCOUNT"
 
         results = self.run_query(query).fetchall()
 
         for result in results:
-            table_identifier = (
+            identifier = (
                 f"{result['database_name']}.{result['schema_name']}.{result['name']}"
             )
-            names.append(SnowflakeConnector.snowflaky(table_identifier))
+            names.append(SnowflakeConnector.snowflaky(identifier))
 
         return names
+
+    def show_tables(
+        self, database: Optional[str] = None, schema: Optional[str] = None
+    ) -> List[str]:
+        return self.show_table_objects(TABLE, database=database, schema=schema)
+
+    def show_views(
+        self, database: Optional[str] = None, schema: Optional[str] = None
+    ) -> List[str]:
+        return self.show_table_objects(VIEW, database=database, schema=schema)
+
+    def show_dynamic_tables(
+        self, database: Optional[str] = None, schema: Optional[str] = None
+    ) -> List[str]:
+        return self.show_table_objects(DYNAMIC_TABLE, database=database, schema=schema)
+
+    def show_iceberg_tables(
+        self, database: Optional[str] = None, schema: Optional[str] = None
+    ) -> List[str]:
+        return self.show_table_objects(ICEBERG_TABLE, database=database, schema=schema)
 
     def show_users(self) -> List[str]:
         return self.show_query("USERS")
@@ -174,50 +204,6 @@ class SnowflakeConnector:
         for result in results:
             schema_identifier = f"{result['database_name']}.{result['name']}"
             names.append(SnowflakeConnector.snowflaky(schema_identifier))
-
-        return names
-
-    def show_tables(
-        self, database: Optional[str] = None, schema: Optional[str] = None
-    ) -> List[str]:
-        names = []
-
-        if schema:
-            query = f"SHOW TERSE TABLES IN SCHEMA {schema}"
-        elif database:
-            query = f"SHOW TERSE TABLES IN DATABASE {database}"
-        else:
-            query = "SHOW TERSE TABLES IN ACCOUNT"
-
-        results = self.run_query(query).fetchall()
-
-        for result in results:
-            table_identifier = (
-                f"{result['database_name']}.{result['schema_name']}.{result['name']}"
-            )
-            names.append(SnowflakeConnector.snowflaky(table_identifier))
-
-        return names
-
-    def show_views(
-        self, database: Optional[str] = None, schema: Optional[str] = None
-    ) -> List[str]:
-        names = []
-
-        if schema:
-            query = f"SHOW TERSE VIEWS IN SCHEMA {schema}"
-        elif database:
-            query = f"SHOW TERSE VIEWS IN DATABASE {database}"
-        else:
-            query = "SHOW TERSE VIEWS IN ACCOUNT"
-
-        results = self.run_query(query).fetchall()
-
-        for result in results:
-            view_identifier = (
-                f"{result['database_name']}.{result['schema_name']}.{result['name']}"
-            )
-            names.append(SnowflakeConnector.snowflaky(view_identifier))
 
         return names
 

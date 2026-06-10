@@ -3,6 +3,8 @@ import os
 import pytest
 import sqlalchemy
 from tundra.snowflake_connector import SnowflakeConnector
+from tundra.table_object_types import DYNAMIC_TABLE, ICEBERG_TABLE, TABLE, VIEW
+from tundra_test_utils.snowflake_connector import MockSnowflakeConnector
 
 
 @pytest.fixture
@@ -547,3 +549,45 @@ class TestSnowflakeConnector:
                 ]
             }
         }
+
+
+class TestShowTableObjects:
+    def test_show_table_objects_builds_query_per_scope(self, mocker):
+        conn = MockSnowflakeConnector()
+        run_query = mocker.patch.object(
+            MockSnowflakeConnector, "run_query",
+            return_value=mocker.Mock(fetchall=lambda: []),
+        )
+
+        conn.show_table_objects(DYNAMIC_TABLE, schema="db_1.schema_1")
+        run_query.assert_called_with("SHOW DYNAMIC TABLES IN SCHEMA db_1.schema_1")
+
+        conn.show_table_objects(ICEBERG_TABLE, database="db_1")
+        run_query.assert_called_with("SHOW ICEBERG TABLES IN DATABASE db_1")
+
+        conn.show_table_objects(TABLE)
+        run_query.assert_called_with("SHOW TERSE TABLES IN ACCOUNT")
+
+    def test_show_table_objects_returns_snowflaky_identifiers(self, mocker):
+        conn = MockSnowflakeConnector()
+        mocker.patch.object(
+            MockSnowflakeConnector, "run_query",
+            return_value=mocker.Mock(
+                fetchall=lambda: [
+                    {"database_name": "DB_1", "schema_name": "SCHEMA_1", "name": "TABLE_1"}
+                ]
+            ),
+        )
+        assert conn.show_table_objects(VIEW) == ["db_1.schema_1.table_1"]
+
+    def test_wrappers_delegate_to_show_table_objects(self, mocker):
+        conn = SnowflakeConnector.__new__(SnowflakeConnector)
+        generic = mocker.patch.object(conn, "show_table_objects", return_value=[])
+        conn.show_tables(schema="db.s")
+        generic.assert_called_with(TABLE, database=None, schema="db.s")
+        conn.show_dynamic_tables(database="db")
+        generic.assert_called_with(DYNAMIC_TABLE, database="db", schema=None)
+        conn.show_views(schema="db.s")
+        generic.assert_called_with(VIEW, database=None, schema="db.s")
+        conn.show_iceberg_tables(database="db")
+        generic.assert_called_with(ICEBERG_TABLE, database="db", schema=None)
