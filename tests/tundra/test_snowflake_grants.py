@@ -135,27 +135,27 @@ def test_grants_to_role():
             "select": {
                 "table": ["database_1.schema_1.<table>"],
                 "view": ["database_1.schema_1.<view>"],
-                "iceberg table": ['database_1.schema_1."<iceberg table>"'],
+                "iceberg table": ['database_1.schema_1.<iceberg table>'],
             },
             "insert": {
                 "table": ["database_1.schema_1.<table>"],
-                "iceberg table": ['database_1.schema_1."<iceberg table>"'],
+                "iceberg table": ['database_1.schema_1.<iceberg table>'],
             },
             "update": {
                 "table": ["database_1.schema_1.<table>"],
-                "iceberg table": ['database_1.schema_1."<iceberg table>"'],
+                "iceberg table": ['database_1.schema_1.<iceberg table>'],
             },
             "delete": {
                 "table": ["database_1.schema_1.<table>"],
-                "iceberg table": ['database_1.schema_1."<iceberg table>"'],
+                "iceberg table": ['database_1.schema_1.<iceberg table>'],
             },
             "truncate": {
                 "table": ["database_1.schema_1.<table>"],
-                "iceberg table": ['database_1.schema_1."<iceberg table>"'],
+                "iceberg table": ['database_1.schema_1.<iceberg table>'],
             },
             "references": {
                 "table": ["database_1.schema_1.<table>"],
-                "iceberg table": ['database_1.schema_1."<iceberg table>"'],
+                "iceberg table": ['database_1.schema_1.<iceberg table>'],
             },
         },
     }
