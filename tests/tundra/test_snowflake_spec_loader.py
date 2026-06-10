@@ -1467,7 +1467,7 @@ class TestSpecFileLoading:
             "GRANT usage ON schema database_1.write_schema TO ROLE test_role",
             "GRANT usage ON warehouse warehouse_1 TO ROLE test_role",
             "GRANT usage, monitor, create schema ON database database_1 TO ROLE test_role",
-            "GRANT usage, monitor, create table, create iceberg table, create view, create stage, create file format, create sequence, create function, create pipe ON schema database_1.write_schema TO ROLE test_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create stage, create file format, create sequence, create function, create pipe ON schema database_1.write_schema TO ROLE test_role",
         ]
 
         mocker.patch.object(SnowflakeConnector, "show_views", return_value=[])
