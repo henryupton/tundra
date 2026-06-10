@@ -17,8 +17,13 @@ from tundra.table_object_types import (
     DYNAMIC_TABLE,
     ICEBERG_TABLE,
     TABLE,
+    TABLE_OBJECT_TYPES,
     VIEW,
     TableObjectType,
+)
+
+FUTURE_PLACEHOLDER_PATTERN = "^<({})>$".format(
+    "|".join([t.name for t in TABLE_OBJECT_TYPES] + ["schema"])
 )
 
 # Don't show all the info log messages from Snowflake
@@ -449,7 +454,7 @@ class SnowflakeConnector:
                 new_name_parts.append(part)
 
             # If a future object, return in lower case - no need to quote
-            elif re.match("<(table|view|schema)>", part, re.IGNORECASE) is not None:
+            elif re.match(FUTURE_PLACEHOLDER_PATTERN, part, re.IGNORECASE) is not None:
                 new_name_parts.append(part.lower())
 
             # If does not meet requirements for unquoted object identifiers or collides with reserved keywords,
