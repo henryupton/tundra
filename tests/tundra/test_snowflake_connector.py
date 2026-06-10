@@ -551,6 +551,20 @@ class TestSnowflakeConnector:
         }
 
 
+class TestSnowflakyFuturePlaceholders:
+    def test_future_placeholders_lowercased_not_quoted(self):
+        assert (
+            SnowflakeConnector.snowflaky("db_1.<ICEBERG TABLE>")
+            == "db_1.<iceberg table>"
+        )
+        assert (
+            SnowflakeConnector.snowflaky("db_1.schema_1.<DYNAMIC TABLE>")
+            == "db_1.schema_1.<dynamic table>"
+        )
+        assert SnowflakeConnector.snowflaky("db_1.<TABLE>") == "db_1.<table>"
+        assert SnowflakeConnector.snowflaky("db_1.<SCHEMA>") == "db_1.<schema>"
+
+
 class TestShowTableObjects:
     def test_show_table_objects_builds_query_per_scope(self, mocker):
         conn = MockSnowflakeConnector()
