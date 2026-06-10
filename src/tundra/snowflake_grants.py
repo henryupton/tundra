@@ -28,6 +28,22 @@ ALTER_USER_TEMPLATE = "ALTER USER {user_name} SET {privileges}"
 
 GRANT_OWNERSHIP_TEMPLATE = "GRANT OWNERSHIP ON {resource_type} {resource_name} TO ROLE {role_name} COPY CURRENT GRANTS"
 
+SCHEMA_PARTIAL_WRITE_PRIVILEGES = ", ".join(
+    ["monitor"]
+    + [
+        t.schema_create_privilege
+        for t in TABLE_OBJECT_TYPES
+        if t.schema_create_privilege
+    ]
+    + [
+        "create stage",
+        "create file format",
+        "create sequence",
+        "create function",
+        "create pipe",
+    ]
+)
+
 
 class SnowflakeGrantsGenerator:
     def __init__(
@@ -908,11 +924,7 @@ class SnowflakeGrantsGenerator:
         write_grant_schemas = []
 
         read_privileges = "usage"
-        partial_write_privileges = (
-            "monitor, create table, create iceberg table,"
-            " create view, create stage, create file format,"
-            " create sequence, create function, create pipe"
-        )
+        partial_write_privileges = SCHEMA_PARTIAL_WRITE_PRIVILEGES
         write_privileges = f"{read_privileges}, {partial_write_privileges}"
         write_privileges_array = write_privileges.split(", ")
 
@@ -1057,11 +1069,7 @@ class SnowflakeGrantsGenerator:
         read_grant_schemas = []
         write_grant_schemas = []
 
-        partial_write_privileges = (
-            "monitor, create table, create iceberg table,"
-            " create view, create stage, create file format,"
-            " create sequence, create function, create pipe"
-        )
+        partial_write_privileges = SCHEMA_PARTIAL_WRITE_PRIVILEGES
 
         # Get Schema Read Commands
         read_schemas = schemas.get("read", [])
@@ -1097,16 +1105,7 @@ class SnowflakeGrantsGenerator:
         # usage was revoked but other write permissions still exist
         # This also preserves the case where somebody switches write access
         # for read access
-        other_privileges = [
-            "monitor",
-            "create table",
-            "create iceberg table",
-            "create view",
-            "create stage",
-            "create file format",
-            "create sequence",
-            "create pipe",
-        ]
+        other_privileges = SCHEMA_PARTIAL_WRITE_PRIVILEGES.split(", ")
 
         other_schema_grants = list()
         for privilege in other_privileges:
