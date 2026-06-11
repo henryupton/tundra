@@ -3,7 +3,7 @@ import os
 import pytest
 import sqlalchemy
 from tundra.snowflake_connector import SnowflakeConnector
-from tundra.table_object_types import DYNAMIC_TABLE, ICEBERG_TABLE, TABLE, VIEW
+from tundra.table_object_types import ICEBERG_TABLE, TABLE, VIEW
 from tundra_test_utils.snowflake_connector import MockSnowflakeConnector
 
 
@@ -558,8 +558,8 @@ class TestSnowflakyFuturePlaceholders:
             == "db_1.<iceberg table>"
         )
         assert (
-            SnowflakeConnector.snowflaky("db_1.schema_1.<DYNAMIC TABLE>")
-            == "db_1.schema_1.<dynamic table>"
+            SnowflakeConnector.snowflaky("db_1.schema_1.<ICEBERG TABLE>")
+            == "db_1.schema_1.<iceberg table>"
         )
         assert SnowflakeConnector.snowflaky("db_1.<TABLE>") == "db_1.<table>"
         assert SnowflakeConnector.snowflaky("db_1.<SCHEMA>") == "db_1.<schema>"
@@ -573,8 +573,8 @@ class TestShowTableObjects:
             return_value=mocker.Mock(fetchall=lambda: []),
         )
 
-        conn.show_table_objects(DYNAMIC_TABLE, schema="db_1.schema_1")
-        run_query.assert_called_with("SHOW DYNAMIC TABLES IN SCHEMA db_1.schema_1")
+        conn.show_table_objects(ICEBERG_TABLE, schema="db_1.schema_1")
+        run_query.assert_called_with("SHOW ICEBERG TABLES IN SCHEMA db_1.schema_1")
 
         conn.show_table_objects(ICEBERG_TABLE, database="db_1")
         run_query.assert_called_with("SHOW ICEBERG TABLES IN DATABASE db_1")
@@ -599,8 +599,6 @@ class TestShowTableObjects:
         generic = mocker.patch.object(conn, "show_table_objects", return_value=[])
         conn.show_tables(schema="db.s")
         generic.assert_called_with(TABLE, database=None, schema="db.s")
-        conn.show_dynamic_tables(database="db")
-        generic.assert_called_with(DYNAMIC_TABLE, database="db", schema=None)
         conn.show_views(schema="db.s")
         generic.assert_called_with(VIEW, database=None, schema="db.s")
         conn.show_iceberg_tables(database="db")
