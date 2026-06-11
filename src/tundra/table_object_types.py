@@ -64,16 +64,5 @@ ICEBERG_TABLE = TableObjectType(
     schema_create_privilege="create iceberg table",
 )
 
-# Select-only by design: DML against dynamic tables is invalid, and
-# `create dynamic table` schema grants are deliberately excluded (see spec).
-DYNAMIC_TABLE = TableObjectType(
-    name="dynamic table",
-    connector_method="show_dynamic_tables",
-    show_command="DYNAMIC TABLES",
-    read_privileges="select",
-    write_privileges="select",
-    schema_create_privilege=None,
-)
-
 # Order matters: it determines SQL statement emission order.
-TABLE_OBJECT_TYPES: List[TableObjectType] = [TABLE, VIEW, ICEBERG_TABLE, DYNAMIC_TABLE]
+TABLE_OBJECT_TYPES: List[TableObjectType] = [TABLE, VIEW, ICEBERG_TABLE]

@@ -14,7 +14,6 @@ from snowflake.sqlalchemy import URL
 
 from tundra.logger import GLOBAL_LOGGER as logger
 from tundra.table_object_types import (
-    DYNAMIC_TABLE,
     ICEBERG_TABLE,
     TABLE,
     TABLE_OBJECT_TYPES,
@@ -182,11 +181,6 @@ class SnowflakeConnector:
         self, database: Optional[str] = None, schema: Optional[str] = None
     ) -> List[str]:
         return self.show_table_objects(VIEW, database=database, schema=schema)
-
-    def show_dynamic_tables(
-        self, database: Optional[str] = None, schema: Optional[str] = None
-    ) -> List[str]:
-        return self.show_table_objects(DYNAMIC_TABLE, database=database, schema=schema)
 
     def show_iceberg_tables(
         self, database: Optional[str] = None, schema: Optional[str] = None
