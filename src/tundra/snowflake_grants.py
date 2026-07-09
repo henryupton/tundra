@@ -1519,7 +1519,7 @@ class SnowflakeGrantsGenerator:
             )
 
         # Write privileges only need revoking for writable types:
-        # select-only types (views) are fully covered above
+        # select-only types (views, dynamic tables) are fully covered above
         for object_type in TABLE_OBJECT_TYPES:
             if not object_type.is_writable:
                 continue
@@ -1552,7 +1552,7 @@ class SnowflakeGrantsGenerator:
     ) -> List[Dict]:
         """
         Generate the GRANT and REVOKE statements for all table-like object
-        types in the registry (tables, views, iceberg tables),
+        types in the registry (tables, views, iceberg/dynamic tables),
         including future grants.
 
         role: the name of the role the privileges are GRANTed to
