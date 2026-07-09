@@ -170,8 +170,10 @@ Please find below the links between Tundra permissions and Snowflake grants.
 |           | write                  | insert, update, delete, truncate, references                                                                        |
 
 
-Tables, views, and Iceberg tables are all listed under `tables` and handled properly behind the
-scenes. New table-like object types are defined in `src/tundra/table_object_types.py`.
+Tables, views, Iceberg tables, and dynamic tables are all listed under `tables` and handled properly behind the
+scenes. Dynamic tables don't support DML: read grants `select`, write grants `select, monitor, operate`
+(refresh control), and no `create dynamic table` schema privilege is granted. New
+table-like object types are defined in `src/tundra/table_object_types.py`.
 
 If `*` is provided as the parameter for tables the grant statement will use the
 `ALL <object_type>s in SCHEMA` syntax. It will also grant to future tables and
