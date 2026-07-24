@@ -165,15 +165,16 @@ Please find below the links between Tundra permissions and Snowflake grants.
 | Databases | read                   | usage                                                                                                               |
 |           | write                  | monitor, create schema                                                                                              |
 | Schemas   | read                   | usage                                                                                                               |
-|           | write                  | monitor, create table, create view, create iceberg table, create stage, create file format, create sequence, create function, create pipe |
+|           | write                  | monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe |
 | Table     | read                   | select                                                                                                              |
 |           | write                  | insert, update, delete, truncate, references                                                                        |
 
 
-Tables, views, Iceberg tables, and dynamic tables are all listed under `tables` and handled properly behind the
-scenes. Dynamic tables don't support DML: read grants `select`, write grants `select, monitor, operate`
-(refresh control), and no `create dynamic table` schema privilege is granted. New
-table-like object types are defined in `src/tundra/table_object_types.py`.
+Tables, views, Iceberg tables, dynamic tables, and Streamlit apps are all listed under `tables` and handled
+properly behind the scenes. Streamlit apps expose only `USAGE`: read and write both grant `usage`, and a
+`create streamlit` schema privilege is granted with schema write access. Because Streamlit apps ride the
+`tables` read list, a `database.schema.*` read wildcard also grants `USAGE` on all and future Streamlit apps
+in that schema. New table-like object types are defined in `src/tundra/table_object_types.py`.
 
 If `*` is provided as the parameter for tables the grant statement will use the
 `ALL <object_type>s in SCHEMA` syntax. It will also grant to future tables and

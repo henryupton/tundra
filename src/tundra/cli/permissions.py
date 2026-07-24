@@ -74,7 +74,7 @@ def print_command(command, diff, dry=False):
 def run(ctx, spec, dry, diff, role, user, ignore_memberships, skip_validation, ignore_missing_objects, print_skipped=False):
     """
     Grant the permissions provided in the provided specification file for specific users and roles.
-    This fork includes support for Iceberg tables, dynamic tables, external volumes, and catalog integrations.
+    This fork includes support for Iceberg tables, dynamic tables, streamlit apps, external volumes, and catalog integrations.
     """
     if role and user:
         run_list = ["roles", "users"]
