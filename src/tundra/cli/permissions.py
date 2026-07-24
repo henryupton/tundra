@@ -1,3 +1,4 @@
+import os
 import sys
 
 import click
@@ -39,7 +40,9 @@ def print_command(command, diff, dry=False):
 
 @cli.command()  # type: ignore
 @click.argument("spec")
-@click.option("--dry", "--dryrun", help="Do not actually run, just check.", is_flag=True)
+@click.option(
+    "--dry", "--dryrun", help="Do not actually run, just check.", is_flag=True
+)
 @click.option(
     "--diff", help="Show full diff, both new and existing permissions.", is_flag=True
 )
@@ -70,8 +73,26 @@ def print_command(command, diff, dry=False):
     help="Ignore grants for objects that don't exist in Snowflake instead of failing",
     is_flag=True,
 )
+@click.option(
+    "--max-workers",
+    type=int,
+    default=None,
+    help="Number of parallel Snowflake fetch workers (default 8, env PERMISSION_BOT_MAX_WORKERS).",
+)
 @click.pass_context
-def run(ctx, spec, dry, diff, role, user, ignore_memberships, skip_validation, ignore_missing_objects, print_skipped=False):
+def run(
+    ctx,
+    spec,
+    dry,
+    diff,
+    role,
+    user,
+    ignore_memberships,
+    skip_validation,
+    ignore_missing_objects,
+    max_workers,
+    print_skipped=False,
+):
     """
     Grant the permissions provided in the provided specification file for specific users and roles.
     This fork includes support for Iceberg tables, dynamic tables, external volumes, and catalog integrations.
@@ -86,6 +107,8 @@ def run(ctx, spec, dry, diff, role, user, ignore_memberships, skip_validation, i
         run_list = ["roles", "users"]
     if ctx.parent.params.get("verbose", 0) >= 1:
         print_skipped = True
+    if max_workers is not None:
+        os.environ["PERMISSION_BOT_MAX_WORKERS"] = str(max_workers)
     tundra_grants(
         spec=spec,
         dry=dry,
@@ -140,7 +163,16 @@ def spec_test(spec, role, user, run_list, ignore_memberships):
     )
 
 
-def load_specs(spec, role, user, run_list, ignore_memberships, do_spec_test, skip_validation=False, ignore_missing_objects=False):
+def load_specs(
+    spec,
+    role,
+    user,
+    run_list,
+    ignore_memberships,
+    do_spec_test,
+    skip_validation=False,
+    ignore_missing_objects=False,
+):
     """
     Load specs separately.
     """
@@ -166,7 +198,16 @@ def load_specs(spec, role, user, run_list, ignore_memberships, do_spec_test, ski
 
 
 def tundra_grants(
-    spec, dry, diff, roles, users, run_list, ignore_memberships, skip_validation, ignore_missing_objects, print_skipped
+    spec,
+    dry,
+    diff,
+    roles,
+    users,
+    run_list,
+    ignore_memberships,
+    skip_validation,
+    ignore_missing_objects,
+    print_skipped,
 ):
     """Grant the permissions provided in the provided specification file."""
     spec_loader = load_specs(
