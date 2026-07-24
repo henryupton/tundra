@@ -872,6 +872,8 @@ class TestGenerateTableAndViewGrants:
             "GRANT select ON FUTURE iceberg tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON FUTURE tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON FUTURE views IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT usage ON ALL streamlits IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT usage ON FUTURE streamlits IN schema database_1.schema_1 TO ROLE functional_role",
         ]
 
         return [MockSnowflakeConnector, config, role, expected]
@@ -907,6 +909,8 @@ class TestGenerateTableAndViewGrants:
             "GRANT select, insert, update, delete, truncate, references ON FUTURE tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select, monitor, operate ON ALL dynamic tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select, monitor, operate ON FUTURE dynamic tables IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT usage ON ALL streamlits IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT usage ON FUTURE streamlits IN schema database_1.schema_1 TO ROLE functional_role",
         ]
 
         return [MockSnowflakeConnector, config, role, expected]
@@ -952,6 +956,10 @@ class TestGenerateTableAndViewGrants:
             "GRANT select, insert, update, delete, truncate, references ON FUTURE tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select, monitor, operate ON ALL dynamic tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select, monitor, operate ON FUTURE dynamic tables IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT usage ON ALL streamlits IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT usage ON ALL streamlits IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT usage ON FUTURE streamlits IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT usage ON FUTURE streamlits IN schema database_1.schema_1 TO ROLE functional_role",
         ]
 
         return [MockSnowflakeConnector, config, role, expected]
@@ -1001,6 +1009,10 @@ class TestGenerateTableAndViewGrants:
             "GRANT select, insert, update, delete, truncate, references ON FUTURE tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select, monitor, operate ON ALL dynamic tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select, monitor, operate ON FUTURE dynamic tables IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT usage ON ALL streamlits IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT usage ON ALL streamlits IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT usage ON FUTURE streamlits IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT usage ON FUTURE streamlits IN schema database_1.schema_1 TO ROLE functional_role",
         ]
 
         return [MockSnowflakeConnector, config, role, expected]
@@ -1099,6 +1111,18 @@ class TestGenerateTableAndViewGrants:
             "GRANT select, monitor, operate ON FUTURE dynamic tables IN database database_1 TO ROLE functional_role",
             "GRANT select, monitor, operate ON FUTURE dynamic tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select, monitor, operate ON FUTURE dynamic tables IN schema database_1.schema_2 TO ROLE functional_role",
+            "GRANT usage ON ALL streamlits IN database database_1 TO ROLE functional_role",
+            "GRANT usage ON ALL streamlits IN database database_1 TO ROLE functional_role",
+            "GRANT usage ON ALL streamlits IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT usage ON ALL streamlits IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT usage ON ALL streamlits IN schema database_1.schema_2 TO ROLE functional_role",
+            "GRANT usage ON ALL streamlits IN schema database_1.schema_2 TO ROLE functional_role",
+            "GRANT usage ON FUTURE streamlits IN database database_1 TO ROLE functional_role",
+            "GRANT usage ON FUTURE streamlits IN database database_1 TO ROLE functional_role",
+            "GRANT usage ON FUTURE streamlits IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT usage ON FUTURE streamlits IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT usage ON FUTURE streamlits IN schema database_1.schema_2 TO ROLE functional_role",
+            "GRANT usage ON FUTURE streamlits IN schema database_1.schema_2 TO ROLE functional_role",
         ]
 
         return [mock_connector, config, role, expected]
@@ -1189,6 +1213,14 @@ class TestGenerateTableAndViewGrants:
             "GRANT select, insert, update, delete, truncate, references ON FUTURE tables IN schema raw.public TO ROLE functional_role",
             "GRANT select, monitor, operate ON ALL dynamic tables IN schema raw.public TO ROLE functional_role",
             "GRANT select, monitor, operate ON FUTURE dynamic tables IN schema raw.public TO ROLE functional_role",
+            "GRANT usage ON ALL streamlits IN database raw TO ROLE functional_role",
+            "GRANT usage ON ALL streamlits IN schema raw.public TO ROLE functional_role",
+            "GRANT usage ON ALL streamlits IN schema raw.public TO ROLE functional_role",
+            "GRANT usage ON ALL streamlits IN schema raw.public_1 TO ROLE functional_role",
+            "GRANT usage ON FUTURE streamlits IN database raw TO ROLE functional_role",
+            "GRANT usage ON FUTURE streamlits IN schema raw.public TO ROLE functional_role",
+            "GRANT usage ON FUTURE streamlits IN schema raw.public TO ROLE functional_role",
+            "GRANT usage ON FUTURE streamlits IN schema raw.public_1 TO ROLE functional_role",
         ]
 
         return [mock_connector, config, role, expected]
@@ -1318,6 +1350,10 @@ class TestGenerateTableAndViewGrants:
             "GRANT select, monitor, operate ON ALL dynamic tables IN schema database_1.schema_2 TO ROLE role_with_future_grants",
             "GRANT select, monitor, operate ON FUTURE dynamic tables IN schema database_1.schema_1 TO ROLE role_with_future_grants",
             "GRANT select, monitor, operate ON FUTURE dynamic tables IN schema database_1.schema_2 TO ROLE role_with_future_grants",
+            "GRANT usage ON ALL streamlits IN schema database_1.schema_1 TO ROLE role_with_future_grants",
+            "GRANT usage ON ALL streamlits IN schema database_1.schema_2 TO ROLE role_with_future_grants",
+            "GRANT usage ON FUTURE streamlits IN schema database_1.schema_1 TO ROLE role_with_future_grants",
+            "GRANT usage ON FUTURE streamlits IN schema database_1.schema_2 TO ROLE role_with_future_grants",
         ]
 
         return [mock_connector, config, role, expected]
@@ -1356,6 +1392,49 @@ class TestGenerateTableAndViewGrants:
             "GRANT select ON FUTURE iceberg tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON FUTURE tables IN schema database_1.schema_1 TO ROLE functional_role",
             "GRANT select ON FUTURE views IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT usage ON ALL streamlits IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT usage ON FUTURE streamlits IN schema database_1.schema_1 TO ROLE functional_role",
+        ]
+
+        return [MockSnowflakeConnector, config, role, expected]
+
+    def streamlits_r_star_schema_config(mocker):
+        """
+        Read access on database_1.schema_1.* must also cover streamlit apps:
+        future + all USAGE grants.
+        """
+        mocker.patch.object(MockSnowflakeConnector, "show_tables", return_value=[])
+        mocker.patch.object(MockSnowflakeConnector, "show_views", return_value=[])
+        mocker.patch.object(
+            MockSnowflakeConnector, "show_iceberg_tables", return_value=[]
+        )
+        mocker.patch.object(
+            MockSnowflakeConnector, "show_dynamic_tables", return_value=[]
+        )
+        mocker.patch.object(
+            MockSnowflakeConnector,
+            "show_streamlits",
+            return_value=["database_1.schema_1.streamlit_1"],
+        )
+
+        config = {
+            "read": ["database_1.schema_1.*"],
+            "write": [],
+        }
+
+        role = "functional_role"
+
+        expected = [
+            "GRANT select ON ALL dynamic tables IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT select ON ALL iceberg tables IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT select ON ALL tables IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT select ON ALL views IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT select ON FUTURE dynamic tables IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT select ON FUTURE iceberg tables IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT select ON FUTURE tables IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT select ON FUTURE views IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT usage ON ALL streamlits IN schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT usage ON FUTURE streamlits IN schema database_1.schema_1 TO ROLE functional_role",
         ]
 
         return [MockSnowflakeConnector, config, role, expected]
@@ -1375,6 +1454,7 @@ class TestGenerateTableAndViewGrants:
             partial_rw_future_schemas_tables_views_config,
             future_tables_w_multiple_schemas_existing_grants,
             dynamic_tables_r_star_schema_config,
+            streamlits_r_star_schema_config,
         ],
     )
     def test_generate_table_and_view_grants(
@@ -1416,6 +1496,11 @@ class TestGenerateTableAndViewGrants:
         mocker.patch(
             "tundra.snowflake_grants.SnowflakeConnector.show_dynamic_tables",
             mock_connector.show_dynamic_tables,
+        )
+
+        mocker.patch(
+            "tundra.snowflake_grants.SnowflakeConnector.show_streamlits",
+            mock_connector.show_streamlits,
         )
 
         tables_and_views_list = generator.generate_table_and_view_grants(
@@ -1462,7 +1547,7 @@ class TestGenerateSchemaGrants:
 
         expected = [
             "GRANT usage ON schema database_1.schema_1 TO ROLE functional_role",
-            "GRANT usage, monitor, create table, create view, create iceberg table, create stage, create file format, create sequence, create function, create pipe ON schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe ON schema database_1.schema_1 TO ROLE functional_role",
         ]
         return [MockSnowflakeConnector, config, expected]
 
@@ -1508,8 +1593,8 @@ class TestGenerateSchemaGrants:
         expected = [
             "GRANT usage ON schema database_1.schema_1 TO ROLE functional_role",
             "GRANT usage ON schema database_1.schema_2 TO ROLE functional_role",
-            "GRANT usage, monitor, create table, create view, create iceberg table, create stage, create file format, create sequence, create function, create pipe ON schema database_1.schema_1 TO ROLE functional_role",
-            "GRANT usage, monitor, create table, create view, create iceberg table, create stage, create file format, create sequence, create function, create pipe ON schema database_1.schema_2 TO ROLE functional_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe ON schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe ON schema database_1.schema_2 TO ROLE functional_role",
         ]
         return [MockSnowflakeConnector, config, expected]
 
@@ -1526,7 +1611,7 @@ class TestGenerateSchemaGrants:
         expected = [
             "GRANT usage ON schema database_1.schema_1 TO ROLE functional_role",
             "GRANT usage ON schema database_1.schema_2 TO ROLE functional_role",
-            "GRANT usage, monitor, create table, create view, create iceberg table, create stage, create file format, create sequence, create function, create pipe ON schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe ON schema database_1.schema_1 TO ROLE functional_role",
         ]
         return [MockSnowflakeConnector, config, expected]
 
@@ -1543,7 +1628,7 @@ class TestGenerateSchemaGrants:
         expected = [
             "GRANT usage ON schema database_1.schema_1 TO ROLE functional_role",
             "GRANT usage ON schema database_2.schema_2 TO ROLE functional_role",
-            "GRANT usage, monitor, create table, create view, create iceberg table, create stage, create file format, create sequence, create function, create pipe ON schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe ON schema database_1.schema_1 TO ROLE functional_role",
         ]
         return [MockSnowflakeConnector, config, expected]
 
@@ -1560,7 +1645,7 @@ class TestGenerateSchemaGrants:
 
         expected = [
             "GRANT usage ON schema database_1.schema_1 TO ROLE functional_role",
-            "GRANT usage, monitor, create table, create view, create iceberg table, create stage, create file format, create sequence, create function, create pipe ON schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe ON schema database_1.schema_1 TO ROLE functional_role",
         ]
         return [MockSnowflakeConnector, config, expected]
 
@@ -1617,10 +1702,10 @@ class TestGenerateSchemaGrants:
             "GRANT usage ON schema database_1.schema_1 TO ROLE functional_role",
             "GRANT usage ON schema database_1.schema_2 TO ROLE functional_role",
             "GRANT usage ON schema database_1.schema_3 TO ROLE functional_role",
-            "GRANT usage, monitor, create table, create view, create iceberg table, create stage, create file format, create sequence, create function, create pipe ON FUTURE schemas IN database database_1 TO ROLE functional_role",
-            "GRANT usage, monitor, create table, create view, create iceberg table, create stage, create file format, create sequence, create function, create pipe ON schema database_1.schema_1 TO ROLE functional_role",
-            "GRANT usage, monitor, create table, create view, create iceberg table, create stage, create file format, create sequence, create function, create pipe ON schema database_1.schema_2 TO ROLE functional_role",
-            "GRANT usage, monitor, create table, create view, create iceberg table, create stage, create file format, create sequence, create function, create pipe ON schema database_1.schema_3 TO ROLE functional_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe ON FUTURE schemas IN database database_1 TO ROLE functional_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe ON schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe ON schema database_1.schema_2 TO ROLE functional_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe ON schema database_1.schema_3 TO ROLE functional_role",
         ]
         return [MockSnowflakeConnector, config, expected]
 
@@ -1652,7 +1737,7 @@ class TestGenerateSchemaGrants:
             "GRANT usage ON schema database_1.schema_1 TO ROLE functional_role",
             "GRANT usage ON schema database_1.schema_2 TO ROLE functional_role",
             "GRANT usage ON schema database_1.schema_3 TO ROLE functional_role",
-            "GRANT usage, monitor, create table, create view, create iceberg table, create stage, create file format, create sequence, create function, create pipe ON schema database_1.schema_3 TO ROLE functional_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe ON schema database_1.schema_3 TO ROLE functional_role",
         ]
         return [MockSnowflakeConnector, config, expected]
 
@@ -1690,10 +1775,10 @@ class TestGenerateSchemaGrants:
             "GRANT usage ON schema database_1.schema_1 TO ROLE functional_role",
             "GRANT usage ON schema database_1.schema_2 TO ROLE functional_role",
             "GRANT usage ON schema database_1.schema_2 TO ROLE functional_role",
-            "GRANT usage, monitor, create table, create view, create iceberg table, create stage, create file format, create sequence, create function, create pipe ON FUTURE schemas IN database database_1 TO ROLE functional_role",
-            "GRANT usage, monitor, create table, create view, create iceberg table, create stage, create file format, create sequence, create function, create pipe ON FUTURE schemas IN database database_2 TO ROLE functional_role",
-            "GRANT usage, monitor, create table, create view, create iceberg table, create stage, create file format, create sequence, create function, create pipe ON schema database_2.schema_3 TO ROLE functional_role",
-            "GRANT usage, monitor, create table, create view, create iceberg table, create stage, create file format, create sequence, create function, create pipe ON schema database_2.schema_3 TO ROLE functional_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe ON FUTURE schemas IN database database_1 TO ROLE functional_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe ON FUTURE schemas IN database database_2 TO ROLE functional_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe ON schema database_2.schema_3 TO ROLE functional_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe ON schema database_2.schema_3 TO ROLE functional_role",
         ]
         return [MockSnowflakeConnector, config, expected]
 
@@ -1727,8 +1812,8 @@ class TestGenerateSchemaGrants:
         expected = [
             "GRANT usage ON schema database_1.prefix_schema_1 TO ROLE functional_role",
             "GRANT usage ON schema database_1.prefix_schema_2 TO ROLE functional_role",
-            "GRANT usage, monitor, create table, create view, create iceberg table, create stage, create file format, create sequence, create function, create pipe ON schema database_1.prefix_schema_1 TO ROLE functional_role",
-            "GRANT usage, monitor, create table, create view, create iceberg table, create stage, create file format, create sequence, create function, create pipe ON schema database_1.prefix_schema_2 TO ROLE functional_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe ON schema database_1.prefix_schema_1 TO ROLE functional_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe ON schema database_1.prefix_schema_2 TO ROLE functional_role",
         ]
         return [MockSnowflakeConnector, config, expected]
 
@@ -1762,8 +1847,8 @@ class TestGenerateSchemaGrants:
         expected = [
             "GRANT usage ON schema database_1.schema_1_suffix TO ROLE functional_role",
             "GRANT usage ON schema database_1.schema_2_suffix TO ROLE functional_role",
-            "GRANT usage, monitor, create table, create view, create iceberg table, create stage, create file format, create sequence, create function, create pipe ON schema database_1.schema_1_suffix TO ROLE functional_role",
-            "GRANT usage, monitor, create table, create view, create iceberg table, create stage, create file format, create sequence, create function, create pipe ON schema database_1.schema_2_suffix TO ROLE functional_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe ON schema database_1.schema_1_suffix TO ROLE functional_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe ON schema database_1.schema_2_suffix TO ROLE functional_role",
         ]
         return [MockSnowflakeConnector, config, expected]
 
@@ -2450,7 +2535,7 @@ class TestGenerateSchemaRevokes:
         }
 
         expected = [
-            "REVOKE monitor, create table, create view, create iceberg table, create stage, create file format, create sequence, create function, create pipe ON schema database_1.schema_1 FROM ROLE functional_role"
+            "REVOKE monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe ON schema database_1.schema_1 FROM ROLE functional_role"
         ]
 
         return [
@@ -2480,7 +2565,7 @@ class TestGenerateSchemaRevokes:
         }
 
         expected = [
-            "REVOKE monitor, create table, create view, create iceberg table, create stage, create file format, create sequence, create function, create pipe ON schema database_1.schema_1 FROM ROLE functional_role",
+            "REVOKE monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe ON schema database_1.schema_1 FROM ROLE functional_role",
             "REVOKE usage ON schema database_1.schema_1 FROM ROLE functional_role",
         ]
 
@@ -2572,8 +2657,8 @@ class TestGenerateSchemaRevokes:
         }
 
         expected = [
-            "REVOKE monitor, create table, create view, create iceberg table, create stage, create file format, create sequence, create function, create pipe ON schema database_1.schema_1 FROM ROLE functional_role",
-            "REVOKE monitor, create table, create view, create iceberg table, create stage, create file format, create sequence, create function, create pipe ON schema database_2.schema_2 FROM ROLE functional_role",
+            "REVOKE monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe ON schema database_1.schema_1 FROM ROLE functional_role",
+            "REVOKE monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe ON schema database_2.schema_2 FROM ROLE functional_role",
             "REVOKE usage ON schema database_1.schema_1 FROM ROLE functional_role",
         ]
 

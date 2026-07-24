@@ -89,4 +89,10 @@ STREAMLIT = TableObjectType(
 )
 
 # Order matters: it determines SQL statement emission order.
-TABLE_OBJECT_TYPES: List[TableObjectType] = [TABLE, VIEW, ICEBERG_TABLE, DYNAMIC_TABLE]
+TABLE_OBJECT_TYPES: List[TableObjectType] = [
+    TABLE,
+    VIEW,
+    ICEBERG_TABLE,
+    DYNAMIC_TABLE,
+    STREAMLIT,
+]
