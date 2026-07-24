@@ -2278,6 +2278,31 @@ class TestGenerateTableAndViewRevokes:
             expected,
         ]
 
+    def revoke_single_r_streamlit_config(mocker):
+        """
+        REVOKE usage on DATABASE_1.SCHEMA_1.STREAMLIT_1 streamlit
+        """
+        test_tables_config = {
+            "read": [],
+            "write": [],
+        }
+
+        test_grants_to_role = {
+            "functional_role": {
+                "usage": {"streamlit": ["database_1.schema_1.streamlit_1"]},
+            },
+        }
+
+        expected = [
+            "REVOKE usage ON streamlit database_1.schema_1.streamlit_1 FROM ROLE functional_role"
+        ]
+
+        return [
+            test_tables_config,
+            test_grants_to_role,
+            expected,
+        ]
+
     def revoke_shared_db_single_r_table_config(mocker):
         """
         Should not generate read REVOKE statements
@@ -2444,6 +2469,7 @@ class TestGenerateTableAndViewRevokes:
             revoke_single_w_table_config,
             revoke_single_rw_table_config,
             revoke_single_rw_view_config,
+            revoke_single_r_streamlit_config,
             revoke_shared_db_single_r_table_config,
             revoke_shared_db_single_r_view_config,
             revoke_shared_db_single_rw_table_config,

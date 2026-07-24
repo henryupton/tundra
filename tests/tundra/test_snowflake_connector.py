@@ -580,6 +580,9 @@ class TestShowTableObjects:
         conn.show_table_objects(DYNAMIC_TABLE, schema="db_1.schema_1")
         run_query.assert_called_with("SHOW DYNAMIC TABLES IN SCHEMA db_1.schema_1")
 
+        conn.show_table_objects(STREAMLIT, schema="db_1.schema_1")
+        run_query.assert_called_with("SHOW STREAMLITS IN SCHEMA db_1.schema_1")
+
         conn.show_table_objects(ICEBERG_TABLE, database="db_1")
         run_query.assert_called_with("SHOW ICEBERG TABLES IN DATABASE db_1")
 
