@@ -561,6 +561,10 @@ class TestSnowflakyFuturePlaceholders:
             SnowflakeConnector.snowflaky("db_1.schema_1.<DYNAMIC TABLE>")
             == "db_1.schema_1.<dynamic table>"
         )
+        assert (
+            SnowflakeConnector.snowflaky("db_1.schema_1.<STREAMLIT>")
+            == "db_1.schema_1.<streamlit>"
+        )
         assert SnowflakeConnector.snowflaky("db_1.<TABLE>") == "db_1.<table>"
         assert SnowflakeConnector.snowflaky("db_1.<SCHEMA>") == "db_1.<schema>"
 
