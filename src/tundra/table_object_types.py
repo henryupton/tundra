@@ -76,5 +76,17 @@ DYNAMIC_TABLE = TableObjectType(
     schema_create_privilege=None,
 )
 
+# Streamlit apps expose only USAGE (run/view). read == write makes the type
+# non-writable, so grants come from the `tables` read list. `create streamlit`
+# is derived as a schema write privilege via the registry.
+STREAMLIT = TableObjectType(
+    name="streamlit",
+    connector_method="show_streamlits",
+    show_command="STREAMLITS",
+    read_privileges="usage",
+    write_privileges="usage",
+    schema_create_privilege="create streamlit",
+)
+
 # Order matters: it determines SQL statement emission order.
 TABLE_OBJECT_TYPES: List[TableObjectType] = [TABLE, VIEW, ICEBERG_TABLE, DYNAMIC_TABLE]
