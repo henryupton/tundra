@@ -1729,3 +1729,42 @@ class TestParallelRoleFetch:
         # filter_to_database_refs drops non-tracked db "other_db"
         assert loader.grants_to_role["role_a"]["usage"]["database"] == ["db1"]
         assert loader.grants_to_role["role_b"]["usage"]["database"] == ["db1"]
+
+    def test_multi_db_schema_merge_order(self, mocker):
+        mocker.patch.object(SnowflakeSpecLoader, "__init__", lambda *a, **k: None)
+        loader = SnowflakeSpecLoader("", None)
+        loader.max_workers = 4
+        loader.entities = {
+            "database_refs": ["db1", "db2"],
+            "roles": [],
+            "warehouse_refs": [],
+            "integration_refs": [],
+        }
+        loader.grants_to_role = {}
+        conn = MockSnowflakeConnector()
+        mocker.patch.object(
+            conn, "show_schemas",
+            side_effect=lambda database=None: [f"{database}.s1", f"{database}.s2"],
+        )
+
+        def future_grants(database=None, schema=None):
+            if schema is not None:
+                name = f"{schema}.tbl"
+            else:
+                name = f"{database}.dbgrant"
+            return {"r": {"select": {"table": [name]}}}
+
+        mocker.patch.object(conn, "show_future_grants", side_effect=future_grants)
+        mocker.patch.object(conn, "show_grants_to_role", return_value={})
+
+        loader.get_role_privileges_from_snowflake_server(conn=conn)
+
+        # Interleaved by database in order: db-level, then that db's schemas, then next db.
+        assert loader.grants_to_role["r"]["select"]["table"] == [
+            "db1.dbgrant",
+            "db1.s1.tbl",
+            "db1.s2.tbl",
+            "db2.dbgrant",
+            "db2.s1.tbl",
+            "db2.s2.tbl",
+        ]
