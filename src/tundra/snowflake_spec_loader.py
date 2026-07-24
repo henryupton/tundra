@@ -182,8 +182,19 @@ class SnowflakeSpecLoader:
         error_messages = []
         if len(self.entities["table_refs"]) > 0:
             views = conn.show_views()
+            databases = list(self.entities["tables_by_database"].keys())
+            existing_by_db = dict(
+                zip(
+                    databases,
+                    parallel_map(
+                        lambda d: conn.show_tables(database=d),
+                        databases,
+                        self.max_workers,
+                    ),
+                )
+            )
             for db, tables in self.entities["tables_by_database"].items():
-                existing_tables = conn.show_tables(database=db)
+                existing_tables = existing_by_db[db]
                 for table in tables:
                     if (
                         "*" not in table
