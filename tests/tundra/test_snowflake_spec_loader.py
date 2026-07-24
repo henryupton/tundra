@@ -1743,7 +1743,8 @@ class TestParallelRoleFetch:
         loader.grants_to_role = {}
         conn = MockSnowflakeConnector()
         mocker.patch.object(
-            conn, "show_schemas",
+            conn,
+            "show_schemas",
             side_effect=lambda database=None: [f"{database}.s1", f"{database}.s2"],
         )
 
