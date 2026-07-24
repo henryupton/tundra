@@ -16,6 +16,7 @@ from tundra.logger import GLOBAL_LOGGER as logger
 from tundra.table_object_types import (
     DYNAMIC_TABLE,
     ICEBERG_TABLE,
+    STREAMLIT,
     TABLE,
     TABLE_OBJECT_TYPES,
     VIEW,
@@ -187,6 +188,11 @@ class SnowflakeConnector:
         self, database: Optional[str] = None, schema: Optional[str] = None
     ) -> List[str]:
         return self.show_table_objects(DYNAMIC_TABLE, database=database, schema=schema)
+
+    def show_streamlits(
+        self, database: Optional[str] = None, schema: Optional[str] = None
+    ) -> List[str]:
+        return self.show_table_objects(STREAMLIT, database=database, schema=schema)
 
     def show_iceberg_tables(
         self, database: Optional[str] = None, schema: Optional[str] = None

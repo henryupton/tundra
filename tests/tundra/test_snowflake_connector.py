@@ -3,7 +3,7 @@ import os
 import pytest
 import sqlalchemy
 from tundra.snowflake_connector import SnowflakeConnector
-from tundra.table_object_types import DYNAMIC_TABLE, ICEBERG_TABLE, TABLE, VIEW
+from tundra.table_object_types import DYNAMIC_TABLE, ICEBERG_TABLE, STREAMLIT, TABLE, VIEW
 from tundra_test_utils.snowflake_connector import MockSnowflakeConnector
 
 
@@ -605,3 +605,5 @@ class TestShowTableObjects:
         generic.assert_called_with(VIEW, database=None, schema="db.s")
         conn.show_iceberg_tables(database="db")
         generic.assert_called_with(ICEBERG_TABLE, database="db", schema=None)
+        conn.show_streamlits(database="db")
+        generic.assert_called_with(STREAMLIT, database="db", schema=None)

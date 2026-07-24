@@ -45,6 +45,11 @@ class MockSnowflakeConnector(SnowflakeConnector):
     ) -> List[str]:
         return []
 
+    def show_streamlits(
+        self, database: Optional[str] = None, schema: Optional[str] = None
+    ) -> List[str]:
+        return []
+
     def show_future_grants(
         self, database: Optional[str] = None, schema: Optional[str] = None
     ) -> List[str]:
