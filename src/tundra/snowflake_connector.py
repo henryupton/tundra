@@ -32,8 +32,26 @@ for logger_name in ["snowflake.connector", "bot", "boto3"]:
     log.setLevel(logging.WARNING)
 
 
+class _BufferedResult:
+    """Holds fully-fetched rows so callers can read them after the DB
+    connection has been returned to the pool. Preserves the subset of the
+    SQLAlchemy result interface the connector relies on."""
+
+    def __init__(self, rows):
+        self._rows = rows
+
+    def fetchall(self):
+        return self._rows
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+
 class SnowflakeConnector:
     def __init__(self, config: Optional[Dict] = None) -> None:
+        max_workers = int(os.getenv("PERMISSION_BOT_MAX_WORKERS", "8"))
+        pool_kwargs = {"pool_size": max_workers, "max_overflow": max_workers}
+
         if not config:
             config = {
                 "user": os.getenv("PERMISSION_BOT_USER"),
@@ -56,7 +74,8 @@ class SnowflakeConnector:
                     authenticator="oauth",
                     token=config["oauth_token"],
                     warehouse=config["warehouse"],
-                )
+                ),
+                **pool_kwargs,
             )
         elif config["key_path"] is not None:
             pkb = self.generate_private_key(
@@ -71,6 +90,7 @@ class SnowflakeConnector:
                     warehouse=config["warehouse"],
                 ),
                 connect_args={"private_key": pkb},
+                **pool_kwargs,
             )
 
         elif config["authenticator"] is not None:
@@ -83,6 +103,7 @@ class SnowflakeConnector:
                     warehouse=config["warehouse"],
                     authenticator=config["authenticator"],
                 ),
+                **pool_kwargs,
             )
         else:
             if not config["user"]:
@@ -99,13 +120,12 @@ class SnowflakeConnector:
                     warehouse=config["warehouse"],
                     # Enable the insecure_mode if you get OCSP errors while testing
                     # insecure_mode=True,
-                )
+                ),
+                **pool_kwargs,
             )
 
     @staticmethod
-    def generate_private_key(
-            key_path: str, key_passphrase: Union[str, None]
-    ) -> bytes:
+    def generate_private_key(key_path: str, key_passphrase: Union[str, None]) -> bytes:
         with open(key_path, "rb") as key:
             encoded_key = None
             if key_passphrase:
@@ -347,18 +367,20 @@ class SnowflakeConnector:
         results = self.run_query(query).fetchall()
 
         for result in results:
-            roles[
-                SnowflakeConnector.snowflaky(result["name"])
-            ] = SnowflakeConnector.snowflaky(result["owner"])
+            roles[SnowflakeConnector.snowflaky(result["name"])] = (
+                SnowflakeConnector.snowflaky(result["owner"])
+            )
         return roles
 
-    def run_query(self, query: str):
+    def run_query(self, query: str) -> "_BufferedResult":
         from sqlalchemy import text
+
         with self.engine.connect() as connection:
             logger.debug(f"Running query: {query}")
             result = connection.execute(text(query))
+            rows = result.mappings().all() if result.returns_rows else []
 
-        return result
+        return _BufferedResult(rows)
 
     def full_schema_list(self, schema: str) -> List[str]:
         """
