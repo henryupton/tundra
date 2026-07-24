@@ -90,7 +90,9 @@ class TestSnowflakeConnector:
         SnowflakeConnector()
         del os.environ["PERMISSION_BOT_OAUTH_TOKEN"]
         sqlalchemy.create_engine.assert_called_with(
-            "snowflake://TEST:@TEST/?authenticator=oauth&token=TEST&warehouse=TEST"
+            "snowflake://TEST:@TEST/?authenticator=oauth&token=TEST&warehouse=TEST",
+            pool_size=8,
+            max_overflow=8,
         )
 
     def test_uses_key_pair_if_available(self, mocker, snowflake_connector_env):
@@ -112,6 +114,8 @@ class TestSnowflakeConnector:
         sqlalchemy.create_engine.assert_called_with(
             "snowflake://TEST:@TEST/TEST?role=TEST&warehouse=TEST",
             connect_args={"private_key": test_private_key},
+            pool_size=8,
+            max_overflow=8,
         )
 
     def test_uses_authenticator_if_available(self, mocker, snowflake_connector_env):
@@ -120,18 +124,23 @@ class TestSnowflakeConnector:
         SnowflakeConnector()
         del os.environ["PERMISSION_BOT_AUTHENTICATOR"]
         sqlalchemy.create_engine.assert_called_with(
-            "snowflake://TEST:@TEST/TEST?authenticator=TEST&role=TEST&warehouse=TEST"
+            "snowflake://TEST:@TEST/TEST?authenticator=TEST&role=TEST&warehouse=TEST",
+            pool_size=8,
+            max_overflow=8,
         )
 
     def test_uses_username_password_by_default(self, mocker, snowflake_connector_env):
         mocker.patch("sqlalchemy.create_engine")
         SnowflakeConnector()
         sqlalchemy.create_engine.assert_called_with(
-            "snowflake://TEST:TEST@TEST/TEST?role=TEST&warehouse=TEST"
+            "snowflake://TEST:TEST@TEST/TEST?role=TEST&warehouse=TEST",
+            pool_size=8,
+            max_overflow=8,
         )
 
     def test_run_query_executes_desired_query(self, mocker):
         from sqlalchemy import text
+
         mocker.patch("sqlalchemy.create_engine")
         config = {
             "user": "test",
@@ -156,17 +165,23 @@ class TestSnowflakeConnector:
         executed_query = call_args[0][0][0]
         assert str(executed_query) == query
 
-    def test_run_query_returns_results(self, mocker):
+    def test_run_query_returns_buffered_rows(self, mocker):
         mocker.patch("sqlalchemy.create_engine")
         conn = SnowflakeConnector()
-        expectedResult = "MY DATABASE RESULT"
+
+        rows = [{"name": "A"}, {"name": "B"}]
+        fake_result = mocker.MagicMock()
+        fake_result.returns_rows = True
+        fake_result.mappings.return_value.all.return_value = rows
         mocker.patch.object(
-            conn.engine.connect().__enter__(), "execute", return_value=expectedResult
+            conn.engine.connect().__enter__(), "execute", return_value=fake_result
         )
 
-        result = conn.run_query("query")
+        result = conn.run_query("SHOW SOMETHING")
 
-        assert result is expectedResult
+        # Interface preserved: callers still use .fetchall()
+        assert result.fetchall() == rows
+        assert result.fetchone() == rows[0]
 
     def test_get_current_user(self, mocker):
         mocker.patch("sqlalchemy.create_engine")
@@ -573,7 +588,8 @@ class TestShowTableObjects:
     def test_show_table_objects_builds_query_per_scope(self, mocker):
         conn = MockSnowflakeConnector()
         run_query = mocker.patch.object(
-            MockSnowflakeConnector, "run_query",
+            MockSnowflakeConnector,
+            "run_query",
             return_value=mocker.Mock(fetchall=lambda: []),
         )
 
@@ -592,10 +608,15 @@ class TestShowTableObjects:
     def test_show_table_objects_returns_snowflaky_identifiers(self, mocker):
         conn = MockSnowflakeConnector()
         mocker.patch.object(
-            MockSnowflakeConnector, "run_query",
+            MockSnowflakeConnector,
+            "run_query",
             return_value=mocker.Mock(
                 fetchall=lambda: [
-                    {"database_name": "DB_1", "schema_name": "SCHEMA_1", "name": "TABLE_1"}
+                    {
+                        "database_name": "DB_1",
+                        "schema_name": "SCHEMA_1",
+                        "name": "TABLE_1",
+                    }
                 ]
             ),
         )
