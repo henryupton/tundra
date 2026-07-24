@@ -1458,7 +1458,7 @@ class TestSpecFileLoading:
         )
 
         expected = [
-            'ALTER USER "first.last" SET DISABLED = FALSE, TYPE = \'PERSON\', DEFAULT_SECONDARY_ROLES = ()',
+            "ALTER USER \"first.last\" SET DISABLED = FALSE, TYPE = 'PERSON', DEFAULT_SECONDARY_ROLES = ()",
             "GRANT OWNERSHIP ON database database_1 TO ROLE test_role COPY CURRENT GRANTS",
             "GRANT OWNERSHIP ON database shared_database_1 TO ROLE test_role COPY CURRENT GRANTS",
             "GRANT OWNERSHIP ON schema database_1.schema_1 TO ROLE test_role COPY CURRENT GRANTS",
@@ -1681,3 +1681,51 @@ class TestSpecFileLoading:
         results.sort()
 
         assert results == expected
+
+
+class TestParallelRoleFetch:
+    def _loader(self, mocker):
+        mocker.patch.object(SnowflakeSpecLoader, "__init__", lambda *a, **k: None)
+        loader = SnowflakeSpecLoader("", None)
+        loader.max_workers = 4
+        loader.entities = {
+            "database_refs": ["db1", "db2"],
+            "roles": ["role_a", "role_b"],
+            "warehouse_refs": [],
+            "integration_refs": [],
+        }
+        loader.grants_to_role = {}
+        return loader
+
+    def test_fetches_future_grants_for_every_schema(self, mocker):
+        loader = self._loader(mocker)
+        conn = MockSnowflakeConnector()
+        mocker.patch.object(
+            conn,
+            "show_schemas",
+            side_effect=lambda database=None: [f"{database}.s1", f"{database}.s2"],
+        )
+        future = mocker.patch.object(conn, "show_future_grants", return_value={})
+        mocker.patch.object(conn, "show_grants_to_role", return_value={})
+
+        loader.get_role_privileges_from_snowflake_server(conn=conn)
+
+        called = {c.kwargs.get("schema") for c in future.call_args_list}
+        assert {"db1.s1", "db1.s2", "db2.s1", "db2.s2"} <= called
+
+    def test_merges_role_grants_filtered_to_db_refs(self, mocker):
+        loader = self._loader(mocker)
+        conn = MockSnowflakeConnector()
+        mocker.patch.object(conn, "show_schemas", return_value=[])
+        mocker.patch.object(conn, "show_future_grants", return_value={})
+        mocker.patch.object(
+            conn,
+            "show_grants_to_role",
+            side_effect=lambda role: {"usage": {"database": ["db1", "other_db"]}},
+        )
+
+        loader.get_role_privileges_from_snowflake_server(conn=conn)
+
+        # filter_to_database_refs drops non-tracked db "other_db"
+        assert loader.grants_to_role["role_a"]["usage"]["database"] == ["db1"]
+        assert loader.grants_to_role["role_b"]["usage"]["database"] == ["db1"]

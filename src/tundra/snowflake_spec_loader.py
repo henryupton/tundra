@@ -1,7 +1,9 @@
+import os
 from typing import Any, Dict, List, Optional, cast
 
 import click
 
+from tundra.concurrency import parallel_map
 from tundra.entities import EntityGenerator
 from tundra.error import SpecLoadingError
 from tundra.logger import GLOBAL_LOGGER as logger
@@ -24,9 +26,15 @@ class SnowflakeSpecLoader:
         spec_test: Optional[bool] = False,
         skip_validation: Optional[bool] = False,
         ignore_missing_objects: Optional[bool] = False,
+        max_workers: Optional[int] = None,
     ) -> None:
         run_list = run_list or ["users", "roles"]
         self.conn = conn or SnowflakeConnector()
+        self.max_workers = (
+            max_workers
+            if max_workers is not None
+            else int(os.getenv("PERMISSION_BOT_MAX_WORKERS", "8"))
+        )
         # Load the specification file and check for (syntactical) errors
         click.secho("Loading spec file", fg="green")
         self.spec = load_spec(spec_path)
@@ -86,7 +94,7 @@ class SnowflakeSpecLoader:
 
     @staticmethod
     def check_permissions_on_snowflake_server(
-        conn: Optional[SnowflakeConnector] = None
+        conn: Optional[SnowflakeConnector] = None,
     ) -> None:
         if conn is None:
             conn = SnowflakeConnector()
@@ -267,6 +275,32 @@ class SnowflakeSpecLoader:
             else:
                 raise SpecLoadingError("\n".join(error_messages))
 
+    def _merge_role_keyed_grants(self, target, results, roles):
+        for role in results:
+            if roles and role not in roles:
+                continue
+            for privilege in results[role]:
+                for grant_on in results[role][privilege]:
+                    target.setdefault(role, {}).setdefault(privilege, {}).setdefault(
+                        grant_on, []
+                    ).extend(
+                        self.filter_to_database_refs(
+                            grant_on=grant_on,
+                            filter_set=results[role][privilege][grant_on],
+                        )
+                    )
+
+    def _merge_single_role_grants(self, target, role, results):
+        for privilege in results:
+            for grant_on in results[privilege]:
+                target.setdefault(role, {}).setdefault(privilege, {}).setdefault(
+                    grant_on, []
+                ).extend(
+                    self.filter_to_database_refs(
+                        grant_on=grant_on, filter_set=results[privilege][grant_on]
+                    )
+                )
+
     def get_role_privileges_from_snowflake_server(
         self,
         conn: SnowflakeConnector,
@@ -274,88 +308,67 @@ class SnowflakeSpecLoader:
         ignore_memberships: Optional[bool] = False,
     ) -> None:
         future_grants: Dict[str, Any] = {}
+        databases = self.entities["database_refs"]
 
-        for database in self.entities["database_refs"]:
-            logger.info(f"Fetching future grants for database: {database}")
-            grant_results = conn.show_future_grants(database=database)
-            grant_results = (
-                {
-                    role: role_grants
-                    for role, role_grants in grant_results.items()
-                    if role in roles
-                }
-                if roles
-                else grant_results
+        # --- Fetch phase (parallel) ---
+        schemas_by_db = dict(
+            zip(
+                databases,
+                parallel_map(
+                    lambda d: conn.show_schemas(database=d), databases, self.max_workers
+                ),
             )
+        )
+        db_future_by_db = dict(
+            zip(
+                databases,
+                parallel_map(
+                    lambda d: conn.show_future_grants(database=d),
+                    databases,
+                    self.max_workers,
+                ),
+            )
+        )
+        all_schemas = [s for db in databases for s in schemas_by_db[db]]
+        schema_future_by_schema = dict(
+            zip(
+                all_schemas,
+                parallel_map(
+                    lambda s: conn.show_future_grants(schema=s),
+                    all_schemas,
+                    self.max_workers,
+                ),
+            )
+        )
 
-            for role in grant_results:
-                for privilege in grant_results[role]:
-                    for grant_on in grant_results[role][privilege]:
-                        (
-                            future_grants.setdefault(role, {})
-                            .setdefault(privilege, {})
-                            .setdefault(grant_on, [])
-                            .extend(
-                                self.filter_to_database_refs(
-                                    grant_on=grant_on,
-                                    filter_set=grant_results[role][privilege][grant_on],
-                                )
-                            )
-                        )
+        role_list = [
+            role
+            for role in self.entities["roles"]
+            if not (roles and role not in roles)
+            and not ignore_memberships
+            and "." not in role
+        ]
+        role_grants_by_role = dict(
+            zip(
+                role_list,
+                parallel_map(
+                    lambda r: conn.show_grants_to_role(r), role_list, self.max_workers
+                ),
+            )
+        )
 
-            # Get all schemas in all ref'd databases. Not all schemas will be
-            # ref'd in the spec.
-            logger.info(f"Fetching all schemas for database {database}")
-            for schema in conn.show_schemas(database=database):
-                logger.info(f"Fetching all future grants for schema {schema}")
-                grant_results = conn.show_future_grants(schema=schema)
-                grant_results = (
-                    {
-                        role: role_grants
-                        for role, role_grants in grant_results.items()
-                        if role in roles
-                    }
-                    if roles
-                    else grant_results
+        # --- Merge phase (serial, deterministic, original order) ---
+        for db in databases:
+            self._merge_role_keyed_grants(future_grants, db_future_by_db[db], roles)
+            for schema in schemas_by_db[db]:
+                self._merge_role_keyed_grants(
+                    future_grants, schema_future_by_schema[schema], roles
                 )
 
-                for role in grant_results:
-                    for privilege in grant_results[role]:
-                        for grant_on in grant_results[role][privilege]:
-                            (
-                                future_grants.setdefault(role, {})
-                                .setdefault(privilege, {})
-                                .setdefault(grant_on, [])
-                                .extend(
-                                    self.filter_to_database_refs(
-                                        grant_on=grant_on,
-                                        filter_set=grant_results[role][privilege][
-                                            grant_on
-                                        ],
-                                    )
-                                )
-                            )
-
-        for role in self.entities["roles"]:
-            if (roles and role not in roles) or ignore_memberships:
-                continue
-            if "." in role:
-                continue
-            logger.info(f"Fetching all grants for role {role}")
-            role_grants = conn.show_grants_to_role(role)
-            for privilege in role_grants:
-                for grant_on in role_grants[privilege]:
-                    (
-                        future_grants.setdefault(role, {})
-                        .setdefault(privilege, {})
-                        .setdefault(grant_on, [])
-                        .extend(
-                            self.filter_to_database_refs(
-                                grant_on=grant_on,
-                                filter_set=role_grants[privilege][grant_on],
-                            )
-                        )
-                    )
+        for role in role_list:
+            self._merge_single_role_grants(
+                future_grants, role, role_grants_by_role[role]
+            )
 
         self.grants_to_role = future_grants
 
@@ -440,7 +453,9 @@ class SnowflakeSpecLoader:
                 if item and ("." not in item or item.split(".")[0] in database_refs)
             ]
 
-    def filter_config_for_missing_entities(self, config: Dict[str, Any]) -> Dict[str, Any]:
+    def filter_config_for_missing_entities(
+        self, config: Dict[str, Any]
+    ) -> Dict[str, Any]:
         """
         Filter out missing entities from a role/user config.
         Returns a new config with missing entities removed.
@@ -454,41 +469,57 @@ class SnowflakeSpecLoader:
         # Filter warehouses
         if "warehouses" in filtered_config:
             filtered_config["warehouses"] = [
-                w for w in filtered_config["warehouses"]
+                w
+                for w in filtered_config["warehouses"]
                 if w not in self.missing_entities["warehouses"]
             ]
 
         # Filter integrations
         if "integrations" in filtered_config:
             filtered_config["integrations"] = [
-                i for i in filtered_config["integrations"]
+                i
+                for i in filtered_config["integrations"]
                 if i not in self.missing_entities["integrations"]
             ]
 
         # Filter privileges.databases
-        if "privileges" in filtered_config and "databases" in filtered_config["privileges"]:
+        if (
+            "privileges" in filtered_config
+            and "databases" in filtered_config["privileges"]
+        ):
             for access_type in ["read", "write"]:
                 if access_type in filtered_config["privileges"]["databases"]:
                     filtered_config["privileges"]["databases"][access_type] = [
-                        db for db in filtered_config["privileges"]["databases"][access_type]
+                        db
+                        for db in filtered_config["privileges"]["databases"][
+                            access_type
+                        ]
                         if db not in self.missing_entities["databases"]
                     ]
 
         # Filter privileges.schemas
-        if "privileges" in filtered_config and "schemas" in filtered_config["privileges"]:
+        if (
+            "privileges" in filtered_config
+            and "schemas" in filtered_config["privileges"]
+        ):
             for access_type in ["read", "write"]:
                 if access_type in filtered_config["privileges"]["schemas"]:
                     filtered_config["privileges"]["schemas"][access_type] = [
-                        s for s in filtered_config["privileges"]["schemas"][access_type]
+                        s
+                        for s in filtered_config["privileges"]["schemas"][access_type]
                         if s not in self.missing_entities["schemas"]
                     ]
 
         # Filter privileges.tables
-        if "privileges" in filtered_config and "tables" in filtered_config["privileges"]:
+        if (
+            "privileges" in filtered_config
+            and "tables" in filtered_config["privileges"]
+        ):
             for access_type in ["read", "write"]:
                 if access_type in filtered_config["privileges"]["tables"]:
                     filtered_config["privileges"]["tables"][access_type] = [
-                        t for t in filtered_config["privileges"]["tables"][access_type]
+                        t
+                        for t in filtered_config["privileges"]["tables"][access_type]
                         if t not in self.missing_entities["tables"]
                     ]
 
@@ -547,10 +578,16 @@ class SnowflakeSpecLoader:
                 ]
                 for entity_name, config in entity_configs:
                     # Skip missing roles/users
-                    if entity_type == "roles" and entity_name in self.missing_entities["roles"]:
+                    if (
+                        entity_type == "roles"
+                        and entity_name in self.missing_entities["roles"]
+                    ):
                         logger.info(f"Skipping missing role: {entity_name}")
                         continue
-                    if entity_type == "users" and entity_name in self.missing_entities["users"]:
+                    if (
+                        entity_type == "users"
+                        and entity_name in self.missing_entities["users"]
+                    ):
                         logger.info(f"Skipping missing user: {entity_name}")
                         continue
 
