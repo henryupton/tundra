@@ -375,13 +375,16 @@ class SnowflakeSpecLoader:
     def get_user_privileges_from_snowflake_server(
         self, conn: SnowflakeConnector, users: Optional[List[str]] = None
     ) -> None:
-        user_entities = self.entities["users"]
-        with click.progressbar(user_entities) as users_bar:
-            for user in users_bar:
-                if users and user not in users:
-                    continue
-                logger.info(f"Fetching user privileges for user: {user}")
-                self.roles_granted_to_user[user] = conn.show_roles_granted_to_user(user)
+        user_entities = [
+            user for user in self.entities["users"] if not (users and user not in users)
+        ]
+        results = parallel_map(
+            lambda u: conn.show_roles_granted_to_user(u),
+            user_entities,
+            self.max_workers,
+        )
+        for user, roles_granted in zip(user_entities, results):
+            self.roles_granted_to_user[user] = roles_granted
 
     def get_privileges_from_snowflake_server(
         self,

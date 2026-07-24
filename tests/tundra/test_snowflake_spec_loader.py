@@ -1764,3 +1764,18 @@ class TestParallelRoleFetch:
             "db2.s1.tbl",
             "db2.s2.tbl",
         ]
+
+    def test_user_fetch_is_filtered_and_populated(self, mocker):
+        mocker.patch.object(SnowflakeSpecLoader, "__init__", lambda *a, **k: None)
+        loader = SnowflakeSpecLoader("", None)
+        loader.max_workers = 4
+        loader.entities = {"users": ["u1", "u2", "u3"]}
+        loader.roles_granted_to_user = {}
+        conn = MockSnowflakeConnector()
+        mocker.patch.object(
+            conn, "show_roles_granted_to_user", side_effect=lambda u: [f"{u}_role"]
+        )
+
+        loader.get_user_privileges_from_snowflake_server(conn=conn, users=["u1", "u3"])
+
+        assert loader.roles_granted_to_user == {"u1": ["u1_role"], "u3": ["u3_role"]}
