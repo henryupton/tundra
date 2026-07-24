@@ -1502,7 +1502,7 @@ class SnowflakeGrantsGenerator:
             granted_resources = list(
                 set(
                     self.grants_to_role.get(role, {})
-                    .get("select", {})
+                    .get(object_type.read_privileges, {})
                     .get(object_type.name, [])
                 )
             )
