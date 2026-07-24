@@ -1779,3 +1779,25 @@ class TestParallelRoleFetch:
         loader.get_user_privileges_from_snowflake_server(conn=conn, users=["u1", "u3"])
 
         assert loader.roles_granted_to_user == {"u1": ["u1_role"], "u3": ["u3_role"]}
+
+    def test_check_table_refs_parallel_reports_missing(self, mocker):
+        mocker.patch.object(SnowflakeSpecLoader, "__init__", lambda *a, **k: None)
+        loader = SnowflakeSpecLoader("", None)
+        loader.max_workers = 4
+        loader.entities = {
+            "table_refs": ["db1.s.t1", "db2.s.t_missing"],
+            "tables_by_database": {"db1": ["db1.s.t1"], "db2": ["db2.s.t_missing"]},
+        }
+        loader.missing_entities = {"tables": set()}
+        conn = MockSnowflakeConnector()
+        mocker.patch.object(conn, "show_views", return_value=[])
+        mocker.patch.object(
+            conn,
+            "show_tables",
+            side_effect=lambda database=None: ["db1.s.t1"] if database == "db1" else [],
+        )
+
+        errors = loader.check_table_ref_entities(conn)
+
+        assert any("db2.s.t_missing" in e for e in errors)
+        assert "db2.s.t_missing" in loader.missing_entities["tables"]
