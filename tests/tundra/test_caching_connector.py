@@ -91,3 +91,16 @@ def test_delegates_unwrapped_attributes(mocker):
     conn = CachingSnowflakeConnector(inner, FakeCache())
 
     assert conn.get_current_role() == "securityadmin"
+
+
+def test_positional_and_keyword_calls_share_cache_entry(mocker):
+    inner = MockSnowflakeConnector()
+    spy = mocker.patch.object(inner, "show_schemas", return_value=["db.s"])
+    cache = FakeCache()
+    conn = CachingSnowflakeConnector(inner, cache)
+
+    conn.show_schemas("db")  # positional, as the grant generator calls it
+    conn.show_schemas(database="db")  # keyword, as the parallel fetch calls it
+
+    spy.assert_called_once()  # second call served from cache, no re-fetch
+    assert conn.show_schemas(database="db") == ["db.s"]
