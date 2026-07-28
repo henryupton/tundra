@@ -1,3 +1,4 @@
+import inspect
 import json
 from typing import Any
 
@@ -38,9 +39,10 @@ class CachingSnowflakeConnector:
 
     def _make_cached(self, method_name: str):
         inner_method = getattr(self._inner, method_name)
+        signature = self._method_signature(method_name)
 
         def cached(*args, **kwargs) -> Any:
-            key = self._key(method_name, args, kwargs)
+            key = self._key(method_name, signature, args, kwargs)
             if not self._refresh:
                 hit = self._cache.get(key)
                 if hit is not None:
@@ -51,11 +53,31 @@ class CachingSnowflakeConnector:
 
         return cached
 
+    def _method_signature(self, method_name: str):
+        # Read the signature from the class, not the (possibly mocked) instance
+        # attribute, then drop the leading `self` so we can bind call-site
+        # args/kwargs (which don't include self).
+        try:
+            raw = inspect.signature(getattr(type(self._inner), method_name))
+        except (TypeError, ValueError, AttributeError):
+            return None
+        params = list(raw.parameters.values())
+        if params and params[0].name == "self":
+            return raw.replace(parameters=params[1:])
+        return raw
+
     @staticmethod
-    def _key(method_name: str, args, kwargs) -> str:
-        return json.dumps(
-            [method_name, list(args), sorted(kwargs.items())], sort_keys=True
-        )
+    def _key(method_name: str, signature, args, kwargs) -> str:
+        if signature is not None:
+            bound = signature.bind(*args, **kwargs)
+            bound.apply_defaults()
+            arguments = sorted(bound.arguments.items())
+        else:
+            arguments = [
+                ["__args__", list(args)],
+                ["__kwargs__", sorted(kwargs.items())],
+            ]
+        return json.dumps([method_name, arguments], sort_keys=True)
 
     def run_query(self, query: str):
         result = self._inner.run_query(query)
