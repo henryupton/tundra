@@ -1,11 +1,14 @@
 import os
 import sys
+from pathlib import Path
 
 import click
 
 from tundra import SpecLoadingError
+from tundra.caching_connector import CachingSnowflakeConnector
 from tundra.snowflake_connector import SnowflakeConnector
 from tundra.snowflake_spec_loader import SnowflakeSpecLoader
+from tundra.state_cache import StateCache
 
 from . import cli
 
@@ -79,6 +82,28 @@ def print_command(command, diff, dry=False):
     default=None,
     help="Number of parallel Snowflake fetch workers (default 8, env PERMISSION_BOT_MAX_WORKERS).",
 )
+@click.option(
+    "--no-cache",
+    is_flag=True,
+    help="Bypass the local state cache (always fetch fresh).",
+)
+@click.option(
+    "--refresh",
+    is_flag=True,
+    help="Ignore cached state and overwrite it with a fresh fetch.",
+)
+@click.option(
+    "--cache-ttl",
+    type=float,
+    default=3600,
+    help="Cache freshness window in seconds (default 3600).",
+)
+@click.option(
+    "--cache-path",
+    type=str,
+    default=None,
+    help="Path to the SQLite cache file (default ~/.cache/tundra/<account>.db).",
+)
 @click.pass_context
 def run(
     ctx,
@@ -91,6 +116,10 @@ def run(
     skip_validation,
     ignore_missing_objects,
     max_workers,
+    no_cache,
+    refresh,
+    cache_ttl,
+    cache_path,
     print_skipped=False,
 ):
     """
@@ -120,6 +149,10 @@ def run(
         skip_validation=skip_validation,
         ignore_missing_objects=ignore_missing_objects,
         print_skipped=print_skipped,
+        no_cache=no_cache,
+        refresh=refresh,
+        cache_ttl=cache_ttl,
+        cache_path=cache_path,
     )
 
 
@@ -163,6 +196,16 @@ def spec_test(spec, role, user, run_list, ignore_memberships):
     )
 
 
+def _build_connector(no_cache, refresh, cache_ttl, cache_path):
+    conn = SnowflakeConnector()
+    if no_cache:
+        return conn
+    account = os.getenv("PERMISSION_BOT_ACCOUNT", "default")
+    path = cache_path or str(Path.home() / ".cache" / "tundra" / f"{account}.db")
+    cache = StateCache(path=path, account=account, ttl_seconds=cache_ttl)
+    return CachingSnowflakeConnector(conn, cache, refresh=refresh)
+
+
 def load_specs(
     spec,
     role,
@@ -172,6 +215,7 @@ def load_specs(
     do_spec_test,
     skip_validation=False,
     ignore_missing_objects=False,
+    conn=None,
 ):
     """
     Load specs separately.
@@ -180,6 +224,7 @@ def load_specs(
         click.secho("Confirming spec loads successfully")
         spec_loader = SnowflakeSpecLoader(
             spec,
+            conn=conn,
             roles=role,
             users=user,
             run_list=run_list,
@@ -208,8 +253,14 @@ def tundra_grants(
     skip_validation,
     ignore_missing_objects,
     print_skipped,
+    no_cache=False,
+    refresh=False,
+    cache_ttl=3600,
+    cache_path=None,
 ):
     """Grant the permissions provided in the provided specification file."""
+    conn = _build_connector(no_cache, refresh, cache_ttl, cache_path)
+
     spec_loader = load_specs(
         spec,
         role=roles,
@@ -219,6 +270,7 @@ def tundra_grants(
         skip_validation=skip_validation,
         ignore_missing_objects=ignore_missing_objects,
         do_spec_test=False,
+        conn=conn,
     )
 
     sql_grant_queries = spec_loader.generate_permission_queries(
@@ -237,7 +289,6 @@ def tundra_grants(
         click.secho("SQL Commands generated for given spec file:")
     click.secho()
 
-    conn = SnowflakeConnector()
     for query in sql_grant_queries:
         if not dry:
             status = None

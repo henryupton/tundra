@@ -3,7 +3,9 @@ import os
 from click.testing import CliRunner
 
 import tundra
+from tundra.caching_connector import CachingSnowflakeConnector
 from tundra.cli import cli
+from tundra.snowflake_connector import SnowflakeConnector
 
 
 def test_version(cli_runner):
@@ -47,3 +49,32 @@ def test_run_sets_max_workers_env(mocker, monkeypatch):
 
     assert result.exit_code == 0
     assert captured["workers"] == "12"
+
+
+def test_build_connector_plain_when_no_cache(mocker):
+    from tundra.cli.permissions import _build_connector
+
+    mocker.patch(
+        "tundra.cli.permissions.SnowflakeConnector",
+        return_value=mocker.MagicMock(spec=SnowflakeConnector),
+    )
+    conn = _build_connector(
+        no_cache=True, refresh=False, cache_ttl=3600, cache_path=None
+    )
+    assert not isinstance(conn, CachingSnowflakeConnector)
+
+
+def test_build_connector_caches_by_default(mocker, tmp_path):
+    from tundra.cli.permissions import _build_connector
+
+    mocker.patch(
+        "tundra.cli.permissions.SnowflakeConnector",
+        return_value=mocker.MagicMock(spec=SnowflakeConnector),
+    )
+    conn = _build_connector(
+        no_cache=False,
+        refresh=False,
+        cache_ttl=3600,
+        cache_path=str(tmp_path / "c.db"),
+    )
+    assert isinstance(conn, CachingSnowflakeConnector)
