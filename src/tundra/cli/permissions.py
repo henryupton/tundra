@@ -75,7 +75,7 @@ def print_command(command, diff, dry=False):
 )
 @click.option(
     "--max-workers",
-    type=int,
+    type=click.IntRange(min=1),
     default=None,
     help="Number of parallel Snowflake fetch workers (default 8, env PERMISSION_BOT_MAX_WORKERS).",
 )
