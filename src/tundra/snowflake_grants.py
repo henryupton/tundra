@@ -41,6 +41,7 @@ SCHEMA_PARTIAL_WRITE_PRIVILEGES = ", ".join(
         "create sequence",
         "create function",
         "create pipe",
+        "create cortex search service",
     ]
 )
 
