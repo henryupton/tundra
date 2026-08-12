@@ -5,7 +5,7 @@ import click
 from tundra.entities import EntityGenerator
 from tundra.error import SpecLoadingError
 from tundra.logger import GLOBAL_LOGGER as logger
-from tundra.snowflake_connector import SnowflakeConnector
+from tundra.snowflake_connector import DATABASE_ROLE_GRANT_TYPE, SnowflakeConnector
 from tundra.snowflake_grants import SnowflakeGrantsGenerator
 from tundra.spec_file_loader import load_spec
 
@@ -53,6 +53,7 @@ class SnowflakeSpecLoader:
             "schemas": set(),
             "tables": set(),
             "roles": set(),
+            "database_roles": set(),
             "users": set(),
         }
 
@@ -86,7 +87,7 @@ class SnowflakeSpecLoader:
 
     @staticmethod
     def check_permissions_on_snowflake_server(
-        conn: Optional[SnowflakeConnector] = None
+        conn: Optional[SnowflakeConnector] = None,
     ) -> None:
         if conn is None:
             conn = SnowflakeConnector()
@@ -215,6 +216,32 @@ class SnowflakeSpecLoader:
             logger.debug("`roles` not found in spec, skipping SHOW ROLES call.")
         return error_messages
 
+    def check_database_role_entities(self, conn):
+        error_messages = []
+        if len(self.entities["database_role_refs"]) > 0:
+            refs_by_database: Dict[str, Any] = {}
+            for database_role in self.entities["database_role_refs"]:
+                database = database_role.split(".")[0]
+                refs_by_database.setdefault(database, set()).add(database_role)
+
+            for database, database_roles in refs_by_database.items():
+                existing_database_roles = conn.show_database_roles(database=database)
+                for database_role in database_roles:
+                    if (
+                        SnowflakeConnector.snowflaky_database_role(database_role)
+                        not in existing_database_roles
+                    ):
+                        self.missing_entities["database_roles"].add(database_role)
+                        error_messages.append(
+                            f"Missing Entity Error: Database role {database_role} was not"
+                            " found on Snowflake Server. Please create it before continuing."
+                        )
+        else:
+            logger.debug(
+                "no database roles referenced in spec, skipping SHOW DATABASE ROLES call."
+            )
+        return error_messages
+
     def check_users_entities(self, conn):
         error_messages = []
         if len(self.entities["users"]) > 0:
@@ -234,8 +261,8 @@ class SnowflakeSpecLoader:
         self, conn: Optional[SnowflakeConnector] = None, ignore_missing: bool = False
     ) -> None:
         """
-        Make sure that all [warehouses, integrations, dbs, schemas, tables, users, roles]
-        referenced in the spec are defined in Snowflake.
+        Make sure that all [warehouses, integrations, dbs, schemas, tables, users,
+        roles, database roles] referenced in the spec are defined in Snowflake.
 
         If ignore_missing is True, stores missing entities in self.missing_entities
         instead of raising errors.
@@ -254,6 +281,7 @@ class SnowflakeSpecLoader:
         error_messages.extend(self.check_schema_ref_entities(conn))
         error_messages.extend(self.check_table_ref_entities(conn))
         error_messages.extend(self.check_role_entities(conn))
+        error_messages.extend(self.check_database_role_entities(conn))
         error_messages.extend(self.check_users_entities(conn))
 
         if error_messages:
@@ -339,8 +367,6 @@ class SnowflakeSpecLoader:
         for role in self.entities["roles"]:
             if (roles and role not in roles) or ignore_memberships:
                 continue
-            if "." in role:
-                continue
             logger.info(f"Fetching all grants for role {role}")
             role_grants = conn.show_grants_to_role(role)
             for privilege in role_grants:
@@ -422,8 +448,10 @@ class SnowflakeSpecLoader:
         # Ignore account since currently account grants are not handled
         elif grant_on == "account":
             return filter_set
-        # Database role grants are identified by db.role — pass through as-is
-        elif grant_on == "database role":
+        # Database roles are db.role FQNs, but membership of them is managed the same
+        # way as account roles: the spec is the source of truth regardless of whether
+        # the owning database is tracked. Pass through as-is.
+        elif grant_on == DATABASE_ROLE_GRANT_TYPE:
             return filter_set
         else:
             # Everything else should be binary: it has a dot or it doesn't
@@ -440,7 +468,9 @@ class SnowflakeSpecLoader:
                 if item and ("." not in item or item.split(".")[0] in database_refs)
             ]
 
-    def filter_config_for_missing_entities(self, config: Dict[str, Any]) -> Dict[str, Any]:
+    def filter_config_for_missing_entities(
+        self, config: Dict[str, Any]
+    ) -> Dict[str, Any]:
         """
         Filter out missing entities from a role/user config.
         Returns a new config with missing entities removed.
@@ -454,41 +484,57 @@ class SnowflakeSpecLoader:
         # Filter warehouses
         if "warehouses" in filtered_config:
             filtered_config["warehouses"] = [
-                w for w in filtered_config["warehouses"]
+                w
+                for w in filtered_config["warehouses"]
                 if w not in self.missing_entities["warehouses"]
             ]
 
         # Filter integrations
         if "integrations" in filtered_config:
             filtered_config["integrations"] = [
-                i for i in filtered_config["integrations"]
+                i
+                for i in filtered_config["integrations"]
                 if i not in self.missing_entities["integrations"]
             ]
 
         # Filter privileges.databases
-        if "privileges" in filtered_config and "databases" in filtered_config["privileges"]:
+        if (
+            "privileges" in filtered_config
+            and "databases" in filtered_config["privileges"]
+        ):
             for access_type in ["read", "write"]:
                 if access_type in filtered_config["privileges"]["databases"]:
                     filtered_config["privileges"]["databases"][access_type] = [
-                        db for db in filtered_config["privileges"]["databases"][access_type]
+                        db
+                        for db in filtered_config["privileges"]["databases"][
+                            access_type
+                        ]
                         if db not in self.missing_entities["databases"]
                     ]
 
         # Filter privileges.schemas
-        if "privileges" in filtered_config and "schemas" in filtered_config["privileges"]:
+        if (
+            "privileges" in filtered_config
+            and "schemas" in filtered_config["privileges"]
+        ):
             for access_type in ["read", "write"]:
                 if access_type in filtered_config["privileges"]["schemas"]:
                     filtered_config["privileges"]["schemas"][access_type] = [
-                        s for s in filtered_config["privileges"]["schemas"][access_type]
+                        s
+                        for s in filtered_config["privileges"]["schemas"][access_type]
                         if s not in self.missing_entities["schemas"]
                     ]
 
         # Filter privileges.tables
-        if "privileges" in filtered_config and "tables" in filtered_config["privileges"]:
+        if (
+            "privileges" in filtered_config
+            and "tables" in filtered_config["privileges"]
+        ):
             for access_type in ["read", "write"]:
                 if access_type in filtered_config["privileges"]["tables"]:
                     filtered_config["privileges"]["tables"][access_type] = [
-                        t for t in filtered_config["privileges"]["tables"][access_type]
+                        t
+                        for t in filtered_config["privileges"]["tables"][access_type]
                         if t not in self.missing_entities["tables"]
                     ]
 
@@ -547,10 +593,16 @@ class SnowflakeSpecLoader:
                 ]
                 for entity_name, config in entity_configs:
                     # Skip missing roles/users
-                    if entity_type == "roles" and entity_name in self.missing_entities["roles"]:
+                    if (
+                        entity_type == "roles"
+                        and entity_name in self.missing_entities["roles"]
+                    ):
                         logger.info(f"Skipping missing role: {entity_name}")
                         continue
-                    if entity_type == "users" and entity_name in self.missing_entities["users"]:
+                    if (
+                        entity_type == "users"
+                        and entity_name in self.missing_entities["users"]
+                    ):
                         logger.info(f"Skipping missing user: {entity_name}")
                         continue
 

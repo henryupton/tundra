@@ -662,6 +662,60 @@ class TestSnowflakeSpecLoader:
 
         assert expected_error in str(context.value)
 
+    def test_check_database_role_entities_passes_when_role_exists(
+        self, mocker, mock_connector
+    ):
+        spec_file_data = (
+            SnowflakeSchemaBuilder()
+            .add_role(member_of=["snowflake.organization_billing_viewer"])
+            .build()
+        )
+        mocker.patch("builtins.open", mocker.mock_open(read_data=spec_file_data))
+        mocker.patch.object(mock_connector, "show_roles", return_value=["testrole"])
+        mocker.patch.object(
+            mock_connector,
+            "show_database_roles",
+            return_value=['"SNOWFLAKE".organization_billing_viewer'],
+        )
+
+        SnowflakeSpecLoader("", mock_connector)
+
+        mock_connector.show_database_roles.assert_called_once_with(database="snowflake")
+
+    def test_check_database_role_entities_errors_when_role_missing(
+        self, mocker, mock_connector
+    ):
+        spec_file_data = (
+            SnowflakeSchemaBuilder().add_role(member_of=["mydb.db_role_1"]).build()
+        )
+        mocker.patch("builtins.open", mocker.mock_open(read_data=spec_file_data))
+        mocker.patch.object(mock_connector, "show_roles", return_value=["testrole"])
+        mocker.patch.object(
+            mock_connector, "show_database_roles", return_value=["mydb.db_role_2"]
+        )
+
+        with pytest.raises(SpecLoadingError) as context:
+            SnowflakeSpecLoader("", mock_connector)
+
+        assert (
+            "Missing Entity Error: Database role mydb.db_role_1 was not found"
+            in str(context.value)
+        )
+
+    def test_check_database_role_entities_skipped_when_none_referenced(
+        self, mocker, mock_connector
+    ):
+        spec_file_data = (
+            SnowflakeSchemaBuilder().add_role(member_of=["testrole"]).build()
+        )
+        mocker.patch("builtins.open", mocker.mock_open(read_data=spec_file_data))
+        mocker.patch.object(mock_connector, "show_roles", return_value=["testrole"])
+        mocker.patch.object(mock_connector, "show_database_roles", return_value=[])
+
+        SnowflakeSpecLoader("", mock_connector)
+
+        mock_connector.show_database_roles.assert_not_called()
+
     def test_remove_duplicate_queries(self):
         sql_command_1 = {"sql": "GRANT OWNERSHIP ON SCHEMA PIZZA TO ROLE LIZZY"}
         sql_command_2 = sql_command_1.copy()
@@ -1458,7 +1512,7 @@ class TestSpecFileLoading:
         )
 
         expected = [
-            'ALTER USER "first.last" SET DISABLED = FALSE, TYPE = \'PERSON\', DEFAULT_SECONDARY_ROLES = ()',
+            "ALTER USER \"first.last\" SET DISABLED = FALSE, TYPE = 'PERSON', DEFAULT_SECONDARY_ROLES = ()",
             "GRANT OWNERSHIP ON database database_1 TO ROLE test_role COPY CURRENT GRANTS",
             "GRANT OWNERSHIP ON database shared_database_1 TO ROLE test_role COPY CURRENT GRANTS",
             "GRANT OWNERSHIP ON schema database_1.schema_1 TO ROLE test_role COPY CURRENT GRANTS",
