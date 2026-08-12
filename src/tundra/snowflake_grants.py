@@ -2,7 +2,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from tundra.grant_coverage import GrantCoverage
 from tundra.logger import GLOBAL_LOGGER as logger
-from tundra.snowflake_connector import SnowflakeConnector
+from tundra.snowflake_connector import DATABASE_ROLE_GRANT_TYPE, SnowflakeConnector
 from tundra.table_object_types import TABLE_OBJECT_TYPES, TableObjectType
 
 GRANT_ROLE_TEMPLATE = "GRANT ROLE {role_name} TO {type} {entity_name}"
@@ -10,6 +10,10 @@ GRANT_ROLE_TEMPLATE = "GRANT ROLE {role_name} TO {type} {entity_name}"
 GRANT_DATABASE_ROLE_TEMPLATE = "GRANT DATABASE ROLE {role_name} TO ROLE {entity_name}"
 
 REVOKE_ROLE_TEMPLATE = "REVOKE ROLE {role_name} FROM {type} {entity_name}"
+
+REVOKE_DATABASE_ROLE_TEMPLATE = (
+    "REVOKE DATABASE ROLE {role_name} FROM ROLE {entity_name}"
+)
 
 GRANT_PRIVILEGES_TEMPLATE = (
     "GRANT {privileges} ON {resource_type} {resource_name} TO ROLE {role}"
@@ -96,6 +100,24 @@ class SnowflakeGrantsGenerator:
             return True
 
         return False
+
+    def is_granted_database_role(self, role: str, database_role: str) -> bool:
+        """
+        Check if <role> has been granted membership of the database role
+        <database_role>, given as a db.role FQN.
+
+        For example:
+        is_granted_database_role('reporter', 'snowflake.usage_viewer') -> True
+        means that role reporter has already been granted the SNOWFLAKE.USAGE_VIEWER
+        database role on the Snowflake server.
+        """
+        granted = (
+            self.grants_to_role.get(role, {})
+            .get("usage", {})
+            .get(DATABASE_ROLE_GRANT_TYPE, [])
+        )
+
+        return SnowflakeConnector.snowflaky_database_role(database_role) in granted
 
     def _all_privileges_granted(
         self, role: str, privileges: List[str], entity_type: str, entity_name: str
@@ -184,9 +206,7 @@ class SnowflakeGrantsGenerator:
             is_database_role = "." in member_role
             already_granted = False
             if is_database_role:
-                if self.is_granted_privilege(
-                    entity, "usage", "database role", member_role
-                ):
+                if self.is_granted_database_role(entity, member_role):
                     already_granted = True
             else:
                 granted_role = SnowflakeConnector.snowflaky_user_role(member_role)
@@ -219,7 +239,9 @@ class SnowflakeGrantsGenerator:
                     {
                         "already_granted": already_granted,
                         "sql": GRANT_DATABASE_ROLE_TEMPLATE.format(
-                            role_name=SnowflakeConnector.snowflaky_database_role(member_role),
+                            role_name=SnowflakeConnector.snowflaky_database_role(
+                                member_role
+                            ),
                             entity_name=SnowflakeConnector.snowflaky_user_role(entity),
                         ),
                     }
@@ -297,6 +319,27 @@ class SnowflakeGrantsGenerator:
                         ),
                     }
                 )
+
+        for granted_database_role in (
+            self.grants_to_role.get(rolename, {})
+            .get("usage", {})
+            .get(DATABASE_ROLE_GRANT_TYPE, [])
+        ):
+            if granted_database_role not in member_of_list:
+                sql_commands.append(
+                    {
+                        "already_granted": False,
+                        "sql": REVOKE_DATABASE_ROLE_TEMPLATE.format(
+                            role_name=SnowflakeConnector.snowflaky_database_role(
+                                granted_database_role
+                            ),
+                            entity_name=SnowflakeConnector.snowflaky_user_role(
+                                rolename
+                            ),
+                        ),
+                    }
+                )
+
         return sql_commands
 
     def generate_grant_roles(

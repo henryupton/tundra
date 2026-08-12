@@ -7,7 +7,7 @@ from tundra.concurrency import parallel_map
 from tundra.entities import EntityGenerator
 from tundra.error import SpecLoadingError
 from tundra.logger import GLOBAL_LOGGER as logger
-from tundra.snowflake_connector import SnowflakeConnector
+from tundra.snowflake_connector import DATABASE_ROLE_GRANT_TYPE, SnowflakeConnector
 from tundra.snowflake_grants import SnowflakeGrantsGenerator
 from tundra.spec_file_loader import load_spec
 
@@ -61,6 +61,7 @@ class SnowflakeSpecLoader:
             "schemas": set(),
             "tables": set(),
             "roles": set(),
+            "database_roles": set(),
             "users": set(),
         }
 
@@ -234,6 +235,32 @@ class SnowflakeSpecLoader:
             logger.debug("`roles` not found in spec, skipping SHOW ROLES call.")
         return error_messages
 
+    def check_database_role_entities(self, conn):
+        error_messages = []
+        if len(self.entities["database_role_refs"]) > 0:
+            refs_by_database: Dict[str, Any] = {}
+            for database_role in self.entities["database_role_refs"]:
+                database = database_role.split(".")[0]
+                refs_by_database.setdefault(database, set()).add(database_role)
+
+            for database, database_roles in refs_by_database.items():
+                existing_database_roles = conn.show_database_roles(database=database)
+                for database_role in database_roles:
+                    if (
+                        SnowflakeConnector.snowflaky_database_role(database_role)
+                        not in existing_database_roles
+                    ):
+                        self.missing_entities["database_roles"].add(database_role)
+                        error_messages.append(
+                            f"Missing Entity Error: Database role {database_role} was not"
+                            " found on Snowflake Server. Please create it before continuing."
+                        )
+        else:
+            logger.debug(
+                "no database roles referenced in spec, skipping SHOW DATABASE ROLES call."
+            )
+        return error_messages
+
     def check_users_entities(self, conn):
         error_messages = []
         if len(self.entities["users"]) > 0:
@@ -253,8 +280,8 @@ class SnowflakeSpecLoader:
         self, conn: Optional[SnowflakeConnector] = None, ignore_missing: bool = False
     ) -> None:
         """
-        Make sure that all [warehouses, integrations, dbs, schemas, tables, users, roles]
-        referenced in the spec are defined in Snowflake.
+        Make sure that all [warehouses, integrations, dbs, schemas, tables, users,
+        roles, database roles] referenced in the spec are defined in Snowflake.
 
         If ignore_missing is True, stores missing entities in self.missing_entities
         instead of raising errors.
@@ -273,6 +300,7 @@ class SnowflakeSpecLoader:
         error_messages.extend(self.check_schema_ref_entities(conn))
         error_messages.extend(self.check_table_ref_entities(conn))
         error_messages.extend(self.check_role_entities(conn))
+        error_messages.extend(self.check_database_role_entities(conn))
         error_messages.extend(self.check_users_entities(conn))
 
         if error_messages:
@@ -355,9 +383,7 @@ class SnowflakeSpecLoader:
         role_list = [
             role
             for role in self.entities["roles"]
-            if not (roles and role not in roles)
-            and not ignore_memberships
-            and "." not in role
+            if not (roles and role not in roles) and not ignore_memberships
         ]
         role_grants_by_role = dict(
             zip(
@@ -449,8 +475,10 @@ class SnowflakeSpecLoader:
         # Ignore account since currently account grants are not handled
         elif grant_on == "account":
             return filter_set
-        # Database role grants are identified by db.role — pass through as-is
-        elif grant_on == "database role":
+        # Database roles are db.role FQNs, but membership of them is managed the same
+        # way as account roles: the spec is the source of truth regardless of whether
+        # the owning database is tracked. Pass through as-is.
+        elif grant_on == DATABASE_ROLE_GRANT_TYPE:
             return filter_set
         else:
             # Everything else should be binary: it has a dot or it doesn't

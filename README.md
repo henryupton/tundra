@@ -199,6 +199,33 @@ key. There is optionally an `exclude` key that can be used if `include` is used.
 `"_"`will grant membership to all roles defined in the spec. Any roles defined
 in`exclude`will be removed from the list defined in`include`.
 
+### Database roles
+
+A `member_of` entry containing a period is treated as a database role, given as
+`DB.ROLE`. This is how Snowflake's premade roles are granted:
+
+```yaml
+roles:
+    - reporter:
+        member_of:
+            - transformer
+            - snowflake.usage_viewer
+            - snowflake.organization_billing_viewer
+```
+
+Database role membership is managed declaratively in the same way as account
+role membership: anything granted on Snowflake but absent from `member_of` is
+revoked, including database roles belonging to databases not otherwise tracked
+in the spec. Database roles are only referenced, never defined, so their
+privileges are not managed by Tundra, but they must already exist on Snowflake.
+Referenced database roles are checked with one `SHOW DATABASE ROLES IN DATABASE`
+per database, in the same way roles and warehouses are checked.
+
+Because the period is what marks a database role, roles defined in the spec
+cannot contain one. Database roles can only be granted to other roles, so they
+are not valid in a user's `member_of`. Both cases are rejected when the spec is
+loaded.
+
 Objects like warehouses and integrations that only have one tundra permission type just
 needs to be specified in the role (see below).
 

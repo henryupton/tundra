@@ -2,6 +2,7 @@ import pytest
 import os
 
 from tundra.entities import EntityGenerator
+from tundra.error import SpecLoadingError
 from tundra.spec_file_loader import load_spec
 
 
@@ -135,6 +136,74 @@ class TestEntityGenerator:
         """
         expected = {"demo"}
         assert entities["integrations"] == expected
+
+
+class TestDatabaseRoleEntities:
+    def test_database_role_refs(self):
+        """
+        A member_of entry containing a period is a database role reference, not an
+        account role
+        """
+        spec = {
+            "roles": [
+                {"role_1": {"member_of": ["role_2", "mydb.db_role_1"]}},
+                {"role_2": {}},
+            ]
+        }
+
+        entities = EntityGenerator(spec).inspect_entities()
+
+        assert entities["database_role_refs"] == {"mydb.db_role_1"}
+        assert entities["roles"] == {"role_1", "role_2"}
+
+    def test_database_role_refs_from_include_exclude(self):
+        spec = {
+            "roles": [
+                {
+                    "role_1": {
+                        "member_of": {
+                            "include": ["mydb.db_role_1"],
+                            "exclude": ["mydb.db_role_2"],
+                        }
+                    }
+                },
+            ]
+        }
+
+        entities = EntityGenerator(spec).inspect_entities()
+
+        assert entities["database_role_refs"] == {"mydb.db_role_1", "mydb.db_role_2"}
+
+    def test_role_name_with_period_is_rejected(self):
+        spec = {"roles": [{"mydb.db_role_1": {}}]}
+
+        with pytest.raises(SpecLoadingError) as context:
+            EntityGenerator(spec).inspect_entities()
+
+        assert "Not a valid role name: mydb.db_role_1" in str(context.value)
+
+    def test_malformed_database_role_ref_is_rejected(self):
+        spec = {"roles": [{"role_1": {"member_of": ["mydb.myschema.db_role_1"]}}]}
+
+        with pytest.raises(SpecLoadingError) as context:
+            EntityGenerator(spec).inspect_entities()
+
+        assert "Not a valid database role name: mydb.myschema.db_role_1" in str(
+            context.value
+        )
+
+    def test_database_role_granted_to_user_is_rejected(self):
+        spec = {
+            "roles": [{"role_1": {}}],
+            "users": [{"user_1": {"member_of": ["mydb.db_role_1"]}}],
+        }
+
+        with pytest.raises(SpecLoadingError) as context:
+            EntityGenerator(spec).inspect_entities()
+
+        assert "Database role mydb.db_role_1 is granted to user user_1" in str(
+            context.value
+        )
 
 
 def test_filter_by_type(entities):
