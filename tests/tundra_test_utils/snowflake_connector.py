@@ -19,6 +19,9 @@ class MockSnowflakeConnector(SnowflakeConnector):
     def show_roles(self) -> Dict[str, str]:
         return {}
 
+    def show_database_roles(self, database: str) -> List[str]:
+        return []
+
     def show_users(self) -> List[str]:
         return []
 

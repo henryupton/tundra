@@ -27,6 +27,12 @@ FUTURE_PLACEHOLDER_PATTERN = "^<({})>$".format(
     "|".join([t.name for t in TABLE_OBJECT_TYPES] + ["schema"])
 )
 
+# The key database role grants are stored under in grants_to_role, following the
+# same spacing convention as the table object types. Snowflake reports granted_on
+# as either DATABASE_ROLE or DATABASE ROLE depending on the surface, so both
+# spellings are collapsed to this on the way in.
+DATABASE_ROLE_GRANT_TYPE = "database role"
+
 # Don't show all the info log messages from Snowflake
 for logger_name in ["snowflake.connector", "bot", "boto3"]:
     log = logging.getLogger(logger_name)
@@ -283,7 +289,15 @@ class SnowflakeConnector:
 
         for result in results:
             privilege = result["privilege"].lower()
-            granted_on = result["granted_on"].lower()
+            granted_on = SnowflakeConnector.normalise_granted_on(result["granted_on"])
+
+            # Database roles are FQNs (db.role) and must be normalised the same way
+            # as the spec side, so already granted memberships are recognised.
+            if granted_on == DATABASE_ROLE_GRANT_TYPE:
+                grants.setdefault(privilege, {}).setdefault(granted_on, []).append(
+                    SnowflakeConnector.snowflaky_database_role(result["name"])
+                )
+                continue
 
             if bool(re.match("^[a-zA-Z0-9_]*$", result["name"])):
                 clean_name = result["name"].lower()
@@ -373,10 +387,33 @@ class SnowflakeConnector:
         results = self.run_query(query).fetchall()
 
         for result in results:
-            roles[SnowflakeConnector.snowflaky(result["name"])] = (
-                SnowflakeConnector.snowflaky(result["owner"])
-            )
+            roles[
+                SnowflakeConnector.snowflaky(result["name"])
+            ] = SnowflakeConnector.snowflaky(result["owner"])
         return roles
+
+    def show_database_roles(self, database: str) -> List[str]:
+        """
+        List the database roles in a database as db.role FQNs.
+
+        The database is quoted the same way a database role FQN is, so reserved
+        names like SNOWFLAKE resolve to the system database rather than a
+        lowercase object of the same name.
+        """
+        database_roles = []
+
+        database_identifier = SnowflakeConnector.snowflaky_database_role(database)
+        query = f"SHOW DATABASE ROLES IN DATABASE {database_identifier}"
+        results = self.run_query(query).fetchall()
+
+        for result in results:
+            # SHOW DATABASE ROLES reports the role name on its own
+            name = result["name"]
+            if "." not in name:
+                name = f"{database}.{name}"
+            database_roles.append(SnowflakeConnector.snowflaky_database_role(name))
+
+        return database_roles
 
     def run_query(self, query: str) -> "_BufferedResult":
         from sqlalchemy import text
@@ -498,6 +535,19 @@ class SnowflakeConnector:
                 new_name_parts.append(part.lower())
 
         return ".".join(new_name_parts)
+
+    @staticmethod
+    def normalise_granted_on(granted_on: str) -> str:
+        """
+        Normalise the granted_on column of a SHOW GRANTS result to the key it is
+        stored under in grants_to_role.
+        """
+        normalised = granted_on.lower()
+
+        if normalised in ("database_role", DATABASE_ROLE_GRANT_TYPE):
+            return DATABASE_ROLE_GRANT_TYPE
+
+        return normalised
 
     @staticmethod
     def snowflaky_database_role(name: str) -> str:
