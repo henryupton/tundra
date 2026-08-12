@@ -3,7 +3,13 @@ import os
 import pytest
 import sqlalchemy
 from tundra.snowflake_connector import SnowflakeConnector
-from tundra.table_object_types import DYNAMIC_TABLE, ICEBERG_TABLE, STREAMLIT, TABLE, VIEW
+from tundra.table_object_types import (
+    DYNAMIC_TABLE,
+    ICEBERG_TABLE,
+    STREAMLIT,
+    TABLE,
+    VIEW,
+)
 from tundra_test_utils.snowflake_connector import MockSnowflakeConnector
 
 
@@ -517,6 +523,82 @@ class TestSnowflakeConnector:
         assert grants == {
             "select": {
                 "table": ["database_1.schema_1.table_1", "database_1.schema_1.table_2"]
+            }
+        }
+
+    def test_show_database_roles(self, mocker):
+        mocker.patch("sqlalchemy.create_engine")
+        conn = SnowflakeConnector()
+        conn.run_query = mocker.MagicMock()
+        mocker.patch.object(
+            conn.run_query(),
+            "fetchall",
+            return_value=[{"name": "DB_ROLE_1"}, {"name": "DB_ROLE_2"}],
+        )
+
+        database_roles = conn.show_database_roles(database="mydb")
+
+        conn.run_query.assert_has_calls(
+            [mocker.call("SHOW DATABASE ROLES IN DATABASE mydb")]
+        )
+        assert database_roles == ["mydb.db_role_1", "mydb.db_role_2"]
+
+    def test_show_database_roles_reserved_database_name(self, mocker):
+        """
+        The premade roles live in the SNOWFLAKE database, which must be quoted and
+        uppercased to resolve to the system database
+        """
+        mocker.patch("sqlalchemy.create_engine")
+        conn = SnowflakeConnector()
+        conn.run_query = mocker.MagicMock()
+        mocker.patch.object(
+            conn.run_query(),
+            "fetchall",
+            return_value=[{"name": "ORGANIZATION_BILLING_VIEWER"}],
+        )
+
+        database_roles = conn.show_database_roles(database="snowflake")
+
+        conn.run_query.assert_has_calls(
+            [mocker.call('SHOW DATABASE ROLES IN DATABASE "SNOWFLAKE"')]
+        )
+        assert database_roles == ['"SNOWFLAKE".organization_billing_viewer']
+
+    @pytest.mark.parametrize("granted_on", ["DATABASE_ROLE", "DATABASE ROLE"])
+    def test_show_grants_to_role_database_roles(self, granted_on, mocker):
+        """
+        Database role grants are keyed consistently regardless of which spelling
+        Snowflake reports in granted_on, and their names are normalised the same way
+        as the spec side so memberships can be matched
+        """
+        mocker.patch("sqlalchemy.create_engine")
+        conn = SnowflakeConnector()
+        conn.run_query = mocker.MagicMock()
+        mocker.patch.object(
+            conn.run_query(),
+            "fetchall",
+            return_value=[
+                {
+                    "privilege": "USAGE",
+                    "granted_on": granted_on,
+                    "name": "MYDB.DB_ROLE_1",
+                },
+                {
+                    "privilege": "USAGE",
+                    "granted_on": granted_on,
+                    "name": "SNOWFLAKE.ORGANIZATION_BILLING_VIEWER",
+                },
+            ],
+        )
+
+        grants = conn.show_grants_to_role("test_role")
+
+        assert grants == {
+            "usage": {
+                "database role": [
+                    "mydb.db_role_1",
+                    '"SNOWFLAKE".organization_billing_viewer',
+                ]
             }
         }
 
