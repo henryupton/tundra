@@ -506,7 +506,9 @@ class TestGenerateRoleGrants:
         }
         test_roles_granted_to_user = {}
         ignore_membership = False
-        expected = ['GRANT DATABASE ROLE "SNOWFLAKE".organization_billing_viewer TO ROLE role_1']
+        expected = [
+            'GRANT DATABASE ROLE "SNOWFLAKE".organization_billing_viewer TO ROLE role_1'
+        ]
         return [
             entity_type,
             entity,
@@ -560,6 +562,52 @@ class TestGenerateRoleGrants:
         results.sort()
 
         assert results == expected
+
+    @pytest.mark.parametrize(
+        "member_of,granted_on_snowflake",
+        [
+            ("mydb.db_role_1", "mydb.db_role_1"),
+            ("MYDB.DB_ROLE_1", "mydb.db_role_1"),
+            (
+                "snowflake.organization_billing_viewer",
+                '"SNOWFLAKE".organization_billing_viewer',
+            ),
+            ("my-db.db-role-1", '"MY-DB"."DB-ROLE-1"'),
+        ],
+    )
+    def test_database_role_membership_marked_already_granted(
+        self, member_of, granted_on_snowflake, mocker
+    ):
+        """
+        A database role already granted on Snowflake is recognised as such however it
+        is cased or quoted in the spec
+        """
+        mocker.patch.object(SnowflakeConnector, "__init__", lambda x: None)
+
+        generator = SnowflakeGrantsGenerator(
+            {"role_1": {"usage": {"database role": [granted_on_snowflake]}}}, {}
+        )
+
+        role_command_list = generator.generate_grant_roles(
+            "roles",
+            "role_1",
+            {"member_of": [member_of]},
+        )
+
+        assert [cmd["already_granted"] for cmd in role_command_list] == [True]
+
+    def test_database_role_membership_not_granted(self, mocker):
+        mocker.patch.object(SnowflakeConnector, "__init__", lambda x: None)
+
+        generator = SnowflakeGrantsGenerator({"role_1": {}}, {})
+
+        role_command_list = generator.generate_grant_roles(
+            "roles",
+            "role_1",
+            {"member_of": ["mydb.db_role_1"]},
+        )
+
+        assert [cmd["already_granted"] for cmd in role_command_list] == [False]
 
 
 class TestGenerateRoleGrantRevokes:
@@ -679,6 +727,85 @@ class TestGenerateRoleGrantRevokes:
             expected,
         ]
 
+    def generate_single_database_role_revoke():
+        """
+        REVOKE the mydb.db_role_1 database role from role_1, as it is granted on
+        Snowflake but not listed in member_of
+        """
+        entity_type = "roles"
+        entity = "role_1"
+        test_grants_to_role = {
+            "role_1": {"usage": {"database role": ["mydb.db_role_1"]}}
+        }
+        test_roles_granted_to_user = {}
+        ignore_membership = False
+        grants_spec = {}
+
+        expected = ["REVOKE DATABASE ROLE mydb.db_role_1 FROM ROLE role_1"]
+        return [
+            entity_type,
+            entity,
+            test_grants_to_role,
+            test_roles_granted_to_user,
+            ignore_membership,
+            grants_spec,
+            expected,
+        ]
+
+    def generate_database_role_revoke_reserved_keyword():
+        """
+        REVOKE a premade snowflake.* database role, which must be quoted and
+        uppercased to match the stored form
+        """
+        entity_type = "roles"
+        entity = "role_1"
+        test_grants_to_role = {
+            "role_1": {
+                "usage": {"database role": ['"SNOWFLAKE".organization_billing_viewer']}
+            }
+        }
+        test_roles_granted_to_user = {}
+        ignore_membership = False
+        grants_spec = {}
+
+        expected = [
+            'REVOKE DATABASE ROLE "SNOWFLAKE".organization_billing_viewer FROM ROLE role_1'
+        ]
+        return [
+            entity_type,
+            entity,
+            test_grants_to_role,
+            test_roles_granted_to_user,
+            ignore_membership,
+            grants_spec,
+            expected,
+        ]
+
+    def generate_no_database_role_revoke_when_in_member_of():
+        """
+        Do not REVOKE a database role that is both granted on Snowflake and listed
+        in member_of
+        """
+        entity_type = "roles"
+        entity = "role_1"
+        test_grants_to_role = {
+            "role_1": {"usage": {"database role": ["mydb.db_role_1"]}}
+        }
+        test_roles_granted_to_user = {}
+        ignore_membership = False
+        grants_spec = {"member_of": ["mydb.db_role_1"]}
+
+        expected = ["GRANT DATABASE ROLE mydb.db_role_1 TO ROLE role_1"]
+        return [
+            entity_type,
+            entity,
+            test_grants_to_role,
+            test_roles_granted_to_user,
+            ignore_membership,
+            grants_spec,
+            expected,
+        ]
+
     def generate_multi_user_revokes_ignore():
         """
         Should not generate REVOKE for user_1 to have access to role_1, role_2
@@ -711,6 +838,9 @@ class TestGenerateRoleGrantRevokes:
             generate_multi_user_revokes,
             generate_multi_role_revokes_ignore,
             generate_multi_user_revokes_ignore,
+            generate_single_database_role_revoke,
+            generate_database_role_revoke_reserved_keyword,
+            generate_no_database_role_revoke_when_in_member_of,
         ],
     )
     def test_generate_grant_roles_revokes(
@@ -826,7 +956,9 @@ class TestGenerateTableAndViewGrants:
             return_value=["database_1.schema_1.table_1"],
         )
         mocker.patch.object(MockSnowflakeConnector, "show_views", return_value=[])
-        mocker.patch.object(MockSnowflakeConnector, "show_iceberg_tables", return_value=[])
+        mocker.patch.object(
+            MockSnowflakeConnector, "show_iceberg_tables", return_value=[]
+        )
 
         config = {
             "read": ["database_1.schema_1.table_1"],
@@ -852,7 +984,9 @@ class TestGenerateTableAndViewGrants:
             return_value=["shared_database_1.public.table_1"],
         )
         mocker.patch.object(MockSnowflakeConnector, "show_views", return_value=[])
-        mocker.patch.object(MockSnowflakeConnector, "show_iceberg_tables", return_value=[])
+        mocker.patch.object(
+            MockSnowflakeConnector, "show_iceberg_tables", return_value=[]
+        )
 
         config = {
             "read": ["shared_database_1.public.table_1"],
@@ -875,7 +1009,9 @@ class TestGenerateTableAndViewGrants:
             return_value=["database_1.schema_1.table_1", "database_1.schema_1.table_2"],
         )
         mocker.patch.object(MockSnowflakeConnector, "show_views", return_value=[])
-        mocker.patch.object(MockSnowflakeConnector, "show_iceberg_tables", return_value=[])
+        mocker.patch.object(
+            MockSnowflakeConnector, "show_iceberg_tables", return_value=[]
+        )
 
         config = {
             "read": [
@@ -912,7 +1048,9 @@ class TestGenerateTableAndViewGrants:
             return_value=["database_1.schema_1.table_1", "database_1.schema_1.table_2"],
         )
         mocker.patch.object(MockSnowflakeConnector, "show_views", return_value=[])
-        mocker.patch.object(MockSnowflakeConnector, "show_iceberg_tables", return_value=[])
+        mocker.patch.object(
+            MockSnowflakeConnector, "show_iceberg_tables", return_value=[]
+        )
 
         config = {
             "read": [],
@@ -949,7 +1087,9 @@ class TestGenerateTableAndViewGrants:
             return_value=["database_1.schema_1.table_1", "database_1.schema_1.table_2"],
         )
         mocker.patch.object(MockSnowflakeConnector, "show_views", return_value=[])
-        mocker.patch.object(MockSnowflakeConnector, "show_iceberg_tables", return_value=[])
+        mocker.patch.object(
+            MockSnowflakeConnector, "show_iceberg_tables", return_value=[]
+        )
 
         config = {
             "read": [
@@ -1002,7 +1142,9 @@ class TestGenerateTableAndViewGrants:
             "show_views",
             return_value=["database_1.schema_1.view_1"],
         )
-        mocker.patch.object(MockSnowflakeConnector, "show_iceberg_tables", return_value=[])
+        mocker.patch.object(
+            MockSnowflakeConnector, "show_iceberg_tables", return_value=[]
+        )
 
         config = {
             "read": [
@@ -1185,9 +1327,7 @@ class TestGenerateTableAndViewGrants:
         mocker.patch.object(
             mock_connector, "show_views", return_value=["raw.public.view_1"]
         )
-        mocker.patch.object(
-            mock_connector, "show_iceberg_tables", return_value=[]
-        )
+        mocker.patch.object(mock_connector, "show_iceberg_tables", return_value=[])
         mocker.patch(
             "tundra.snowflake_grants.SnowflakeConnector.show_schemas",
             mock_connector.show_schemas,
@@ -1290,9 +1430,7 @@ class TestGenerateTableAndViewGrants:
         mocker.patch.object(
             mock_connector, "show_views", return_value=["raw.public.view_1"]
         )
-        mocker.patch.object(
-            mock_connector, "show_iceberg_tables", return_value=[]
-        )
+        mocker.patch.object(mock_connector, "show_iceberg_tables", return_value=[])
         mocker.patch(
             "tundra.snowflake_grants.SnowflakeConnector.show_schemas",
             mock_connector.show_schemas,
@@ -1389,9 +1527,7 @@ class TestGenerateTableAndViewGrants:
         Read access on database_1.schema_1.* must now also cover
         dynamic tables: future + all SELECT grants.
         """
-        mocker.patch.object(
-            MockSnowflakeConnector, "show_tables", return_value=[]
-        )
+        mocker.patch.object(MockSnowflakeConnector, "show_tables", return_value=[])
         mocker.patch.object(MockSnowflakeConnector, "show_views", return_value=[])
         mocker.patch.object(
             MockSnowflakeConnector, "show_iceberg_tables", return_value=[]

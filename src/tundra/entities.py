@@ -14,6 +14,7 @@ class EntitySchema(TypedDict):
     tables_by_database: Dict
     roles: Set[str]
     role_refs: Set[str]
+    database_role_refs: Set[str]
     users: Set[str]
     warehouses: Set[str]
     warehouse_refs: Set[str]
@@ -36,6 +37,7 @@ class EntityGenerator:
             "tables_by_database": dict(),
             "roles": set(),
             "role_refs": set(),
+            "database_role_refs": set(),
             "users": set(),
             "warehouses": set(),
             "warehouse_refs": set(),
@@ -209,6 +211,25 @@ class EntityGenerator:
                     " (Proper definition: DB)"
                 )
 
+        # A period in a role name is what marks it as a database role reference,
+        # so roles defined in the spec must not contain one.
+        for role_entry in self.spec.get("roles") or []:
+            for role in role_entry:
+                if "." in role:
+                    error_messages.append(
+                        f"Name error: Not a valid role name: {role}"
+                        " (Proper definition: ROLE. Periods are reserved for"
+                        " referencing database roles as DB.ROLE in member_of)"
+                    )
+
+        for database_role in entities["database_role_refs"]:
+            name_parts = database_role.split(".")
+            if (not len(name_parts) == 2) or not all(name_parts):
+                error_messages.append(
+                    f"Name error: Not a valid database role name: {database_role}"
+                    " (Proper definition: DB.ROLE)"
+                )
+
         for schema in entities["schema_refs"]:
             name_parts = schema.split(".")
             if (not len(name_parts) == 2) or (name_parts[0] == "*"):
@@ -301,7 +322,14 @@ class EntityGenerator:
             for entity_type, entry in self.spec.items()
             if entry
             and entity_type
-            in ["databases", "roles", "users", "warehouses", "integrations", "external_volumes"]
+            in [
+                "databases",
+                "roles",
+                "users",
+                "warehouses",
+                "integrations",
+                "external_volumes",
+            ]
         ]
 
         for entity_type, entry in entities_by_type:
@@ -324,7 +352,9 @@ class EntityGenerator:
             for integration_name, _ in integration_entry.items():
                 self.entities["integrations"].add(integration_name)
 
-    def generate_external_volumes(self, external_volume_list: List[Dict[str, Dict]]) -> None:
+    def generate_external_volumes(
+        self, external_volume_list: List[Dict[str, Dict]]
+    ) -> None:
         for external_volume_entry in external_volume_list:
             for external_volume_name, _ in external_volume_entry.items():
                 self.entities["external_volumes"].add(external_volume_name)
@@ -344,20 +374,27 @@ class EntityGenerator:
                             )
                         )
 
+    def add_member_of_ref(self, member_role):
+        """
+        Route a member_of entry to the right reference set. Anything containing a
+        period is a database role FQN (db.role), everything else is an account role.
+        """
+        if "." in member_role:
+            self.entities["database_role_refs"].add(member_role)
+        else:
+            self.entities["roles"].add(member_role)
+
     def generate_member_of_roles(self, config, role_name):
         try:
             if isinstance(config["member_of"], dict):
                 for member_role in config["member_of"].get("include", []):
-                    if "." not in member_role:
-                        self.entities["roles"].add(member_role)
+                    self.add_member_of_ref(member_role)
                 for member_role in config["member_of"].get("exclude", []):
-                    if "." not in member_role:
-                        self.entities["roles"].add(member_role)
+                    self.add_member_of_ref(member_role)
 
             if isinstance(config["member_of"], list):
                 for member_role in config["member_of"]:
-                    if "." not in member_role:
-                        self.entities["roles"].add(member_role)
+                    self.add_member_of_ref(member_role)
         except KeyError:
             logger.debug(
                 "`member_of` not found for role {}, skipping Role Reference generation.".format(
@@ -568,6 +605,25 @@ class EntityGenerator:
                 )
             )
 
+    def generate_user_member_of(self, config, user_name):
+        if "member_of" not in config:
+            logger.debug(
+                "`member_of` not found for user {}, skipping Role Reference generation.".format(
+                    user_name
+                )
+            )
+            return
+
+        for member_role in config["member_of"]:
+            # Snowflake only allows database roles to be granted to other roles
+            if "." in member_role:
+                self.error_messages.append(
+                    f"Reference error: Database role {member_role} is granted to user "
+                    f"{user_name}, but database roles can only be granted to roles"
+                )
+            else:
+                self.entities["role_refs"].add(member_role)
+
     def generate_users(self, user_list):
         """
         Generate all the user entities.
@@ -577,7 +633,7 @@ class EntityGenerator:
         for user_entry in user_list:
             for user_name, config in user_entry.items():
                 self.entities["users"].add(user_name)
-                self.generate_user_fn(config, "member_of", "role_refs", user_name)
+                self.generate_user_member_of(config, user_name)
                 self.generate_user_fn(
                     config.get("owns", {}), "database", "database_refs", user_name
                 )
