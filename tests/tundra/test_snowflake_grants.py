@@ -2,6 +2,14 @@ import pytest
 from tundra.snowflake_connector import SnowflakeConnector
 
 from tundra.snowflake_grants import SnowflakeGrantsGenerator
+from tundra.table_object_types import (
+    DYNAMIC_TABLE,
+    ICEBERG_TABLE,
+    STREAMLIT,
+    TABLE,
+    TABLE_OBJECT_TYPES,
+    VIEW,
+)
 from tundra_test_utils.snowflake_connector import MockSnowflakeConnector
 
 
@@ -129,33 +137,45 @@ def test_grants_to_role():
                 "role": ["object_role_1", "object_role_2"],
                 "warehouse": ["warehouse_1", "warehouse_2"],
             },
-            "operate": {"warehouse": ["warehouse_1", "warehouse_2"]},
-            "monitor": {"database": ["database_1", "database_2"]},
+            "operate": {
+                "warehouse": ["warehouse_1", "warehouse_2"],
+                "dynamic_table": ["database_1.schema_1.<dynamic_table>"],
+            },
+            "monitor": {
+                "database": ["database_1", "database_2"],
+                "dynamic_table": ["database_1.schema_1.<dynamic_table>"],
+            },
             "create schema": {"database": ["database_1", "database_2"]},
+            # Object-type keys and future-grant placeholders here are the underscore
+            # forms Snowflake actually reports (granted_on = ICEBERG_TABLE, name =
+            # DATABASE_1.SCHEMA_1.<ICEBERG_TABLE>), post-snowflaky. Writing these in
+            # tundra's SQL-keyword form instead is what let the multi-word types go
+            # unmatched in production while the suite stayed green.
             "select": {
                 "table": ["database_1.schema_1.<table>"],
                 "view": ["database_1.schema_1.<view>"],
-                "iceberg table": ['database_1.schema_1.<iceberg table>'],
+                "iceberg_table": ["database_1.schema_1.<iceberg_table>"],
+                "dynamic_table": ["database_1.schema_1.<dynamic_table>"],
             },
             "insert": {
                 "table": ["database_1.schema_1.<table>"],
-                "iceberg table": ['database_1.schema_1.<iceberg table>'],
+                "iceberg_table": ["database_1.schema_1.<iceberg_table>"],
             },
             "update": {
                 "table": ["database_1.schema_1.<table>"],
-                "iceberg table": ['database_1.schema_1.<iceberg table>'],
+                "iceberg_table": ["database_1.schema_1.<iceberg_table>"],
             },
             "delete": {
                 "table": ["database_1.schema_1.<table>"],
-                "iceberg table": ['database_1.schema_1.<iceberg table>'],
+                "iceberg_table": ["database_1.schema_1.<iceberg_table>"],
             },
             "truncate": {
                 "table": ["database_1.schema_1.<table>"],
-                "iceberg table": ['database_1.schema_1.<iceberg table>'],
+                "iceberg_table": ["database_1.schema_1.<iceberg_table>"],
             },
             "references": {
                 "table": ["database_1.schema_1.<table>"],
-                "iceberg table": ['database_1.schema_1.<iceberg table>'],
+                "iceberg_table": ["database_1.schema_1.<iceberg_table>"],
             },
         },
     }
@@ -1313,6 +1333,11 @@ class TestGenerateTableAndViewGrants:
         Provides write access on ALL|FUTURE tables|views in
         database_1.schema_2 and SKIPS granting access on ALL|FUTURE tables|views in
         database_1.schema_1 because they already have been granted.
+
+        The skip has to hold for the multi-word types too: `role_with_future_grants`
+        already holds the schema_1 iceberg-table and dynamic-table future grants, so
+        neither may be re-issued. Only streamlits, which the role has no `usage` grant
+        on, still appear for schema_1.
         """
         mock_connector = MockSnowflakeConnector()
 
@@ -1346,9 +1371,7 @@ class TestGenerateTableAndViewGrants:
             "GRANT select, insert, update, delete, truncate, references ON ALL tables IN schema database_1.schema_2 TO ROLE role_with_future_grants",
             "GRANT select, insert, update, delete, truncate, references ON FUTURE iceberg tables IN schema database_1.schema_2 TO ROLE role_with_future_grants",
             "GRANT select, insert, update, delete, truncate, references ON FUTURE tables IN schema database_1.schema_2 TO ROLE role_with_future_grants",
-            "GRANT select, monitor, operate ON ALL dynamic tables IN schema database_1.schema_1 TO ROLE role_with_future_grants",
             "GRANT select, monitor, operate ON ALL dynamic tables IN schema database_1.schema_2 TO ROLE role_with_future_grants",
-            "GRANT select, monitor, operate ON FUTURE dynamic tables IN schema database_1.schema_1 TO ROLE role_with_future_grants",
             "GRANT select, monitor, operate ON FUTURE dynamic tables IN schema database_1.schema_2 TO ROLE role_with_future_grants",
             "GRANT usage ON ALL streamlits IN schema database_1.schema_1 TO ROLE role_with_future_grants",
             "GRANT usage ON ALL streamlits IN schema database_1.schema_2 TO ROLE role_with_future_grants",
@@ -3107,3 +3130,102 @@ class TestSnowflakeOwnershipGrants:
         sql_commands = [sql["sql"] for sql in sql_commands]
 
         assert set(sql_commands) == set(expected_sql)
+
+
+class TestWireFormGrantMatching:
+    """Fetched grant state is keyed the way Snowflake reports it, not the way tundra
+    spells the SQL keyword. The two forms only diverge for multi-word object types, and
+    that divergence is the whole risk: when a lookup misses, the ALL/FUTURE grant is
+    re-issued on every run and the matching revoke never fires.
+
+    The `granted_on` and name literals below are copied from real `SHOW GRANTS TO ROLE`
+    and `SHOW FUTURE GRANTS` output, deliberately not derived from the registry.
+    """
+
+    WIRE_CASES = [
+        (ICEBERG_TABLE, "iceberg_table", "DATABASE_1.SCHEMA_1.<ICEBERG_TABLE>"),
+        (DYNAMIC_TABLE, "dynamic_table", "DATABASE_1.SCHEMA_1.<DYNAMIC_TABLE>"),
+        (TABLE, "table", "DATABASE_1.SCHEMA_1.<TABLE>"),
+        (VIEW, "view", "DATABASE_1.SCHEMA_1.<VIEW>"),
+        (STREAMLIT, "streamlit", "DATABASE_1.SCHEMA_1.<STREAMLIT>"),
+    ]
+
+    @pytest.mark.parametrize("object_type,granted_on,reported_name", WIRE_CASES)
+    def test_future_grant_reported_by_snowflake_is_recognised(
+        self, object_type, granted_on, reported_name
+    ):
+        grants_to_role = {
+            "some_role": {
+                object_type.read_privileges: {
+                    granted_on: [SnowflakeConnector.snowflaky(reported_name)]
+                }
+            }
+        }
+        generator = SnowflakeGrantsGenerator(
+            grants_to_role, {}, conn=MockSnowflakeConnector()
+        )
+
+        assert generator.is_granted_privilege(
+            "some_role",
+            object_type.read_privileges,
+            object_type.grant_key,
+            f"database_1.schema_1.{object_type.future_placeholder}",
+        )
+
+    @pytest.mark.parametrize("object_type,granted_on,reported_name", WIRE_CASES)
+    def test_stale_future_grant_is_revoked(
+        self, object_type, granted_on, reported_name
+    ):
+        # Snowflake holds a future grant the spec no longer asks for. If the lookup
+        # misses, the stale grant is invisible and silently survives forever.
+        grants_to_role = {
+            "some_role": {
+                object_type.read_privileges: {
+                    granted_on: [SnowflakeConnector.snowflaky(reported_name)]
+                }
+            }
+        }
+        generator = SnowflakeGrantsGenerator(
+            grants_to_role, {}, conn=MockSnowflakeConnector()
+        )
+        empty_by_type = {t.grant_key: [] for t in TABLE_OBJECT_TYPES}
+
+        revokes = generator.generate_revoke_privs(
+            "some_role",
+            shared_dbs=set(),
+            spec_dbs={"database_1"},
+            all_grants_by_type=empty_by_type,
+            write_grants_by_type=dict(empty_by_type),
+        )
+
+        assert [command["sql"] for command in revokes] == [
+            f"REVOKE {object_type.read_privileges} ON FUTURE {object_type.name}s "
+            "IN schema database_1.schema_1 FROM ROLE some_role"
+        ]
+
+    @pytest.mark.parametrize("object_type,granted_on,reported_name", WIRE_CASES)
+    def test_held_future_grant_is_not_revoked(
+        self, object_type, granted_on, reported_name
+    ):
+        granted = SnowflakeConnector.snowflaky(reported_name)
+        grants_to_role = {
+            "some_role": {object_type.read_privileges: {granted_on: [granted]}}
+        }
+        generator = SnowflakeGrantsGenerator(
+            grants_to_role, {}, conn=MockSnowflakeConnector()
+        )
+
+        # The spec's grant list covers the held grant, so nothing needs revoking.
+        all_grants_by_type = {t.grant_key: [] for t in TABLE_OBJECT_TYPES}
+        all_grants_by_type[object_type.grant_key] = [granted]
+
+        assert (
+            generator.generate_revoke_privs(
+                "some_role",
+                shared_dbs=set(),
+                spec_dbs={"database_1"},
+                all_grants_by_type=all_grants_by_type,
+                write_grants_by_type={t.grant_key: [] for t in TABLE_OBJECT_TYPES},
+            )
+            == []
+        )

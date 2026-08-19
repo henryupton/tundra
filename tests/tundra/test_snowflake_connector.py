@@ -567,21 +567,37 @@ class TestSnowflakeConnector:
 
 
 class TestSnowflakyFuturePlaceholders:
+    # The inputs here are the literal `name` values `SHOW FUTURE GRANTS` returns, so
+    # they are underscore-separated: DB.SCHEMA.<ICEBERG_TABLE>, never <ICEBERG TABLE>.
+    # Anything that fails to match the placeholder pattern gets double-quoted instead
+    # of lowercased, and then never compares equal to a generated placeholder.
     def test_future_placeholders_lowercased_not_quoted(self):
         assert (
-            SnowflakeConnector.snowflaky("db_1.<ICEBERG TABLE>")
-            == "db_1.<iceberg table>"
+            SnowflakeConnector.snowflaky("db_1.<ICEBERG_TABLE>")
+            == "db_1.<iceberg_table>"
         )
         assert (
-            SnowflakeConnector.snowflaky("db_1.schema_1.<DYNAMIC TABLE>")
-            == "db_1.schema_1.<dynamic table>"
+            SnowflakeConnector.snowflaky("db_1.schema_1.<DYNAMIC_TABLE>")
+            == "db_1.schema_1.<dynamic_table>"
         )
         assert (
             SnowflakeConnector.snowflaky("db_1.schema_1.<STREAMLIT>")
             == "db_1.schema_1.<streamlit>"
         )
         assert SnowflakeConnector.snowflaky("db_1.<TABLE>") == "db_1.<table>"
+        assert SnowflakeConnector.snowflaky("db_1.<VIEW>") == "db_1.<view>"
         assert SnowflakeConnector.snowflaky("db_1.<SCHEMA>") == "db_1.<schema>"
+
+    def test_multi_word_placeholders_match_show_future_grants_output(self):
+        # Regression: the placeholder tundra generates has to equal the one it reads
+        # back out of Snowflake, or every ALL/FUTURE grant on a multi-word type is
+        # re-issued on every run and is never revoked.
+        for object_type in (ICEBERG_TABLE, DYNAMIC_TABLE):
+            reported = f"DB_1.SCHEMA_1.<{object_type.name.upper().replace(' ', '_')}>"
+            assert (
+                SnowflakeConnector.snowflaky(reported)
+                == f"db_1.schema_1.{object_type.future_placeholder}"
+            )
 
 
 class TestShowTableObjects:

@@ -6,7 +6,7 @@ from typing import List, Optional
 class TableObjectType:
     """A Snowflake table-like object type that tundra manages grants for.
 
-    name: grant keyword and the key used in grants_to_role, e.g. "iceberg table"
+    name: SQL grant keyword, e.g. "iceberg table"
     connector_method: SnowflakeConnector method that lists these objects
     show_command: SHOW command fragment, e.g. "TERSE TABLES"
     schema_create_privilege: schema-level create privilege, None if not granted
@@ -20,8 +20,20 @@ class TableObjectType:
     schema_create_privilege: Optional[str] = None
 
     @property
+    def grant_key(self) -> str:
+        """The form Snowflake itself uses on the wire, e.g. "iceberg_table".
+
+        `SHOW GRANTS` reports `granted_on` as ICEBERG_TABLE and names future grants
+        DB.SCHEMA.<ICEBERG_TABLE>, both underscore-separated, whereas the SQL grant
+        keyword in `name` is space-separated. Every lookup against fetched grant
+        state keys off this, never off `name`, or multi-word types never match what
+        Snowflake reported and get re-granted on every run.
+        """
+        return self.name.replace(" ", "_")
+
+    @property
     def future_placeholder(self) -> str:
-        return f"<{self.name}>"
+        return f"<{self.grant_key}>"
 
     @property
     def is_writable(self) -> bool:
