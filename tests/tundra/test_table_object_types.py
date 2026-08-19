@@ -19,9 +19,19 @@ class TestTableObjectTypes:
             STREAMLIT,
         ]
 
+    def test_grant_key_is_the_wire_form(self):
+        # `name` is the SQL keyword; `grant_key` is what Snowflake reports in
+        # `granted_on` and inside future-grant names. They differ for multi-word types.
+        assert TABLE.grant_key == "table"
+        assert VIEW.grant_key == "view"
+        assert ICEBERG_TABLE.grant_key == "iceberg_table"
+        assert DYNAMIC_TABLE.grant_key == "dynamic_table"
+        assert STREAMLIT.grant_key == "streamlit"
+
     def test_future_placeholder(self):
         assert TABLE.future_placeholder == "<table>"
-        assert ICEBERG_TABLE.future_placeholder == "<iceberg table>"
+        assert ICEBERG_TABLE.future_placeholder == "<iceberg_table>"
+        assert DYNAMIC_TABLE.future_placeholder == "<dynamic_table>"
         assert STREAMLIT.future_placeholder == "<streamlit>"
 
     def test_is_writable(self):
