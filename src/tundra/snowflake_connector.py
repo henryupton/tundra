@@ -24,7 +24,7 @@ from tundra.table_object_types import (
 )
 
 FUTURE_PLACEHOLDER_PATTERN = "^<({})>$".format(
-    "|".join([t.name for t in TABLE_OBJECT_TYPES] + ["schema"])
+    "|".join([t.grant_key for t in TABLE_OBJECT_TYPES] + ["schema"])
 )
 
 # Don't show all the info log messages from Snowflake

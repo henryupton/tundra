@@ -2,7 +2,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from tundra.logger import GLOBAL_LOGGER as logger
 from tundra.snowflake_connector import SnowflakeConnector
-from tundra.table_object_types import TABLE_OBJECT_TYPES
+from tundra.table_object_types import TABLE_OBJECT_TYPES, TableObjectType
 
 GRANT_ROLE_TEMPLATE = "GRANT ROLE {role_name} TO {type} {entity_name}"
 
@@ -1161,7 +1161,7 @@ class SnowflakeGrantsGenerator:
     def _generate_table_read_grants(self, conn, tables, shared_dbs, role):
         sql_commands: List[Dict] = []
         grant_lists: Dict[str, List[str]] = {
-            t.name: [] for t in TABLE_OBJECT_TYPES
+            t.grant_key: [] for t in TABLE_OBJECT_TYPES
         }
 
         for table in tables:
@@ -1187,9 +1187,9 @@ class SnowflakeGrantsGenerator:
                     f"{database_name}.{object_type.future_placeholder}"
                 )
                 already_granted = self.is_granted_privilege(
-                    role, privileges, object_type.name, future_database_object
+                    role, privileges, object_type.grant_key, future_database_object
                 )
-                grant_lists[object_type.name].append(future_database_object)
+                grant_lists[object_type.grant_key].append(future_database_object)
 
                 if schema_name == "*" and table_view_name == "*":
                     for template in (
@@ -1226,14 +1226,14 @@ class SnowflakeGrantsGenerator:
                     # If <schema_name>.* then you add all objects to the grant
                     # list and then grant future. If *.* was provided then
                     # full_schema_list already fetched all schemas.
-                    grant_lists[object_type.name].extend(object_list)
+                    grant_lists[object_type.grant_key].extend(object_list)
 
                     for schema in fetched_schemas:
                         future_object = f"{schema}.{object_type.future_placeholder}"
-                        grant_lists[object_type.name].append(future_object)
+                        grant_lists[object_type.grant_key].append(future_object)
 
                         already_granted = self.is_granted_privilege(
-                            role, privileges, object_type.name, future_object
+                            role, privileges, object_type.grant_key, future_object
                         )
 
                         for template in (
@@ -1264,13 +1264,13 @@ class SnowflakeGrantsGenerator:
                     # check that it's valid and add to list
                     if table in object_list:
                         grant_objects = [table]
-                        grant_lists[object_type.name].append(table)
+                        grant_lists[object_type.grant_key].append(table)
 
                 # Grant explicitly to each flagged object instead of
                 # granting to all objects in the schema
                 for db_object in grant_objects:
                     already_granted = self.is_granted_privilege(
-                        role, privileges, object_type.name, db_object
+                        role, privileges, object_type.grant_key, db_object
                     )
 
                     sql_commands.append(
@@ -1290,7 +1290,7 @@ class SnowflakeGrantsGenerator:
     def _generate_table_write_grants(self, conn, tables, shared_dbs, role):
         sql_commands: List[Dict] = []
         grant_lists: Dict[str, List[str]] = {
-            t.name: [] for t in TABLE_OBJECT_TYPES
+            t.grant_key: [] for t in TABLE_OBJECT_TYPES
         }
 
         for table in tables:
@@ -1314,9 +1314,9 @@ class SnowflakeGrantsGenerator:
                     f"{database_name}.{object_type.future_placeholder}"
                 )
                 already_granted = self._all_privileges_granted(
-                    role, privileges_array, object_type.name, future_database_object
+                    role, privileges_array, object_type.grant_key, future_database_object
                 )
-                grant_lists[object_type.name].append(future_database_object)
+                grant_lists[object_type.grant_key].append(future_database_object)
 
                 if schema_name == "*" and table_view_name == "*":
                     for template in (
@@ -1347,14 +1347,14 @@ class SnowflakeGrantsGenerator:
                 grant_objects = []
 
                 if table_view_name == "*":
-                    grant_lists[object_type.name].extend(object_list)
+                    grant_lists[object_type.grant_key].extend(object_list)
 
                     for schema in fetched_schemas:
                         future_object = f"{schema}.{object_type.future_placeholder}"
-                        grant_lists[object_type.name].append(future_object)
+                        grant_lists[object_type.grant_key].append(future_object)
 
                         already_granted = self._all_privileges_granted(
-                            role, privileges_array, object_type.name, future_object
+                            role, privileges_array, object_type.grant_key, future_object
                         )
 
                         for template in (
@@ -1383,11 +1383,11 @@ class SnowflakeGrantsGenerator:
                 else:
                     if table in object_list:
                         grant_objects = [table]
-                        grant_lists[object_type.name].append(table)
+                        grant_lists[object_type.grant_key].append(table)
 
                 for db_object in grant_objects:
                     already_granted = self._all_privileges_granted(
-                        role, privileges_array, object_type.name, db_object
+                        role, privileges_array, object_type.grant_key, db_object
                     )
 
                     sql_commands.append(
@@ -1411,7 +1411,7 @@ class SnowflakeGrantsGenerator:
         shared_dbs: Set[Any],
         spec_dbs: Set[Any],
         privilege_set: str,
-        resource_type: str,
+        object_type: TableObjectType,
         granted_resources: List[str],
     ) -> List[Dict[str, Any]]:
         """
@@ -1422,7 +1422,9 @@ class SnowflakeGrantsGenerator:
         shared_dbs: Shared databases to be skipped
         spec_dbs: Databases to apply REVOKE statements on
         privilege_set: Privileges to revoke (i.e. SELECT, INSERT, etc.)
-        resource_type: Database object to revoke (i.e. table, view, etc.)
+        object_type: Registry entry for the object being revoked. Supplies the SQL
+                     keyword (`name`) and, separately, the future-grant placeholder
+                     (`future_placeholder`) used to compare against fetched state
         granted_resources: List of GRANTS to filter through
 
         Returns a list of REVOKE statements
@@ -1437,11 +1439,13 @@ class SnowflakeGrantsGenerator:
             if len(resource_split) == 2 or (
                 len(resource_split) == 3 and schema_name == "*"
             ):
-                future_resource = f"{database_name}.<{resource_type}>"
+                future_resource = f"{database_name}.{object_type.future_placeholder}"
                 grouping_type = "database"
                 grouping_name = database_name
             else:
-                future_resource = f"{database_name}.{schema_name}.<{resource_type}>"
+                future_resource = (
+                    f"{database_name}.{schema_name}.{object_type.future_placeholder}"
+                )
                 grouping_type = "schema"
                 grouping_name = f"{database_name}.{schema_name}"
 
@@ -1461,7 +1465,7 @@ class SnowflakeGrantsGenerator:
                         "already_granted": False,
                         "sql": REVOKE_FUTURE_PRIVILEGES_TEMPLATE.format(
                             privileges=privilege_set,
-                            resource_type=resource_type,
+                            resource_type=object_type.name,
                             grouping_type=grouping_type,
                             grouping_name=SnowflakeConnector.snowflaky(grouping_name),
                             role=SnowflakeConnector.snowflaky_user_role(role),
@@ -1479,7 +1483,7 @@ class SnowflakeGrantsGenerator:
                         "already_granted": False,
                         "sql": REVOKE_PRIVILEGES_TEMPLATE.format(
                             privileges=privilege_set,
-                            resource_type=resource_type,
+                            resource_type=object_type.name,
                             resource_name=SnowflakeConnector.snowflaky(
                                 granted_resource
                             ),
@@ -1504,17 +1508,17 @@ class SnowflakeGrantsGenerator:
                 set(
                     self.grants_to_role.get(role, {})
                     .get(object_type.read_privileges, {})
-                    .get(object_type.name, [])
+                    .get(object_type.grant_key, [])
                 )
             )
             sql_commands.extend(
                 self._generate_revoke_select_privs(
                     role=role,
-                    all_grant_resources=all_grants_by_type[object_type.name],
+                    all_grant_resources=all_grants_by_type[object_type.grant_key],
                     shared_dbs=shared_dbs,
                     spec_dbs=spec_dbs,
                     privilege_set=object_type.read_privileges,
-                    resource_type=object_type.name,
+                    object_type=object_type,
                     granted_resources=granted_resources,
                 )
             )
@@ -1531,17 +1535,17 @@ class SnowflakeGrantsGenerator:
                 granted_resources_set.update(
                     self.grants_to_role.get(role, {})
                     .get(privilege, {})
-                    .get(object_type.name, [])
+                    .get(object_type.grant_key, [])
                 )
 
             sql_commands.extend(
                 self._generate_revoke_select_privs(
                     role=role,
-                    all_grant_resources=write_grants_by_type[object_type.name],
+                    all_grant_resources=write_grants_by_type[object_type.grant_key],
                     shared_dbs=shared_dbs,
                     spec_dbs=spec_dbs,
                     privilege_set=write_partial_privileges,
-                    resource_type=object_type.name,
+                    object_type=object_type,
                     granted_resources=list(granted_resources_set),
                 )
             )
@@ -1579,7 +1583,8 @@ class SnowflakeGrantsGenerator:
         sql_commands.extend(write_commands)
 
         all_grants_by_type = {
-            t.name: read_grants_by_type[t.name] + write_grants_by_type[t.name]
+            t.grant_key: read_grants_by_type[t.grant_key]
+            + write_grants_by_type[t.grant_key]
             for t in TABLE_OBJECT_TYPES
         }
 
