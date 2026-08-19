@@ -10,6 +10,10 @@ class TableObjectType:
     connector_method: SnowflakeConnector method that lists these objects
     show_command: SHOW command fragment, e.g. "TERSE TABLES"
     schema_create_privilege: schema-level create privilege, None if not granted
+    supports_bulk_grants: whether Snowflake accepts ON ALL and ON FUTURE for this type.
+        When it does, a wildcard spec entry is fully covered by those two statements and
+        the schema's objects never need listing. A type without bulk-grant support has to
+        fall back to enumerating them.
     """
 
     name: str
@@ -18,6 +22,7 @@ class TableObjectType:
     read_privileges: str
     write_privileges: str
     schema_create_privilege: Optional[str] = None
+    supports_bulk_grants: bool = True
 
     @property
     def grant_key(self) -> str:
