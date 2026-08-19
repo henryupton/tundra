@@ -1,6 +1,9 @@
+from dataclasses import replace
+
 import pytest
 from tundra.snowflake_connector import SnowflakeConnector
 
+from tundra.grant_coverage import GrantCoverage
 from tundra.snowflake_grants import SnowflakeGrantsGenerator
 from tundra.table_object_types import (
     DYNAMIC_TABLE,
@@ -3132,6 +3135,119 @@ class TestSnowflakeOwnershipGrants:
         assert set(sql_commands) == set(expected_sql)
 
 
+class TestWildcardShortCircuit:
+    """A wildcard spec entry must not list the schemas it covers.
+
+    `SHOW <objects> IN SCHEMA` per schema, per object type, per role was the dominant
+    cost of query generation and it never influenced a GRANT: its only consumer was the
+    revoke allowlist, which a schema scope expresses exactly. Listing is still required
+    for an explicitly named object, where the point is to validate the spec entry.
+    """
+
+    LISTERS = [
+        "show_tables",
+        "show_views",
+        "show_iceberg_tables",
+        "show_dynamic_tables",
+        "show_streamlits",
+    ]
+
+    def _patch_listers(self, mocker):
+        return {
+            lister: mocker.patch.object(
+                SnowflakeConnector, lister, return_value=[], autospec=False
+            )
+            for lister in self.LISTERS
+        }
+
+    def _generator(self, mocker):
+        mocker.patch.object(SnowflakeConnector, "__init__", lambda x: None)
+        mocker.patch.object(
+            SnowflakeConnector,
+            "full_schema_list",
+            return_value=["database_1.schema_1", "database_1.schema_2"],
+        )
+        return SnowflakeGrantsGenerator({}, {})
+
+    @pytest.mark.parametrize("pattern", ["database_1.schema_1.*", "database_1.*.*"])
+    def test_wildcard_entry_lists_nothing(self, mocker, pattern):
+        listers = self._patch_listers(mocker)
+        generator = self._generator(mocker)
+
+        commands = generator.generate_table_and_view_grants(
+            "some_role", {"read": [pattern], "write": []}, set(), {"database_1"}
+        )
+
+        assert commands, "expected the wildcard entry to still emit grants"
+        for name, lister in listers.items():
+            assert lister.call_count == 0, f"{name} was called for a wildcard entry"
+
+    def test_named_object_still_lists_its_schema(self, mocker):
+        listers = self._patch_listers(mocker)
+        generator = self._generator(mocker)
+
+        generator.generate_table_and_view_grants(
+            "some_role",
+            {"read": ["database_1.schema_1.table_1"], "write": []},
+            set(),
+            {"database_1"},
+        )
+
+        assert listers["show_tables"].call_count > 0
+
+    def test_wildcard_coverage_still_suppresses_revokes(self, mocker):
+        # The scope has to stand in for the object list, or every object in the schema
+        # would look unsanctioned and get revoked.
+        self._patch_listers(mocker)
+        mocker.patch.object(SnowflakeConnector, "__init__", lambda x: None)
+        mocker.patch.object(
+            SnowflakeConnector,
+            "full_schema_list",
+            return_value=["database_1.schema_1"],
+        )
+        grants_to_role = {
+            "some_role": {
+                "select": {
+                    "table": [
+                        "database_1.schema_1.table_1",
+                        "database_1.schema_1.table_2",
+                        "database_1.schema_1.<table>",
+                        "database_1.schema_9.orphan",
+                    ]
+                }
+            }
+        }
+        generator = SnowflakeGrantsGenerator(grants_to_role, {})
+
+        commands = generator.generate_table_and_view_grants(
+            "some_role",
+            {"read": ["database_1.schema_1.*"], "write": []},
+            set(),
+            {"database_1"},
+        )
+        revokes = [c["sql"] for c in commands if c["sql"].startswith("REVOKE")]
+
+        # Only the grant outside the covered schema is revoked.
+        assert revokes == [
+            "REVOKE select ON table database_1.schema_9.orphan FROM ROLE some_role"
+        ]
+
+    def test_type_without_bulk_grant_support_falls_back_to_listing(self, mocker):
+        listers = self._patch_listers(mocker)
+        generator = self._generator(mocker)
+        no_bulk = replace(TABLE, supports_bulk_grants=False)
+
+        mocker.patch(
+            "tundra.snowflake_grants.TABLE_OBJECT_TYPES", [no_bulk], autospec=False
+        )
+
+        generator.generate_table_and_view_grants(
+            "some_role", {"read": ["database_1.schema_1.*"], "write": []}, set(), set()
+        )
+
+        assert listers["show_tables"].call_count > 0
+
+
 class TestWireFormGrantMatching:
     """Fetched grant state is keyed the way Snowflake reports it, not the way tundra
     spells the SQL keyword. The two forms only diverge for multi-word object types, and
@@ -3188,14 +3304,17 @@ class TestWireFormGrantMatching:
         generator = SnowflakeGrantsGenerator(
             grants_to_role, {}, conn=MockSnowflakeConnector()
         )
-        empty_by_type = {t.grant_key: [] for t in TABLE_OBJECT_TYPES}
 
         revokes = generator.generate_revoke_privs(
             "some_role",
             shared_dbs=set(),
             spec_dbs={"database_1"},
-            all_grants_by_type=empty_by_type,
-            write_grants_by_type=dict(empty_by_type),
+            all_grants_by_type={
+                t.grant_key: GrantCoverage() for t in TABLE_OBJECT_TYPES
+            },
+            write_grants_by_type={
+                t.grant_key: GrantCoverage() for t in TABLE_OBJECT_TYPES
+            },
         )
 
         assert [command["sql"] for command in revokes] == [
@@ -3215,9 +3334,9 @@ class TestWireFormGrantMatching:
             grants_to_role, {}, conn=MockSnowflakeConnector()
         )
 
-        # The spec's grant list covers the held grant, so nothing needs revoking.
-        all_grants_by_type = {t.grant_key: [] for t in TABLE_OBJECT_TYPES}
-        all_grants_by_type[object_type.grant_key] = [granted]
+        # The spec's coverage includes the held grant, so nothing needs revoking.
+        all_grants_by_type = {t.grant_key: GrantCoverage() for t in TABLE_OBJECT_TYPES}
+        all_grants_by_type[object_type.grant_key].add_object(granted)
 
         assert (
             generator.generate_revoke_privs(
@@ -3225,7 +3344,9 @@ class TestWireFormGrantMatching:
                 shared_dbs=set(),
                 spec_dbs={"database_1"},
                 all_grants_by_type=all_grants_by_type,
-                write_grants_by_type={t.grant_key: [] for t in TABLE_OBJECT_TYPES},
+                write_grants_by_type={
+                    t.grant_key: GrantCoverage() for t in TABLE_OBJECT_TYPES
+                },
             )
             == []
         )
