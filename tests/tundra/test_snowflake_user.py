@@ -47,6 +47,11 @@ def test_roles_spec_file():
             default_role="role1",
         )
         .add_user(
+            name="test_user_keyword_default_role",
+            default_warehouse="monitoring",
+            default_role="monitor",
+        )
+        .add_user(
             name="test_user_with_password_display_name_comment",
             has_password=True,
             display_name="Boomer",
@@ -128,6 +133,7 @@ def test_roles_mock_connector(mocker):
             "test_user_with_comment_password_disabled",
             "test_user_with_password_display_name_comment",
             "test_user_defaults",
+            "test_user_keyword_default_role",
             "test_user_with_full_name",
             "test_user_with_email",
             "test_user_with_multiple_properties",
@@ -344,9 +350,39 @@ class TestSnowflakeUserProperties:
             {
                 "already_granted": False,
                 "sql": "ALTER USER test_user_defaults SET DISABLED = FALSE, "
-                'DEFAULT_WAREHOUSE = "Ftl", '
-                "DEFAULT_NAMESPACE = public, "
-                "DEFAULT_ROLE = role1, "
+                'DEFAULT_WAREHOUSE = "FTL", '
+                'DEFAULT_NAMESPACE = "PUBLIC", '
+                'DEFAULT_ROLE = "ROLE1", '
+                "TYPE = 'PERSON', DEFAULT_SECONDARY_ROLES = ()",
+            }
+        ]
+
+    def test_user_defaults_with_keyword_role(
+        self, mocker, test_roles_mock_connector, test_roles_spec_file
+    ):
+        """A default role whose name collides with a Snowflake keyword must still be
+        quoted and uppercased.
+
+        MONITOR is a privilege, so `DEFAULT_ROLE = monitor` is stored verbatim as the
+        lowercase string rather than normalised to uppercase like every other role
+        name. It then never matches the role MONITOR, and the user silently falls
+        back to PUBLIC on every login -- which presents as a working connection that
+        is authorised for nothing.
+        """
+
+        print(f"Spec File Data is:\n{test_roles_spec_file}")
+        mocker.patch("builtins.open", mocker.mock_open(read_data=test_roles_spec_file))
+        spec_loader = SnowflakeSpecLoader(spec_path="", conn=test_roles_mock_connector)
+        queries = spec_loader.generate_permission_queries(
+            users=["test_user_keyword_default_role"], run_list=["users"]
+        )
+
+        assert queries == [
+            {
+                "already_granted": False,
+                "sql": "ALTER USER test_user_keyword_default_role SET DISABLED = FALSE, "
+                'DEFAULT_WAREHOUSE = "MONITORING", '
+                'DEFAULT_ROLE = "MONITOR", '
                 "TYPE = 'PERSON', DEFAULT_SECONDARY_ROLES = ()",
             }
         ]

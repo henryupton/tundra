@@ -579,6 +579,44 @@ class SnowflakeConnector:
         return ".".join(new_name_parts)
 
     @staticmethod
+    def snowflaky_user_property(name: str) -> str:
+        """
+        Convert a user property value (DEFAULT_ROLE, DEFAULT_WAREHOUSE,
+        DEFAULT_NAMESPACE) to an identifier that round-trips through Snowflake.
+
+        Unlike snowflaky(), every component is uppercased and quoted rather than
+        lowercased. ALTER USER stores these properties as text instead of resolving
+        them to an object, so whatever we send is what comes back out of
+        SHOW/DESCRIBE USER -- and it has to match the uppercase form Snowflake
+        stored the object under, or the property silently resolves to nothing.
+
+        Most values survive being sent unquoted because Snowflake normalises them to
+        uppercase on the way in. Values that collide with a keyword do not: MONITOR
+        is a privilege, so `DEFAULT_ROLE = monitor` is kept verbatim as `monitor`,
+        never matches the role `MONITOR`, and the user falls back to PUBLIC on every
+        login. Quoting the uppercased form is unambiguous for every value, keyword
+        or not.
+
+        e.g. monitor     --> "MONITOR"
+             raw.public  --> "RAW"."PUBLIC"
+             "mixedCase" --> "mixedCase"   (already quoted, passed through)
+        """
+        if not name:
+            return name
+
+        new_name_parts = []
+
+        for part in name.split("."):
+            # Already quoted: the spec author has been explicit about the exact
+            # stored form, so don't second-guess the casing.
+            if re.match('^".*"$', part) is not None:
+                new_name_parts.append(part)
+            else:
+                new_name_parts.append(f'"{part.upper()}"')
+
+        return ".".join(new_name_parts)
+
+    @staticmethod
     def snowflaky_user_role(name: str) -> str:
         """
         Convert users/roles to an object identifier that will most probably be
