@@ -1722,7 +1722,8 @@ class SnowflakeGrantsGenerator:
                 property_name = str.upper(identifier)
                 property_value = config.get(identifier)
                 alter_privileges.append(
-                    f"{property_name} = {SnowflakeConnector.snowflaky(property_value)}"
+                    f"{property_name} = "
+                    f"{SnowflakeConnector.snowflaky_user_property(property_value)}"
                 )
 
         # Handle user type with validation (case-insensitive)
