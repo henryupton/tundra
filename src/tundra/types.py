@@ -66,11 +66,9 @@ class UserSchema(UserSchemaBase, total=False):
     type: str
 
 
-class WarehouseSchemaBase(TypedDict):
+# size is optional: adaptive warehouses (Snowflake-managed sizing) have none.
+class WarehouseSchema(TypedDict, total=False):
     size: str
-
-
-class WarehouseSchema(WarehouseSchemaBase, total=False):
     owner: str
 
 
