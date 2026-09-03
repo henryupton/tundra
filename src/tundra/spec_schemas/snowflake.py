@@ -208,7 +208,7 @@ SNOWFLAKE_SPEC_WAREHOUSE_SCHEMA = """
         required: False
     size:
         type: string
-        required: True
+        required: False
     meta:
         type: dict
         required: False
