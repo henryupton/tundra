@@ -1,10 +1,12 @@
 import logging
 import os
 import re
+import subprocess
 import warnings
 from typing import Any, Dict, List, Optional, Set, Union
 from urllib.parse import quote_plus
 
+import snowflake.connector
 import sqlalchemy
 
 # To support key pair authentication
@@ -72,9 +74,38 @@ class SnowflakeConnector:
                 "key_path": os.getenv("PERMISSION_BOT_KEY_PATH"),
                 "key_passphrase": os.getenv("PERMISSION_BOT_KEY_PASSPHRASE"),
                 "authenticator": os.getenv("PERMISSION_BOT_AUTHENTICATOR"),
+                "workload_identity_provider": os.getenv(
+                    "PERMISSION_BOT_WORKLOAD_IDENTITY_PROVIDER"
+                ),
+                "token_command": os.getenv("PERMISSION_BOT_TOKEN_COMMAND"),
             }
 
-        if config["oauth_token"] is not None:
+        if config.get("token_command") is not None:
+            # Workload identity federation with a short-lived token: the command is
+            # rerun for every connection the pool opens, so a token that expired
+            # mid-run is never presented.
+            connect_kwargs = {
+                key: value
+                for key, value in {
+                    "user": config["user"],
+                    "account": config["account"],
+                    "database": config["database"],
+                    "role": config["role"],
+                    "warehouse": config["warehouse"],
+                    "authenticator": config["authenticator"] or "WORKLOAD_IDENTITY",
+                    "workload_identity_provider": config["workload_identity_provider"],
+                }.items()
+                if value
+            }
+            token_command = config["token_command"]
+            self.engine = sqlalchemy.create_engine(
+                "snowflake://",
+                creator=lambda: snowflake.connector.connect(
+                    token=self.run_token_command(token_command), **connect_kwargs
+                ),
+                **pool_kwargs,
+            )
+        elif config["oauth_token"] is not None:
             self.engine = sqlalchemy.create_engine(
                 URL(
                     user=config["user"],
@@ -131,6 +162,14 @@ class SnowflakeConnector:
                 ),
                 **pool_kwargs,
             )
+
+    @staticmethod
+    def run_token_command(command: str) -> str:
+        """Run the shell command that prints a fresh auth token and return it."""
+        result = subprocess.run(
+            command, shell=True, check=True, capture_output=True, text=True
+        )
+        return result.stdout.strip()
 
     @staticmethod
     def generate_private_key(key_path: str, key_passphrase: Union[str, None]) -> bytes:
