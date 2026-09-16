@@ -534,6 +534,21 @@ $PERMISSION_BOT_KEY_PASSPHRASE
 
 See [Snowflake-sqlalchemy](https://github.com/snowflakedb/snowflake-sqlalchemy#key-pair-authentication-support) for more info.
 
+### Workload Identity Federation
+
+To connect with a short-lived token from a workload identity provider (for example the
+OIDC token GitHub Actions issues to a job), set:
+
+```bash
+$PERMISSION_BOT_AUTHENTICATOR='WORKLOAD_IDENTITY'
+$PERMISSION_BOT_WORKLOAD_IDENTITY_PROVIDER='OIDC'
+$PERMISSION_BOT_TOKEN_COMMAND='python mint_token.py --audience my-account'
+```
+
+The command is run through the shell, and its stdout is the token. Tundra reruns it for
+every connection its pool opens, so a token that expires part-way through a long run is
+never reused. `PERMISSION_BOT_TOKEN_COMMAND` takes precedence over the other auth methods.
+
 ## Contributing
 
 Contributing to Tundra is easy, and most commands to do so are available
