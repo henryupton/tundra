@@ -47,6 +47,7 @@ SCHEMA_PARTIAL_WRITE_PRIVILEGES = ", ".join(
         "create function",
         "create pipe",
         "create cortex search service",
+        "create mcp server",
     ]
 )
 
