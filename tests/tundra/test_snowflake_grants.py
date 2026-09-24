@@ -1709,7 +1709,7 @@ class TestGenerateSchemaGrants:
 
         expected = [
             "GRANT usage ON schema database_1.schema_1 TO ROLE functional_role",
-            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service ON schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server ON schema database_1.schema_1 TO ROLE functional_role",
         ]
         return [MockSnowflakeConnector, config, expected]
 
@@ -1755,8 +1755,8 @@ class TestGenerateSchemaGrants:
         expected = [
             "GRANT usage ON schema database_1.schema_1 TO ROLE functional_role",
             "GRANT usage ON schema database_1.schema_2 TO ROLE functional_role",
-            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service ON schema database_1.schema_1 TO ROLE functional_role",
-            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service ON schema database_1.schema_2 TO ROLE functional_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server ON schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server ON schema database_1.schema_2 TO ROLE functional_role",
         ]
         return [MockSnowflakeConnector, config, expected]
 
@@ -1773,7 +1773,7 @@ class TestGenerateSchemaGrants:
         expected = [
             "GRANT usage ON schema database_1.schema_1 TO ROLE functional_role",
             "GRANT usage ON schema database_1.schema_2 TO ROLE functional_role",
-            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service ON schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server ON schema database_1.schema_1 TO ROLE functional_role",
         ]
         return [MockSnowflakeConnector, config, expected]
 
@@ -1790,7 +1790,7 @@ class TestGenerateSchemaGrants:
         expected = [
             "GRANT usage ON schema database_1.schema_1 TO ROLE functional_role",
             "GRANT usage ON schema database_2.schema_2 TO ROLE functional_role",
-            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service ON schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server ON schema database_1.schema_1 TO ROLE functional_role",
         ]
         return [MockSnowflakeConnector, config, expected]
 
@@ -1807,7 +1807,7 @@ class TestGenerateSchemaGrants:
 
         expected = [
             "GRANT usage ON schema database_1.schema_1 TO ROLE functional_role",
-            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service ON schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server ON schema database_1.schema_1 TO ROLE functional_role",
         ]
         return [MockSnowflakeConnector, config, expected]
 
@@ -1864,10 +1864,10 @@ class TestGenerateSchemaGrants:
             "GRANT usage ON schema database_1.schema_1 TO ROLE functional_role",
             "GRANT usage ON schema database_1.schema_2 TO ROLE functional_role",
             "GRANT usage ON schema database_1.schema_3 TO ROLE functional_role",
-            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service ON FUTURE schemas IN database database_1 TO ROLE functional_role",
-            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service ON schema database_1.schema_1 TO ROLE functional_role",
-            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service ON schema database_1.schema_2 TO ROLE functional_role",
-            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service ON schema database_1.schema_3 TO ROLE functional_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server ON FUTURE schemas IN database database_1 TO ROLE functional_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server ON schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server ON schema database_1.schema_2 TO ROLE functional_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server ON schema database_1.schema_3 TO ROLE functional_role",
         ]
         return [MockSnowflakeConnector, config, expected]
 
@@ -1899,7 +1899,7 @@ class TestGenerateSchemaGrants:
             "GRANT usage ON schema database_1.schema_1 TO ROLE functional_role",
             "GRANT usage ON schema database_1.schema_2 TO ROLE functional_role",
             "GRANT usage ON schema database_1.schema_3 TO ROLE functional_role",
-            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service ON schema database_1.schema_3 TO ROLE functional_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server ON schema database_1.schema_3 TO ROLE functional_role",
         ]
         return [MockSnowflakeConnector, config, expected]
 
@@ -1937,10 +1937,10 @@ class TestGenerateSchemaGrants:
             "GRANT usage ON schema database_1.schema_1 TO ROLE functional_role",
             "GRANT usage ON schema database_1.schema_2 TO ROLE functional_role",
             "GRANT usage ON schema database_1.schema_2 TO ROLE functional_role",
-            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service ON FUTURE schemas IN database database_1 TO ROLE functional_role",
-            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service ON FUTURE schemas IN database database_2 TO ROLE functional_role",
-            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service ON schema database_2.schema_3 TO ROLE functional_role",
-            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service ON schema database_2.schema_3 TO ROLE functional_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server ON FUTURE schemas IN database database_1 TO ROLE functional_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server ON FUTURE schemas IN database database_2 TO ROLE functional_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server ON schema database_2.schema_3 TO ROLE functional_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server ON schema database_2.schema_3 TO ROLE functional_role",
         ]
         return [MockSnowflakeConnector, config, expected]
 
@@ -1974,8 +1974,8 @@ class TestGenerateSchemaGrants:
         expected = [
             "GRANT usage ON schema database_1.prefix_schema_1 TO ROLE functional_role",
             "GRANT usage ON schema database_1.prefix_schema_2 TO ROLE functional_role",
-            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service ON schema database_1.prefix_schema_1 TO ROLE functional_role",
-            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service ON schema database_1.prefix_schema_2 TO ROLE functional_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server ON schema database_1.prefix_schema_1 TO ROLE functional_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server ON schema database_1.prefix_schema_2 TO ROLE functional_role",
         ]
         return [MockSnowflakeConnector, config, expected]
 
@@ -2009,8 +2009,8 @@ class TestGenerateSchemaGrants:
         expected = [
             "GRANT usage ON schema database_1.schema_1_suffix TO ROLE functional_role",
             "GRANT usage ON schema database_1.schema_2_suffix TO ROLE functional_role",
-            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service ON schema database_1.schema_1_suffix TO ROLE functional_role",
-            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service ON schema database_1.schema_2_suffix TO ROLE functional_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server ON schema database_1.schema_1_suffix TO ROLE functional_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server ON schema database_1.schema_2_suffix TO ROLE functional_role",
         ]
         return [MockSnowflakeConnector, config, expected]
 
@@ -2723,7 +2723,7 @@ class TestGenerateSchemaRevokes:
         }
 
         expected = [
-            "REVOKE monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service ON schema database_1.schema_1 FROM ROLE functional_role"
+            "REVOKE monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server ON schema database_1.schema_1 FROM ROLE functional_role"
         ]
 
         return [
@@ -2753,7 +2753,7 @@ class TestGenerateSchemaRevokes:
         }
 
         expected = [
-            "REVOKE monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service ON schema database_1.schema_1 FROM ROLE functional_role",
+            "REVOKE monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server ON schema database_1.schema_1 FROM ROLE functional_role",
             "REVOKE usage ON schema database_1.schema_1 FROM ROLE functional_role",
         ]
 
@@ -2845,8 +2845,8 @@ class TestGenerateSchemaRevokes:
         }
 
         expected = [
-            "REVOKE monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service ON schema database_1.schema_1 FROM ROLE functional_role",
-            "REVOKE monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service ON schema database_2.schema_2 FROM ROLE functional_role",
+            "REVOKE monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server ON schema database_1.schema_1 FROM ROLE functional_role",
+            "REVOKE monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server ON schema database_2.schema_2 FROM ROLE functional_role",
             "REVOKE usage ON schema database_1.schema_1 FROM ROLE functional_role",
         ]
 
