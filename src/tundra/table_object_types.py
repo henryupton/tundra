@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 
 @dataclass(frozen=True)
@@ -47,9 +47,7 @@ class TableObjectType:
     @property
     def write_partial_privileges(self) -> str:
         read = self.read_privileges.split(", ")
-        return ", ".join(
-            p for p in self.write_privileges.split(", ") if p not in read
-        )
+        return ", ".join(p for p in self.write_privileges.split(", ") if p not in read)
 
 
 FULL_WRITE_PRIVILEGES = "select, insert, update, delete, truncate, references"
@@ -113,3 +111,28 @@ TABLE_OBJECT_TYPES: List[TableObjectType] = [
     DYNAMIC_TABLE,
     STREAMLIT,
 ]
+
+# Tasks are not table-like, so they stay out of TABLE_OBJECT_TYPES: a `tables`
+# wildcard must not hand every reader MONITOR on a schema's tasks. They have their
+# own spec family, `privileges.tasks`, resolved through the same registry machinery.
+# Read is MONITOR (task history and state); write adds OPERATE (EXECUTE TASK,
+# suspend, resume). No schema `create task` privilege is derived: task ownership
+# stays with whichever role deliberately creates them.
+TASK = TableObjectType(
+    name="task",
+    connector_method="show_tasks",
+    show_command="TASKS",
+    read_privileges="monitor",
+    write_privileges="monitor, operate",
+    schema_create_privilege=None,
+)
+
+TASK_OBJECT_TYPES: List[TableObjectType] = [TASK]
+
+# Every `privileges` family that resolves through the registry, keyed by its spec key.
+PRIVILEGE_FAMILIES: Dict[str, List[TableObjectType]] = {
+    "tables": TABLE_OBJECT_TYPES,
+    "tasks": TASK_OBJECT_TYPES,
+}
+
+ALL_OBJECT_TYPES: List[TableObjectType] = TABLE_OBJECT_TYPES + TASK_OBJECT_TYPES

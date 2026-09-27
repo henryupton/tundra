@@ -10,6 +10,7 @@ from tundra.logger import GLOBAL_LOGGER as logger
 from tundra.snowflake_connector import DATABASE_ROLE_GRANT_TYPE, SnowflakeConnector
 from tundra.snowflake_grants import SnowflakeGrantsGenerator
 from tundra.spec_file_loader import load_spec
+from tundra.table_object_types import PRIVILEGE_FAMILIES
 
 VALIDATION_ERR_MSG = 'Spec error: {} "{}", field "{}": {}'
 
@@ -60,6 +61,7 @@ class SnowflakeSpecLoader:
             "databases": set(),
             "schemas": set(),
             "tables": set(),
+            "tasks": set(),
             "roles": set(),
             "database_roles": set(),
             "users": set(),
@@ -82,6 +84,7 @@ class SnowflakeSpecLoader:
         #  new ones and which already exist (and there is no need to re-grant them)
         self.grants_to_role: Dict[str, Any] = {}
         self.roles_granted_to_user: Dict[str, Any] = {}
+        self.account_grants_to_role: Dict[str, Dict[str, str]] = {}
 
         if not spec_test:
             click.secho("Fetching granted privileges from Snowflake", fg="green")
@@ -211,6 +214,32 @@ class SnowflakeSpecLoader:
             logger.debug("`tables` not found in spec, skipping SHOW TABLES/VIEWS call.")
         return error_messages
 
+    def check_task_ref_entities(self, conn):
+        error_messages = []
+        if len(self.entities["task_refs"]) > 0:
+            databases = list(self.entities["tasks_by_database"].keys())
+            existing_by_db = dict(
+                zip(
+                    databases,
+                    parallel_map(
+                        lambda d: conn.show_tasks(database=d),
+                        databases,
+                        self.max_workers,
+                    ),
+                )
+            )
+            for db, tasks in self.entities["tasks_by_database"].items():
+                for task in tasks:
+                    if "*" not in task and task not in existing_by_db[db]:
+                        self.missing_entities["tasks"].add(task)
+                        error_messages.append(
+                            f"Missing Entity Error: Task {task} was not found on"
+                            " Snowflake Server. Please create it before continuing."
+                        )
+        else:
+            logger.debug("`tasks` not found in spec, skipping SHOW TASKS call.")
+        return error_messages
+
     def check_role_entities(self, conn):
         error_messages = []
         if len(self.entities["roles"]) > 0:
@@ -299,6 +328,7 @@ class SnowflakeSpecLoader:
         error_messages.extend(self.check_database_entities(conn))
         error_messages.extend(self.check_schema_ref_entities(conn))
         error_messages.extend(self.check_table_ref_entities(conn))
+        error_messages.extend(self.check_task_ref_entities(conn))
         error_messages.extend(self.check_role_entities(conn))
         error_messages.extend(self.check_database_role_entities(conn))
         error_messages.extend(self.check_users_entities(conn))
@@ -394,6 +424,24 @@ class SnowflakeSpecLoader:
             )
         )
 
+        # Account-level privileges are only reconciled for roles that declare
+        # `account_privileges`, and need the grantor of each existing grant, which
+        # grants_to_role does not carry.
+        account_privilege_roles = self.entities.get("account_privilege_roles", set())
+        declaring_roles = [
+            role for role in role_list if role in account_privilege_roles
+        ]
+        self.account_grants_to_role = dict(
+            zip(
+                declaring_roles,
+                parallel_map(
+                    lambda r: conn.show_account_grants_to_role(r),
+                    declaring_roles,
+                    self.max_workers,
+                ),
+            )
+        )
+
         # --- Merge phase (serial, deterministic, original order) ---
         for db in databases:
             self._merge_role_keyed_grants(future_grants, db_future_by_db[db], roles)
@@ -472,7 +520,8 @@ class SnowflakeSpecLoader:
         # Integrations are also a simple case.
         elif grant_on == "integration":
             return [item for item in filter_set if item in integration_refs]
-        # Ignore account since currently account grants are not handled
+        # Account-level grants are reconciled from their own fetch (see
+        # show_account_grants_to_role), which also carries the grantor. Pass through.
         elif grant_on == "account":
             return filter_set
         # Database roles are db.role FQNs, but membership of them is managed the same
@@ -524,45 +573,17 @@ class SnowflakeSpecLoader:
                 if i not in self.missing_entities["integrations"]
             ]
 
-        # Filter privileges.databases
-        if (
-            "privileges" in filtered_config
-            and "databases" in filtered_config["privileges"]
-        ):
+        # Filter privileges.<family>: the missing_entities key matches the spec key
+        privileges = filtered_config.get("privileges", {})
+        for family in ["databases", "schemas", *PRIVILEGE_FAMILIES]:
+            if family not in privileges:
+                continue
             for access_type in ["read", "write"]:
-                if access_type in filtered_config["privileges"]["databases"]:
-                    filtered_config["privileges"]["databases"][access_type] = [
-                        db
-                        for db in filtered_config["privileges"]["databases"][
-                            access_type
-                        ]
-                        if db not in self.missing_entities["databases"]
-                    ]
-
-        # Filter privileges.schemas
-        if (
-            "privileges" in filtered_config
-            and "schemas" in filtered_config["privileges"]
-        ):
-            for access_type in ["read", "write"]:
-                if access_type in filtered_config["privileges"]["schemas"]:
-                    filtered_config["privileges"]["schemas"][access_type] = [
-                        s
-                        for s in filtered_config["privileges"]["schemas"][access_type]
-                        if s not in self.missing_entities["schemas"]
-                    ]
-
-        # Filter privileges.tables
-        if (
-            "privileges" in filtered_config
-            and "tables" in filtered_config["privileges"]
-        ):
-            for access_type in ["read", "write"]:
-                if access_type in filtered_config["privileges"]["tables"]:
-                    filtered_config["privileges"]["tables"][access_type] = [
-                        t
-                        for t in filtered_config["privileges"]["tables"][access_type]
-                        if t not in self.missing_entities["tables"]
+                if access_type in privileges[family]:
+                    privileges[family][access_type] = [
+                        ref
+                        for ref in privileges[family][access_type]
+                        if ref not in self.missing_entities[family]
                     ]
 
         return filtered_config
@@ -590,6 +611,7 @@ class SnowflakeSpecLoader:
             self.roles_granted_to_user,
             ignore_memberships=ignore_memberships,
             conn=self.conn,
+            account_grants_to_role=self.account_grants_to_role,
         )
 
         click.secho("Generating permission Queries:", fg="green")

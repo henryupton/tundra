@@ -16,17 +16,18 @@ from snowflake.sqlalchemy import URL
 
 from tundra.logger import GLOBAL_LOGGER as logger
 from tundra.table_object_types import (
+    ALL_OBJECT_TYPES,
     DYNAMIC_TABLE,
     ICEBERG_TABLE,
     STREAMLIT,
     TABLE,
-    TABLE_OBJECT_TYPES,
+    TASK,
     VIEW,
     TableObjectType,
 )
 
 FUTURE_PLACEHOLDER_PATTERN = "^<({})>$".format(
-    "|".join([t.grant_key for t in TABLE_OBJECT_TYPES] + ["schema"])
+    "|".join([t.grant_key for t in ALL_OBJECT_TYPES] + ["schema"])
 )
 
 # The key database role grants are stored under in grants_to_role. Snowflake reports
@@ -265,6 +266,11 @@ class SnowflakeConnector:
     ) -> List[str]:
         return self.show_table_objects(ICEBERG_TABLE, database=database, schema=schema)
 
+    def show_tasks(
+        self, database: Optional[str] = None, schema: Optional[str] = None
+    ) -> List[str]:
+        return self.show_table_objects(TASK, database=database, schema=schema)
+
     def show_users(self) -> List[str]:
         return self.show_query("USERS")
 
@@ -347,6 +353,23 @@ class SnowflakeConnector:
             grants.setdefault(privilege, {}).setdefault(granted_on, []).append(
                 SnowflakeConnector.snowflaky(clean_name)
             )
+
+        return grants
+
+    def show_account_grants_to_role(self, role) -> Dict[str, str]:
+        """
+        The account-level privileges held by <role>, mapped to the role that granted
+        each one. Snowflake's own privileges on its system-defined roles report an
+        empty grantor, which is how the generator knows never to revoke them.
+        """
+        grants: Dict[str, str] = {}
+
+        query = f"SHOW GRANTS TO ROLE {SnowflakeConnector.snowflaky_user_role(role)}"
+
+        for result in self.run_query(query).fetchall():
+            if result["granted_on"].lower() != "account":
+                continue
+            grants[result["privilege"].lower()] = (result["granted_by"] or "").lower()
 
         return grants
 
