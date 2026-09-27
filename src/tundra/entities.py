@@ -1,7 +1,12 @@
-from typing import Any, Dict, List, Set, Tuple, TypedDict
+from typing import Any, Dict, Iterable, List, Set, Tuple, TypedDict
 
+from tundra.account_privileges import (
+    ACCOUNTADMIN_ONLY_PRIVILEGES,
+    normalise_account_privilege,
+)
 from tundra.error import SpecLoadingError
 from tundra.logger import GLOBAL_LOGGER as logger
+from tundra.table_object_types import PRIVILEGE_FAMILIES
 from tundra.types import TundraSpecSchema
 
 
@@ -12,6 +17,9 @@ class EntitySchema(TypedDict):
     schema_refs: Set[str]
     table_refs: Set[str]
     tables_by_database: Dict
+    task_refs: Set[str]
+    tasks_by_database: Dict
+    account_privilege_roles: Set[str]
     roles: Set[str]
     role_refs: Set[str]
     database_role_refs: Set[str]
@@ -35,6 +43,9 @@ class EntityGenerator:
             "schema_refs": set(),
             "table_refs": set(),
             "tables_by_database": dict(),
+            "task_refs": set(),
+            "tasks_by_database": dict(),
+            "account_privilege_roles": set(),
             "roles": set(),
             "role_refs": set(),
             "database_role_refs": set(),
@@ -91,14 +102,19 @@ class EntityGenerator:
             return filtered_entities[0]
 
     def group_table_by_database(self):
-        tables_by_database = {}
-        for table in self.entities["table_refs"]:
-            db_name = table.split(".")[0]
-            if db_name not in tables_by_database.keys():
-                tables_by_database[db_name] = {table}
-            else:
-                tables_by_database[db_name].add(table)
-        self.entities["tables_by_database"] = tables_by_database
+        self.entities["tables_by_database"] = self._group_refs_by_database(
+            self.entities["table_refs"]
+        )
+        self.entities["tasks_by_database"] = self._group_refs_by_database(
+            self.entities["task_refs"]
+        )
+
+    @staticmethod
+    def _group_refs_by_database(refs: Iterable[str]) -> Dict[str, Set[str]]:
+        by_database: Dict[str, Set[str]] = {}
+        for ref in refs:
+            by_database.setdefault(ref.split(".")[0], set()).add(ref)
+        return by_database
 
     @staticmethod
     def group_spec_by_type(spec: TundraSpecSchema) -> List[Tuple[str, Any]]:
@@ -186,8 +202,8 @@ class EntityGenerator:
                 self.entities["database_refs"].add(name_parts[0])
 
     def generate_implicit_refs_from_tables(self):
-        """Adds implicit db/schema refs from tables"""
-        for table in self.entities["table_refs"]:
+        """Adds implicit db/schema refs from tables and tasks"""
+        for table in self.entities["table_refs"] | self.entities["task_refs"]:
             name_parts = table.split(".")
             if name_parts[0] != "*":
                 self.entities["database_refs"].add(name_parts[0])
@@ -238,19 +254,20 @@ class EntityGenerator:
                     " (Proper definition: DB.[SCHEMA | *])"
                 )
 
-        for table in entities["table_refs"]:
-            name_parts = table.split(".")
-            if (not len(name_parts) == 3) or (name_parts[0] == "*"):
-                error_messages.append(
-                    f"Name error: Not a valid table name: {table}"
-                    " (Proper definition: DB.[SCHEMA | *].[TABLE | *])"
-                )
-            elif name_parts[1] == "*" and name_parts[2] != "*":
-                error_messages.append(
-                    f"Name error: Not a valid table name: {table}"
-                    " (Can't have a Table name after selecting all schemas"
-                    " with *: DB.SCHEMA.[TABLE | *])"
-                )
+        for noun, refs_key in (("table", "table_refs"), ("task", "task_refs")):
+            for table in entities[refs_key]:  # type: ignore
+                name_parts = table.split(".")
+                if (not len(name_parts) == 3) or (name_parts[0] == "*"):
+                    error_messages.append(
+                        f"Name error: Not a valid {noun} name: {table}"
+                        f" (Proper definition: DB.[SCHEMA | *].[{noun.upper()} | *])"
+                    )
+                elif name_parts[1] == "*" and name_parts[2] != "*":
+                    error_messages.append(
+                        f"Name error: Not a valid {noun} name: {table}"
+                        f" (Can't have a {noun.capitalize()} name after selecting all"
+                        f" schemas with *: DB.SCHEMA.[{noun.upper()} | *])"
+                    )
 
         return error_messages
 
@@ -506,43 +523,72 @@ class EntityGenerator:
             )
 
     def generate_table_roles(self, config, role_name):
+        self.generate_object_family_roles(config, role_name, family="tables")
+
+    def generate_object_family_roles(self, config, role_name, family: str):
+        """
+        Collect the `db.schema.object` references of one registry-backed
+        `privileges` family (`tables`, `tasks`) and check each names a database
+        the role also holds database privileges on.
+        """
+        noun = family[:-1]
+        refs_key = f"{noun}_refs"
         read_databases, write_databases = self.generate_read_write_database_names(
             config
         )
 
-        try:
-            for table in config["privileges"]["tables"]["read"]:
-                self.entities["table_refs"].add(table)
-                table_db = table.split(".")[0]
-                if table_db not in read_databases:
-                    self.error_messages.append(
-                        f"Privilege Error: Database {table_db} referenced in "
-                        "table read privileges but not in database privileges "
-                        f"for role {role_name}"
+        for access, allowed_databases in (
+            ("read", read_databases),
+            ("write", write_databases + read_databases),
+        ):
+            try:
+                for ref in config["privileges"][family][access]:
+                    self.entities[refs_key].add(ref)  # type: ignore
+                    ref_db = ref.split(".")[0]
+                    if ref_db not in allowed_databases:
+                        self.error_messages.append(
+                            f"Privilege Error: Database {ref_db} referenced in "
+                            f"{noun} {access} privileges but not in database privileges "
+                            f"for role {role_name}"
+                        )
+            except KeyError:
+                logger.debug(
+                    "`privileges.{}.{}` not found for role {}, skipping {} Reference generation.".format(
+                        family, access, role_name, noun.capitalize()
                     )
-        except KeyError:
-            logger.debug(
-                "`privileges.tables.read` not found for role {}, skipping Table Reference generation.".format(
-                    role_name
                 )
-            )
 
+    def generate_account_privilege_roles(self, config, role_name):
+        """
+        Validate a role's `account_privileges`. Names are normalised the way SHOW
+        GRANTS keys them; the ACCOUNTADMIN-only privileges are rejected here, at
+        load time, rather than as a partially executed GRANT at apply time.
+        """
         try:
-            for table in config["privileges"]["tables"]["write"]:
-                self.entities["table_refs"].add(table)
-                table_db = table.split(".")[0]
-                if table_db not in write_databases + read_databases:
-                    self.error_messages.append(
-                        f"Privilege Error: Database {table_db} referenced in "
-                        "table write privileges but not in database privileges "
-                        f"for role {role_name}"
-                    )
+            account_privileges = config["account_privileges"]
         except KeyError:
             logger.debug(
-                "`privileges.tables.write` not found for role {}, skipping Table Reference generation.".format(
+                "`account_privileges` not found for role {}, skipping account privilege validation.".format(
                     role_name
                 )
             )
+            return
+
+        # Declaring the key, even as an empty list, opts the role into reconciliation.
+        self.entities["account_privilege_roles"].add(role_name)
+
+        for privilege in account_privileges:
+            normalised = normalise_account_privilege(privilege)
+            if not normalised:
+                self.error_messages.append(
+                    f"Spec Error: Empty account privilege for role {role_name}"
+                )
+            elif normalised in ACCOUNTADMIN_ONLY_PRIVILEGES:
+                self.error_messages.append(
+                    f"Spec Error: Account privilege {normalised} for role {role_name} "
+                    "can only be granted by ACCOUNTADMIN, and tundra runs as "
+                    "SECURITYADMIN. Grant it outside the spec."
+                )
 
     def generate_ownership_roles(self, config, role_name):
         try:
@@ -589,9 +635,11 @@ class EntityGenerator:
                 self.generate_warehouse_roles(config, role_name)
                 self.generate_integration_roles(config, role_name)
                 self.generate_external_volume_roles(config, role_name)
+                self.generate_account_privilege_roles(config, role_name)
                 self.generate_database_roles(config, role_name)
                 self.generate_schema_roles(config, role_name)
-                self.generate_table_roles(config, role_name)
+                for family in PRIVILEGE_FAMILIES:
+                    self.generate_object_family_roles(config, role_name, family)
                 self.generate_ownership_roles(config, role_name)
 
     def generate_user_fn(self, config, key, ref, user_name):

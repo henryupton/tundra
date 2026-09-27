@@ -1,9 +1,17 @@
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from tundra.account_privileges import (
+    ACCOUNTADMIN_ONLY_PRIVILEGES,
+    normalise_account_privilege,
+)
 from tundra.grant_coverage import GrantCoverage
 from tundra.logger import GLOBAL_LOGGER as logger
 from tundra.snowflake_connector import DATABASE_ROLE_GRANT_TYPE, SnowflakeConnector
-from tundra.table_object_types import TABLE_OBJECT_TYPES, TableObjectType
+from tundra.table_object_types import (
+    PRIVILEGE_FAMILIES,
+    TABLE_OBJECT_TYPES,
+    TableObjectType,
+)
 
 GRANT_ROLE_TEMPLATE = "GRANT ROLE {role_name} TO {type} {entity_name}"
 
@@ -22,6 +30,10 @@ GRANT_PRIVILEGES_TEMPLATE = (
 REVOKE_PRIVILEGES_TEMPLATE = (
     "REVOKE {privileges} ON {resource_type} {resource_name} FROM ROLE {role}"
 )
+
+GRANT_ACCOUNT_PRIVILEGE_TEMPLATE = "GRANT {privilege} ON ACCOUNT TO ROLE {role}"
+
+REVOKE_ACCOUNT_PRIVILEGE_TEMPLATE = "REVOKE {privilege} ON ACCOUNT FROM ROLE {role}"
 
 GRANT_ALL_PRIVILEGES_TEMPLATE = "GRANT {privileges} ON ALL {resource_type}s IN {grouping_type} {grouping_name} TO ROLE {role}"
 
@@ -59,6 +71,7 @@ class SnowflakeGrantsGenerator:
         roles_granted_to_user: Dict[str, List[str]],
         ignore_memberships: Optional[bool] = False,
         conn: Optional[SnowflakeConnector] = None,
+        account_grants_to_role: Optional[Dict[str, Dict[str, str]]] = None,
     ) -> None:
         """
         Initializes a grants generator, used to generate SQL for generating grants
@@ -74,11 +87,16 @@ class SnowflakeGrantsGenerator:
 
         conn: optional SnowflakeConnector instance. If not provided, creates a new one.
 
+        account_grants_to_role: a dict, mapping role to its account-level privileges
+            and the role that granted each, for roles declaring `account_privileges`.
+            e.g. {'transformer': {'apply tag': 'securityadmin', 'create share': 'accountadmin'}}
+
         """
         self.grants_to_role = grants_to_role
         self.roles_granted_to_user = roles_granted_to_user
         self.ignore_memberships = ignore_memberships
         self.conn = conn or SnowflakeConnector()
+        self.account_grants_to_role = account_grants_to_role or {}
 
     def is_granted_privilege(
         self, role: str, privilege: str, entity_type: str, entity_name: str
@@ -144,24 +162,30 @@ class SnowflakeGrantsGenerator:
         if isinstance(config.get("member_of", []), dict):
             member_include_list = config.get("member_of", {}).get("include", [])
             member_include_list = [
-                SnowflakeConnector.snowflaky_database_role(role)
-                if "." in role
-                else SnowflakeConnector.snowflaky_user_role(role)
+                (
+                    SnowflakeConnector.snowflaky_database_role(role)
+                    if "." in role
+                    else SnowflakeConnector.snowflaky_user_role(role)
+                )
                 for role in member_include_list
             ]
             member_exclude_list = config.get("member_of", {}).get("exclude", [])
             member_exclude_list = [
-                SnowflakeConnector.snowflaky_database_role(role)
-                if "." in role
-                else SnowflakeConnector.snowflaky_user_role(role)
+                (
+                    SnowflakeConnector.snowflaky_database_role(role)
+                    if "." in role
+                    else SnowflakeConnector.snowflaky_user_role(role)
+                )
                 for role in member_exclude_list
             ]
         elif isinstance(config.get("member_of", []), list):
             member_include_list = config.get("member_of", [])
             member_include_list = [
-                SnowflakeConnector.snowflaky_database_role(role)
-                if "." in role
-                else SnowflakeConnector.snowflaky_user_role(role)
+                (
+                    SnowflakeConnector.snowflaky_database_role(role)
+                    if "." in role
+                    else SnowflakeConnector.snowflaky_user_role(role)
+                )
                 for role in member_include_list
             ]
 
@@ -445,29 +469,40 @@ class SnowflakeGrantsGenerator:
         return schema_commands
 
     def _generate_table_commands(self, role, config, shared_dbs, spec_dbs):
-        tables = {
-            "read": config.get("privileges", {}).get("tables", {}).get("read", []),
-            "write": config.get("privileges", {}).get("tables", {}).get("write", []),
+        return self._generate_object_family_commands(
+            role, config, shared_dbs, spec_dbs, family="tables"
+        )
+
+    def _generate_object_family_commands(
+        self, role, config, shared_dbs, spec_dbs, family: str
+    ):
+        """
+        Grants and revokes for one registry-backed `privileges` family (`tables`,
+        `tasks`). Every family is fully managed within the spec's databases, so
+        this runs even when the role declares nothing for it: that is what revokes
+        privileges the spec no longer lists.
+        """
+        family_config = config.get("privileges", {}).get(family, {})
+        objects = {
+            "read": family_config.get("read", []),
+            "write": family_config.get("write", []),
         }
 
-        if len(tables.get("read", "")) == 0:
-            logger.debug(
-                "`privileges.tables.read` not found for role {}, skipping generation of tables read level GRANT statements.".format(
-                    role
+        for access in ("read", "write"):
+            if len(objects[access]) == 0:
+                logger.debug(
+                    "`privileges.{}.{}` not found for role {}, skipping generation of {} {} level GRANT statements.".format(
+                        family, access, role, family, access
+                    )
                 )
-            )
 
-        if len(tables.get("write", "")) == 0:
-            logger.debug(
-                "`privileges.tables.write` not found for role {}, skipping generation of tables write level GRANT statements.".format(
-                    role
-                )
-            )
-
-        table_commands = self.generate_table_and_view_grants(
-            role=role, tables=tables, shared_dbs=shared_dbs, spec_dbs=spec_dbs
+        return self.generate_table_and_view_grants(
+            role=role,
+            tables=objects,
+            shared_dbs=shared_dbs,
+            spec_dbs=spec_dbs,
+            object_types=PRIVILEGE_FAMILIES[family],
         )
-        return table_commands
 
     def generate_grant_privileges_to_role(
         self, role: str, config: Dict[str, Any], shared_dbs: Set, spec_dbs: Set
@@ -531,6 +566,19 @@ class SnowflakeGrantsGenerator:
                 )
             )
 
+        try:
+            account_privileges = config["account_privileges"]
+            new_commands = self.generate_account_privilege_grants(
+                role=role, account_privileges=account_privileges
+            )
+            sql_commands.extend(new_commands)
+        except KeyError:
+            logger.debug(
+                "`account_privileges` not found for role {}, skipping generation of account-level GRANT statements.".format(
+                    role
+                )
+            )
+
         database_commands = self._generate_database_commands(
             role, config, shared_dbs, spec_dbs
         )
@@ -541,10 +589,12 @@ class SnowflakeGrantsGenerator:
         )
         sql_commands.extend(schema_commands)
 
-        table_commands = self._generate_table_commands(
-            role, config, shared_dbs, spec_dbs
-        )
-        sql_commands.extend(table_commands)
+        for family in PRIVILEGE_FAMILIES:
+            sql_commands.extend(
+                self._generate_object_family_commands(
+                    role, config, shared_dbs, spec_dbs, family=family
+                )
+            )
 
         return sql_commands
 
@@ -697,6 +747,69 @@ class SnowflakeGrantsGenerator:
                         ),
                     }
                 )
+
+        return sql_commands
+
+    def generate_account_privilege_grants(
+        self, role: str, account_privileges: List[str]
+    ) -> List[Dict[str, Any]]:
+        """
+        Generate the GRANT and REVOKE statements for a role's account-level
+        (global) privileges: EXECUTE TASK, APPLY TAG, MANAGE GRANTS and so on.
+
+        Declaring the key makes the list authoritative: anything else the role
+        holds on the account is revoked, with two exceptions. Privileges Snowflake
+        itself granted to a system-defined role report no grantor and cannot be
+        revoked, and the ACCOUNTADMIN-only privileges are outside what SECURITYADMIN
+        can touch in either direction, so both are left alone.
+
+        role: the name of the role the privileges are GRANTed to
+        account_privileges: the privileges the spec wants the role to hold
+
+        Returns the SQL commands generated
+        """
+        sql_commands: List[Dict] = []
+        granted = self.account_grants_to_role.get(role, {})
+        wanted = [normalise_account_privilege(p) for p in account_privileges]
+
+        for privilege in wanted:
+            sql_commands.append(
+                {
+                    "already_granted": privilege in granted,
+                    "sql": GRANT_ACCOUNT_PRIVILEGE_TEMPLATE.format(
+                        privilege=privilege,
+                        role=SnowflakeConnector.snowflaky_user_role(role),
+                    ),
+                }
+            )
+
+        for privilege, granted_by in granted.items():
+            if privilege in wanted:
+                continue
+            if not granted_by:
+                logger.debug(
+                    "{} on account is a system-defined privilege of {}, not revoking.".format(
+                        privilege, role
+                    )
+                )
+                continue
+            if privilege in ACCOUNTADMIN_ONLY_PRIVILEGES:
+                logger.debug(
+                    "{} on account can only be revoked from {} by ACCOUNTADMIN, not revoking.".format(
+                        privilege, role
+                    )
+                )
+                continue
+
+            sql_commands.append(
+                {
+                    "already_granted": False,
+                    "sql": REVOKE_ACCOUNT_PRIVILEGE_TEMPLATE.format(
+                        privilege=privilege,
+                        role=SnowflakeConnector.snowflaky_user_role(role),
+                    ),
+                }
+            )
 
         return sql_commands
 
@@ -1231,10 +1344,12 @@ class SnowflakeGrantsGenerator:
         else:
             coverage.add_objects(self._list_objects(conn, object_type, fetched_schemas))
 
-    def _generate_table_read_grants(self, conn, tables, shared_dbs, role):
+    def _generate_table_read_grants(
+        self, conn, tables, shared_dbs, role, object_types: List[TableObjectType]
+    ):
         sql_commands: List[Dict] = []
         grant_lists: Dict[str, GrantCoverage] = {
-            t.grant_key: GrantCoverage() for t in TABLE_OBJECT_TYPES
+            t.grant_key: GrantCoverage() for t in object_types
         }
 
         for table in tables:
@@ -1252,7 +1367,7 @@ class SnowflakeGrantsGenerator:
 
             fetched_schemas = conn.full_schema_list(f"{database_name}.{schema_name}")
 
-            for object_type in TABLE_OBJECT_TYPES:
+            for object_type in object_types:
                 privileges = object_type.read_privileges
 
                 # For grants at the database level
@@ -1360,10 +1475,12 @@ class SnowflakeGrantsGenerator:
 
         return sql_commands, grant_lists
 
-    def _generate_table_write_grants(self, conn, tables, shared_dbs, role):
+    def _generate_table_write_grants(
+        self, conn, tables, shared_dbs, role, object_types: List[TableObjectType]
+    ):
         sql_commands: List[Dict] = []
         grant_lists: Dict[str, GrantCoverage] = {
-            t.grant_key: GrantCoverage() for t in TABLE_OBJECT_TYPES
+            t.grant_key: GrantCoverage() for t in object_types
         }
 
         for table in tables:
@@ -1379,7 +1496,7 @@ class SnowflakeGrantsGenerator:
 
             fetched_schemas = conn.full_schema_list(f"{database_name}.{schema_name}")
 
-            for object_type in TABLE_OBJECT_TYPES:
+            for object_type in object_types:
                 privileges = object_type.write_privileges
                 privileges_array = privileges.split(", ")
 
@@ -1573,10 +1690,16 @@ class SnowflakeGrantsGenerator:
         spec_dbs: Set[Any],
         all_grants_by_type: Dict[str, GrantCoverage],
         write_grants_by_type: Dict[str, GrantCoverage],
+        object_types: Optional[List[TableObjectType]] = None,
     ) -> List[Dict[str, Any]]:
         sql_commands = []
 
-        for object_type in TABLE_OBJECT_TYPES:
+        # Resolved at call time rather than in the signature so the module-level
+        # registry stays the single source of truth for the table-like default.
+        if object_types is None:
+            object_types = TABLE_OBJECT_TYPES
+
+        for object_type in object_types:
             granted_resources = list(
                 set(
                     self.grants_to_role.get(role, {})
@@ -1598,7 +1721,7 @@ class SnowflakeGrantsGenerator:
 
         # Write privileges only need revoking for writable types:
         # select-only types (views, dynamic tables) are fully covered above
-        for object_type in TABLE_OBJECT_TYPES:
+        for object_type in object_types:
             if not object_type.is_writable:
                 continue
 
@@ -1626,32 +1749,43 @@ class SnowflakeGrantsGenerator:
         return sql_commands
 
     def generate_table_and_view_grants(
-        self, role: str, tables: Dict[str, List], shared_dbs: Set, spec_dbs: Set
+        self,
+        role: str,
+        tables: Dict[str, List],
+        shared_dbs: Set,
+        spec_dbs: Set,
+        object_types: Optional[List[TableObjectType]] = None,
     ) -> List[Dict]:
         """
-        Generate the GRANT and REVOKE statements for all table-like object
-        types in the registry (tables, views, iceberg/dynamic tables),
-        including future grants.
+        Generate the GRANT and REVOKE statements for the registry object types in
+        `object_types` (by default every table-like type: tables, views,
+        iceberg/dynamic tables, streamlits), including future grants. The `tasks`
+        family reuses this with its own registry slice.
 
         role: the name of the role the privileges are GRANTed to
         tables: read/write lists of object names (e.g. "raw.public.my_table")
         shared_dbs: a set of all the shared databases defined in the spec.
         spec_dbs: a set of all the databases defined in the spec. This is used in revoke
                   commands to validate revocations are only for spec'd databases
+        object_types: the registry slice to grant and revoke for; None means the
+                      table-like types
 
         Returns the SQL commands generated as a List
         """
         sql_commands = []
 
+        if object_types is None:
+            object_types = TABLE_OBJECT_TYPES
+
         conn = SnowflakeConnector()
 
         read_commands, read_grants_by_type = self._generate_table_read_grants(
-            conn, tables.get("read", []), shared_dbs, role
+            conn, tables.get("read", []), shared_dbs, role, object_types
         )
         sql_commands.extend(read_commands)
 
         write_commands, write_grants_by_type = self._generate_table_write_grants(
-            conn, tables.get("write", []), shared_dbs, role
+            conn, tables.get("write", []), shared_dbs, role, object_types
         )
         sql_commands.extend(write_commands)
 
@@ -1659,7 +1793,7 @@ class SnowflakeGrantsGenerator:
             t.grant_key: read_grants_by_type[t.grant_key].merge(
                 write_grants_by_type[t.grant_key]
             )
-            for t in TABLE_OBJECT_TYPES
+            for t in object_types
         }
 
         sql_commands.extend(
@@ -1669,6 +1803,7 @@ class SnowflakeGrantsGenerator:
                 spec_dbs,
                 all_grants_by_type,
                 write_grants_by_type,
+                object_types,
             )
         )
         return sql_commands

@@ -36,6 +36,11 @@ Tundra extends the original tundra functionality with comprehensive support for 
 - 🔄 **Auto-revocation**: Automatically revokes unused external volume access
 - 🛡️ **Security**: Manages fine-grained access to external storage locations
 
+### 🔐 Account Privileges & Tasks
+- 🌐 **Account privileges**: A role's `account_privileges` list declares its global grants (`EXECUTE TASK`, `APPLY TAG`, `MANAGE GRANTS`, ...) and revokes the rest
+- ⏱️ **Tasks**: `privileges.tasks` grants `MONITOR` (read) or `MONITOR, OPERATE` (write) on tasks, with the same wildcards and future grants as `tables`
+- 🛡️ **Guard rails**: Snowflake's own privileges on its system roles and the ACCOUNTADMIN-only share privileges are never revoked, and the latter are rejected at spec load
+
 Example configuration:
 ```yaml
 # Define external volumes for Iceberg tables
@@ -168,6 +173,8 @@ Please find below the links between Tundra permissions and Snowflake grants.
 |           | write                  | monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe |
 | Table     | read                   | select                                                                                                              |
 |           | write                  | insert, update, delete, truncate, references                                                                        |
+| Task      | read                   | monitor                                                                                                             |
+|           | write                  | monitor, operate                                                                                                    |
 
 
 Tables, views, Iceberg tables, dynamic tables, and Streamlit apps are all listed under `tables` and handled
@@ -175,6 +182,13 @@ properly behind the scenes. Streamlit apps expose only `USAGE`: read and write b
 `create streamlit` schema privilege is granted with schema write access. Because Streamlit apps ride the
 `tables` read list, a `database.schema.*` read wildcard also grants `USAGE` on all and future Streamlit apps
 in that schema. New table-like object types are defined in `src/tundra/table_object_types.py`.
+
+Tasks are listed under their own `tasks` family rather than `tables`, so a `tables` wildcard never hands a
+reader `MONITOR` on a schema's tasks. The `tasks` patterns take the same shapes as `tables` (`db.*.*`,
+`db.schema.*`, `db.schema.task_name`) and are granted with the same `ON ALL` plus `ON FUTURE` pair. Task
+privileges are fully managed within the spec's databases: `MONITOR` or `OPERATE` held on a task the spec does
+not cover is revoked. `EXECUTE TASK` itself is an account privilege, granted to the task's owning role via
+`account_privileges` (see below).
 
 If `*` is provided as the parameter for tables the grant statement will use the
 `ALL <object_type>s in SCHEMA` syntax. It will also grant to future tables and
@@ -226,6 +240,37 @@ cannot contain one. Database roles can only be granted to other roles, so they
 are not valid in a user's `member_of`. Both cases are rejected when the spec is
 loaded.
 
+### Account privileges
+
+Global privileges (`GRANT ... ON ACCOUNT`) have no object to abstract over, so a
+role lists them by name:
+
+```yaml
+roles:
+    - sysadmin:
+        account_privileges:
+            - execute task
+            - execute managed task
+    - transformer:
+        account_privileges:
+            - apply tag
+            - manage grants
+```
+
+Declaring the key makes the list authoritative, in the same way `warehouses` is:
+a role without the key has its account privileges left alone, while a role with
+it has anything else it holds on the account revoked. Two kinds of grant are
+never revoked. Snowflake's own privileges on its system-defined roles (`CREATE
+DATABASE` on `SYSADMIN`, say) report no grantor in `SHOW GRANTS` and cannot be
+revoked, so they are skipped. And the ACCOUNTADMIN-only privileges (`CREATE
+SHARE`, `IMPORT SHARE`, `MANAGE SHARE TARGET`) sit outside what `SECURITYADMIN`
+can grant or revoke, so they are skipped on the revoke side and rejected at spec
+load if listed: grant those outside Tundra.
+
+Privilege names are case-insensitive and stored the way `SHOW GRANTS` reports
+them. A misspelt privilege fails as a Snowflake error at apply time, the same as
+any other bad grant.
+
 Objects like warehouses and integrations that only have one tundra permission type just
 needs to be specified in the role (see below).
 
@@ -253,6 +298,11 @@ roles:
         warehouses:
             - warehouse_name
             - warehouse_name
+            ...
+
+        account_privileges:
+            - execute task
+            - apply tag
             ...
 
         member_of:
@@ -306,6 +356,17 @@ roles:
                     - database_name.schema_partial_*.*
                     - database_name.*_schema_partial.*
                     - database_name.schema_name.table_name
+                    ...
+            tasks:
+                read:
+                    - database_name.*.*
+                    - database_name.schema_name.*
+                    - database_name.schema_name.task_name
+                    ...
+                write:
+                    - database_name.*.*
+                    - database_name.schema_name.*
+                    - database_name.schema_name.task_name
                     ...
 
         owns:
