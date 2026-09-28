@@ -1893,6 +1893,22 @@ class TestUserParameters:
         assert "Mars/Olympus_Mons" in str(context.value)
         assert "IANA" in str(context.value)
 
+    def test_missing_tz_database_fails_spec_load(self, mocker, mock_connector):
+        """No IANA database means no validation is possible; fail loudly rather than accept anything."""
+        spec_file_data = (
+            SnowflakeSchemaBuilder()
+            .add_user(parameters={"timezone": "Pacific/Auckland"})
+            .build()
+        )
+        mocker.patch("builtins.open", mocker.mock_open(read_data=spec_file_data))
+        mocker.patch.object(mock_connector, "show_users", return_value=["testusername"])
+        mocker.patch("tundra.spec_file_loader.iana_timezones", return_value=set())
+
+        with pytest.raises(SpecLoadingError) as context:
+            SnowflakeSpecLoader("", mock_connector)
+
+        assert "tzdata" in str(context.value)
+
     def test_valid_parameters_load(self, mocker, mock_connector):
         """A spec with allow-listed parameters and a real IANA zone loads cleanly."""
         spec_file_data = (

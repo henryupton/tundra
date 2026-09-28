@@ -36,7 +36,13 @@ class SpecValidator(cerberus.Validator):
     def _check_with_iana_timezone(self, field: str, value: str) -> None:
         # Snowflake only accepts IANA zone names, so fail the spec load rather than the ALTER USER.
         zones = iana_timezones()
-        if zones and value not in zones:
+        if not zones:
+            self._error(
+                field,
+                f"cannot validate '{value}': no IANA time zone database is available "
+                "(install the tzdata package)",
+            )
+        elif value not in zones:
             self._error(field, f"'{value}' is not an IANA time zone name")
 
 

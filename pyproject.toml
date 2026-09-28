@@ -28,6 +28,7 @@ dependencies = [
     "snowflake-connector-python[secure-local-storage]",
     "snowflake-sqlalchemy",
     "sqlalchemy",
+    "tzdata",
 ]
 
 [project.optional-dependencies]
