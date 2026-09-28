@@ -354,12 +354,25 @@ users:
             - string
             ...
         type: string
+        parameters:
+            timezone: string   # IANA zone name, validated at spec load
+            week_start: integer
+            ...                # any allow-listed session parameter, see below
         meta:
             some_key: some_value
             ...
     - user_name:
         owner: role_name
     ... ... ...
+
+# User `parameters` set the user-level default for a Snowflake session parameter
+# (`ALTER USER ... SET TIMEZONE = 'Pacific/Auckland'`). Keys are allow-listed:
+# timezone, week_start, week_of_year_policy, date_output_format, time_output_format,
+# timestamp_output_format, timestamp_ltz_output_format, timestamp_ntz_output_format,
+# timestamp_tz_output_format, timestamp_type_mapping, query_tag,
+# statement_timeout_in_seconds, statement_queued_timeout_in_seconds, client_session_keep_alive.
+# A parameter is set only while it is declared; removing it from the spec leaves the value
+# in place (ALTER USER ... UNSET <parameter> by hand to fall back to the account default).
 
 # Warehouses
 # Warehouse sizes are informative and not altered by Tundra to align with the spec file

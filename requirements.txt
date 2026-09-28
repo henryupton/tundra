@@ -69,6 +69,7 @@ snowflake-sqlalchemy==1.5.1
 SQLAlchemy==1.4.50
 toml==0.10.2
 tomli==1.2.1
+tzdata==2025.2
 types-PyYAML==5.4.8
 types-click==7.1.7
 typing_extensions==4.5.0

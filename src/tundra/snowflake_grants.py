@@ -1673,6 +1673,16 @@ class SnowflakeGrantsGenerator:
         )
         return sql_commands
 
+    @staticmethod
+    def _sql_parameter_literal(value: Any) -> str:
+        """Render a session parameter value as a SQL literal: booleans and numbers bare, strings quoted."""
+        if isinstance(value, bool):
+            return "TRUE" if value else "FALSE"
+        if isinstance(value, (int, float)):
+            return str(value)
+        escaped = str(value).replace("'", "''")
+        return f"'{escaped}'"
+
     def generate_alter_user(self, user: str, config: Dict[str, Any]) -> List[Dict]:
         """
         Generate the ALTER statements for USERs.
@@ -1750,6 +1760,12 @@ class SnowflakeGrantsGenerator:
         roles_list = ", ".join(quoted_roles)
         alter_privileges.append(f"DEFAULT_SECONDARY_ROLES = ({roles_list})")
 
+        # Session parameters (TIMEZONE, WEEK_START, ...). The spec schema allow-lists the
+        # keys and types, so formatting only has to follow the Python type.
+        for parameter, value in config.get("parameters", {}).items():
+            alter_privileges.append(
+                f"{parameter.upper()} = {self._sql_parameter_literal(value)}"
+            )
         if alter_privileges:
             sql_commands.append(
                 {
