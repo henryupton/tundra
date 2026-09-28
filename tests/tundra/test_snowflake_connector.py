@@ -6,6 +6,7 @@ from tundra.snowflake_connector import SnowflakeConnector
 from tundra.table_object_types import (
     DYNAMIC_TABLE,
     ICEBERG_TABLE,
+    SEMANTIC_VIEW,
     STREAMLIT,
     TABLE,
     VIEW,
@@ -666,6 +667,10 @@ class TestSnowflakyFuturePlaceholders:
             SnowflakeConnector.snowflaky("db_1.schema_1.<STREAMLIT>")
             == "db_1.schema_1.<streamlit>"
         )
+        assert (
+            SnowflakeConnector.snowflaky("db_1.schema_1.<SEMANTIC_VIEW>")
+            == "db_1.schema_1.<semantic_view>"
+        )
         assert SnowflakeConnector.snowflaky("db_1.<TABLE>") == "db_1.<table>"
         assert SnowflakeConnector.snowflaky("db_1.<VIEW>") == "db_1.<view>"
         assert SnowflakeConnector.snowflaky("db_1.<SCHEMA>") == "db_1.<schema>"
@@ -696,6 +701,9 @@ class TestShowTableObjects:
 
         conn.show_table_objects(STREAMLIT, schema="db_1.schema_1")
         run_query.assert_called_with("SHOW STREAMLITS IN SCHEMA db_1.schema_1")
+
+        conn.show_table_objects(SEMANTIC_VIEW, schema="db_1.schema_1")
+        run_query.assert_called_with("SHOW SEMANTIC VIEWS IN SCHEMA db_1.schema_1")
 
         conn.show_table_objects(ICEBERG_TABLE, database="db_1")
         run_query.assert_called_with("SHOW ICEBERG TABLES IN DATABASE db_1")
@@ -733,3 +741,5 @@ class TestShowTableObjects:
         generic.assert_called_with(ICEBERG_TABLE, database="db", schema=None)
         conn.show_streamlits(database="db")
         generic.assert_called_with(STREAMLIT, database="db", schema=None)
+        conn.show_semantic_views(database="db")
+        generic.assert_called_with(SEMANTIC_VIEW, database="db", schema=None)

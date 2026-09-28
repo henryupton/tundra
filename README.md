@@ -165,16 +165,19 @@ Please find below the links between Tundra permissions and Snowflake grants.
 | Databases | read                   | usage                                                                                                               |
 |           | write                  | monitor, create schema                                                                                              |
 | Schemas   | read                   | usage                                                                                                               |
-|           | write                  | monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe |
+|           | write                  | monitor, create table, create view, create iceberg table, create streamlit, create semantic view, create stage, create file format, create sequence, create function, create pipe |
 | Table     | read                   | select                                                                                                              |
 |           | write                  | insert, update, delete, truncate, references                                                                        |
 
 
-Tables, views, Iceberg tables, dynamic tables, and Streamlit apps are all listed under `tables` and handled
-properly behind the scenes. Streamlit apps expose only `USAGE`: read and write both grant `usage`, and a
-`create streamlit` schema privilege is granted with schema write access. Because Streamlit apps ride the
-`tables` read list, a `database.schema.*` read wildcard also grants `USAGE` on all and future Streamlit apps
-in that schema. New table-like object types are defined in `src/tundra/table_object_types.py`.
+Tables, views, Iceberg tables, dynamic tables, Streamlit apps, and semantic views are all listed under
+`tables` and handled properly behind the scenes. Streamlit apps expose only `USAGE`: read and write both grant
+`usage`, and a `create streamlit` schema privilege is granted with schema write access. Because Streamlit apps
+ride the `tables` read list, a `database.schema.*` read wildcard also grants `USAGE` on all and future Streamlit
+apps in that schema. Semantic views behave like views: read and write both grant `select`, `create semantic view`
+comes with schema write access, and a read wildcard grants `select` on all and future semantic views. Snowflake's
+`ON ALL|FUTURE VIEWS` does not cover semantic views, so without this entry they would go ungranted. New
+table-like object types are defined in `src/tundra/table_object_types.py`.
 
 If `*` is provided as the parameter for tables the grant statement will use the
 `ALL <object_type>s in SCHEMA` syntax. It will also grant to future tables and

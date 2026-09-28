@@ -53,6 +53,11 @@ class MockSnowflakeConnector(SnowflakeConnector):
     ) -> List[str]:
         return []
 
+    def show_semantic_views(
+        self, database: Optional[str] = None, schema: Optional[str] = None
+    ) -> List[str]:
+        return []
+
     def show_future_grants(
         self, database: Optional[str] = None, schema: Optional[str] = None
     ) -> List[str]:
