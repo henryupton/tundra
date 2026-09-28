@@ -192,6 +192,39 @@ SNOWFLAKE_SPEC_USER_SCHEMA = """
         required: False
         schema:
             type: string
+    parameters:
+        type: dict
+        required: False
+        schema:
+            timezone:
+                type: string
+                check_with: iana_timezone
+            week_start:
+                type: integer
+            week_of_year_policy:
+                type: integer
+            date_output_format:
+                type: string
+            time_output_format:
+                type: string
+            timestamp_output_format:
+                type: string
+            timestamp_ltz_output_format:
+                type: string
+            timestamp_ntz_output_format:
+                type: string
+            timestamp_tz_output_format:
+                type: string
+            timestamp_type_mapping:
+                type: string
+            query_tag:
+                type: string
+            statement_timeout_in_seconds:
+                type: integer
+            statement_queued_timeout_in_seconds:
+                type: integer
+            client_session_keep_alive:
+                type: boolean
     type:
         type: string
         required: False

@@ -1,4 +1,4 @@
-from typing import Dict, List, TypedDict, Union
+from typing import Any, Dict, List, TypedDict, Union
 
 
 class DatabaseSchemaBase(TypedDict):
@@ -64,6 +64,7 @@ class UserSchema(UserSchemaBase, total=False):
     default_role: str
     default_secondary_roles: List[str]
     type: str
+    parameters: Dict[str, Any]
 
 
 # size is optional: adaptive warehouses (Snowflake-managed sizing) have none.

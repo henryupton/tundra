@@ -1860,3 +1860,47 @@ class TestParallelRoleFetch:
 
         assert any("db2.s.t_missing" in e for e in errors)
         assert "db2.s.t_missing" in loader.missing_entities["tables"]
+
+
+class TestUserParameters:
+    def test_unknown_parameter_fails_spec_load(self, mocker, mock_connector):
+        """Only allow-listed session parameters may appear under a user's `parameters`."""
+        spec_file_data = (
+            SnowflakeSchemaBuilder().add_user(parameters={"not_a_parameter": 1}).build()
+        )
+        mocker.patch("builtins.open", mocker.mock_open(read_data=spec_file_data))
+        mocker.patch.object(mock_connector, "show_users", return_value=["testusername"])
+
+        with pytest.raises(SpecLoadingError) as context:
+            SnowflakeSpecLoader("", mock_connector)
+
+        assert 'users "testusername", field "parameters"' in str(context.value)
+        assert "not_a_parameter" in str(context.value)
+
+    def test_unknown_timezone_fails_spec_load(self, mocker, mock_connector):
+        """A `timezone` that is not an IANA zone name is rejected before Snowflake sees it."""
+        spec_file_data = (
+            SnowflakeSchemaBuilder()
+            .add_user(parameters={"timezone": "Mars/Olympus_Mons"})
+            .build()
+        )
+        mocker.patch("builtins.open", mocker.mock_open(read_data=spec_file_data))
+        mocker.patch.object(mock_connector, "show_users", return_value=["testusername"])
+
+        with pytest.raises(SpecLoadingError) as context:
+            SnowflakeSpecLoader("", mock_connector)
+
+        assert "Mars/Olympus_Mons" in str(context.value)
+        assert "IANA" in str(context.value)
+
+    def test_valid_parameters_load(self, mocker, mock_connector):
+        """A spec with allow-listed parameters and a real IANA zone loads cleanly."""
+        spec_file_data = (
+            SnowflakeSchemaBuilder()
+            .add_user(parameters={"timezone": "Pacific/Auckland", "week_start": 1})
+            .build()
+        )
+        mocker.patch("builtins.open", mocker.mock_open(read_data=spec_file_data))
+        mocker.patch.object(mock_connector, "show_users", return_value=["testusername"])
+
+        SnowflakeSpecLoader("", mock_connector)

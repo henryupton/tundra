@@ -1,5 +1,6 @@
 import os
-from typing import Any, Dict, List
+from functools import lru_cache
+from typing import Any, Dict, List, Set
 
 import cerberus
 import yaml
@@ -17,6 +18,26 @@ from tundra.spec_schemas.snowflake import (
 from tundra.types import TundraSpecSchema
 
 VALIDATION_ERR_MSG = 'Spec error: {} "{}", field "{}": {}'
+
+
+@lru_cache(maxsize=None)
+def iana_timezones() -> Set[str]:
+    """IANA zone names known to this interpreter; empty when zoneinfo or tzdata is unavailable."""
+    try:
+        from zoneinfo import available_timezones
+    except ImportError:  # Python 3.8
+        return set()
+    return available_timezones()
+
+
+class SpecValidator(cerberus.Validator):
+    """cerberus Validator plus the custom `check_with` rules the spec schemas name."""
+
+    def _check_with_iana_timezone(self, field: str, value: str) -> None:
+        # Snowflake only accepts IANA zone names, so fail the spec load rather than the ALTER USER.
+        zones = iana_timezones()
+        if zones and value not in zones:
+            self._error(field, f"'{value}' is not an IANA time zone name")
 
 
 def construct_include(loader, node) -> Any:
@@ -65,12 +86,12 @@ def ensure_valid_schema(spec: Dict) -> List[str]:
     }
 
     validators = {
-        "databases": cerberus.Validator(schema["databases"]),
-        "roles": cerberus.Validator(schema["roles"]),
-        "users": cerberus.Validator(schema["users"]),
-        "warehouses": cerberus.Validator(schema["warehouses"]),
-        "integrations": cerberus.Validator(schema["integrations"]),
-        "external_volumes": cerberus.Validator(schema["external_volumes"]),
+        "databases": SpecValidator(schema["databases"]),
+        "roles": SpecValidator(schema["roles"]),
+        "users": SpecValidator(schema["users"]),
+        "warehouses": SpecValidator(schema["warehouses"]),
+        "integrations": SpecValidator(schema["integrations"]),
+        "external_volumes": SpecValidator(schema["external_volumes"]),
     }
 
     entities_by_type = []
