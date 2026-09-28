@@ -105,6 +105,20 @@ STREAMLIT = TableObjectType(
     schema_create_privilege="create streamlit",
 )
 
+# Semantic views are query surfaces, not storage: SELECT is the only consumer
+# privilege (REFERENCES and MONITOR are owner-side concerns). read == write makes
+# the type non-writable, like VIEW, so grants come from the `tables` read list.
+# `ON ALL|FUTURE VIEWS` does not reach them, which is why they need their own
+# entry. `create semantic view` joins the schema write bundle via the registry.
+SEMANTIC_VIEW = TableObjectType(
+    name="semantic view",
+    connector_method="show_semantic_views",
+    show_command="SEMANTIC VIEWS",
+    read_privileges="select",
+    write_privileges="select",
+    schema_create_privilege="create semantic view",
+)
+
 # Order matters: it determines SQL statement emission order.
 TABLE_OBJECT_TYPES: List[TableObjectType] = [
     TABLE,
@@ -112,4 +126,5 @@ TABLE_OBJECT_TYPES: List[TableObjectType] = [
     ICEBERG_TABLE,
     DYNAMIC_TABLE,
     STREAMLIT,
+    SEMANTIC_VIEW,
 ]

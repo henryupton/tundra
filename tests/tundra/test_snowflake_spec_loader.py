@@ -1510,6 +1510,11 @@ class TestSpecFileLoading:
             "show_streamlits",
             return_value=[],
         )
+        mocker.patch.object(
+            SnowflakeConnector,
+            "show_semantic_views",
+            return_value=[],
+        )
 
         expected = [
             "ALTER USER \"first.last\" SET DISABLED = FALSE, TYPE = 'PERSON', DEFAULT_SECONDARY_ROLES = ()",
@@ -1526,7 +1531,7 @@ class TestSpecFileLoading:
             "GRANT usage ON schema database_1.write_schema TO ROLE test_role",
             "GRANT usage ON warehouse warehouse_1 TO ROLE test_role",
             "GRANT usage, monitor, create schema ON database database_1 TO ROLE test_role",
-            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server ON schema database_1.write_schema TO ROLE test_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create semantic view, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server ON schema database_1.write_schema TO ROLE test_role",
         ]
 
         mocker.patch.object(SnowflakeConnector, "show_views", return_value=[])
