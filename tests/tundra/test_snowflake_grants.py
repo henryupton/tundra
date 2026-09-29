@@ -3613,3 +3613,122 @@ class TestWireFormGrantMatching:
             )
             == []
         )
+
+
+class TestApplicationRoleGrants:
+    @staticmethod
+    def _generator(mocker, grants_to_role, application_roles):
+        mocker.patch.object(SnowflakeConnector, "__init__", lambda x: None)
+        return SnowflakeGrantsGenerator(
+            grants_to_role, {}, application_roles=application_roles
+        )
+
+    def test_application_role_membership_generates_grant_application_role(self, mocker):
+        """
+        A dotted member_of entry the loader resolved to an application role is
+        granted with GRANT APPLICATION ROLE; the other dotted entry stays a
+        database role and the plain one an account role.
+        """
+        generator = self._generator(
+            mocker, {"role_1": {}}, {"snowflake.cortex_analyst_requests_viewer"}
+        )
+
+        commands = generator.generate_grant_roles(
+            "roles",
+            "role_1",
+            {
+                "member_of": [
+                    "snowflake.cortex_analyst_requests_viewer",
+                    "snowflake.usage_viewer",
+                    "role_2",
+                ]
+            },
+        )
+
+        assert sorted(command["sql"] for command in commands) == [
+            'GRANT APPLICATION ROLE "SNOWFLAKE".cortex_analyst_requests_viewer'
+            " TO ROLE role_1",
+            'GRANT DATABASE ROLE "SNOWFLAKE".usage_viewer TO ROLE role_1',
+            "GRANT ROLE role_2 TO role role_1",
+        ]
+        assert all(command["already_granted"] is False for command in commands)
+
+    @pytest.mark.parametrize(
+        "member_of",
+        [
+            "snowflake.cortex_analyst_requests_viewer",
+            "SNOWFLAKE.CORTEX_ANALYST_REQUESTS_VIEWER",
+        ],
+    )
+    def test_application_role_membership_marked_already_granted(
+        self, member_of, mocker
+    ):
+        generator = self._generator(
+            mocker,
+            {
+                "role_1": {
+                    "usage": {
+                        "application role": [
+                            '"SNOWFLAKE".cortex_analyst_requests_viewer'
+                        ]
+                    }
+                }
+            },
+            {member_of},
+        )
+
+        commands = generator.generate_grant_roles(
+            "roles", "role_1", {"member_of": [member_of]}
+        )
+
+        assert [command["already_granted"] for command in commands] == [True]
+
+    def test_application_role_revoked_when_absent_from_member_of(self, mocker):
+        generator = self._generator(
+            mocker,
+            {
+                "role_1": {
+                    "usage": {
+                        "application role": ['"SNOWFLAKE".ai_observability_reader']
+                    }
+                }
+            },
+            set(),
+        )
+
+        commands = generator.generate_grant_roles(
+            "roles", "role_1", {"member_of": ["role_2"]}
+        )
+
+        assert [command["sql"] for command in commands] == [
+            "GRANT ROLE role_2 TO role role_1",
+            'REVOKE APPLICATION ROLE "SNOWFLAKE".ai_observability_reader'
+            " FROM ROLE role_1",
+        ]
+
+    def test_application_role_not_revoked_when_in_member_of(self, mocker):
+        generator = self._generator(
+            mocker,
+            {
+                "role_1": {
+                    "usage": {
+                        "application role": ['"SNOWFLAKE".ai_observability_reader']
+                    }
+                }
+            },
+            {"snowflake.ai_observability_reader"},
+        )
+
+        commands = generator.generate_grant_roles(
+            "roles", "role_1", {"member_of": ["snowflake.ai_observability_reader"]}
+        )
+
+        assert [
+            (command["sql"], command["already_granted"]) for command in commands
+        ] == [
+            (
+                'GRANT APPLICATION ROLE "SNOWFLAKE".ai_observability_reader'
+                " TO ROLE role_1",
+                True,
+            )
+        ]

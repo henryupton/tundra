@@ -743,3 +743,129 @@ class TestShowTableObjects:
         generic.assert_called_with(STREAMLIT, database="db", schema=None)
         conn.show_semantic_views(database="db")
         generic.assert_called_with(SEMANTIC_VIEW, database="db", schema=None)
+
+
+class TestApplicationRoles:
+    def test_show_application_roles(self, mocker):
+        """
+        Application roles come back as app.role FQNs. The role name is prefixed
+        unconditionally because it may itself contain periods.
+        """
+        mocker.patch("sqlalchemy.create_engine")
+        conn = SnowflakeConnector()
+        conn.run_query = mocker.MagicMock()
+        mocker.patch.object(
+            conn.run_query(),
+            "fetchall",
+            return_value=[
+                {"name": "CORTEX_ANALYST_REQUESTS_VIEWER"},
+                {"name": "CORTEX-MODEL-ROLE-GEMINI-2.5-FLASH"},
+            ],
+        )
+
+        application_roles = conn.show_application_roles(application="snowflake")
+
+        conn.run_query.assert_has_calls(
+            [mocker.call('SHOW APPLICATION ROLES IN APPLICATION "SNOWFLAKE"')]
+        )
+        assert application_roles == [
+            '"SNOWFLAKE".cortex_analyst_requests_viewer',
+            '"SNOWFLAKE"."CORTEX-MODEL-ROLE-GEMINI-2.5-FLASH"',
+        ]
+
+    def test_show_application_roles_not_an_application(self, mocker):
+        """
+        A database that is not an application has no application roles, rather
+        than failing the spec load.
+        """
+        mocker.patch("sqlalchemy.create_engine")
+        conn = SnowflakeConnector()
+        conn.run_query = mocker.MagicMock(side_effect=Exception("does not exist"))
+
+        assert conn.show_application_roles(application="mydb") == []
+
+    @pytest.mark.parametrize("granted_on", ["APPLICATION_ROLE", "APPLICATION ROLE"])
+    def test_show_grants_to_role_application_roles(self, granted_on, mocker):
+        """
+        Application role grants are keyed under "application role" whichever spelling
+        Snowflake reports, normalised like the spec side, and the grants the
+        application made itself (granted_by empty or the application) are dropped.
+        """
+        mocker.patch("sqlalchemy.create_engine")
+        conn = SnowflakeConnector()
+        conn.run_query = mocker.MagicMock()
+        mocker.patch.object(
+            conn.run_query(),
+            "fetchall",
+            return_value=[
+                {
+                    "privilege": "USAGE",
+                    "granted_on": granted_on,
+                    "name": "SNOWFLAKE.CORTEX_ANALYST_REQUESTS_VIEWER",
+                    "granted_by": "SECURITYADMIN",
+                },
+                {
+                    "privilege": "USAGE",
+                    "granted_on": granted_on,
+                    "name": 'SNOWFLAKE."CORTEX-MODEL-ROLE-GEMINI-2.5-FLASH"',
+                    "granted_by": "ACCOUNTADMIN",
+                },
+                {
+                    "privilege": "USAGE",
+                    "granted_on": granted_on,
+                    "name": "SNOWFLAKE.AI_OBSERVABILITY_READER",
+                    "granted_by": "SNOWFLAKE",
+                },
+                {
+                    "privilege": "USAGE",
+                    "granted_on": granted_on,
+                    "name": "SNOWFLAKE.DATA_QUALITY_MONITORING_VIEWER",
+                    "granted_by": "",
+                },
+            ],
+        )
+
+        grants = conn.show_grants_to_role("test_role")
+
+        assert grants == {
+            "usage": {
+                "application role": [
+                    '"SNOWFLAKE".cortex_analyst_requests_viewer',
+                    '"SNOWFLAKE"."CORTEX-MODEL-ROLE-GEMINI-2.5-FLASH"',
+                ]
+            }
+        }
+
+    @pytest.mark.parametrize(
+        "name,expected",
+        [
+            (
+                "snowflake.cortex_analyst_requests_viewer",
+                '"SNOWFLAKE".cortex_analyst_requests_viewer',
+            ),
+            (
+                "SNOWFLAKE.CORTEX_ANALYST_REQUESTS_VIEWER",
+                '"SNOWFLAKE".cortex_analyst_requests_viewer',
+            ),
+            (
+                'SNOWFLAKE."CORTEX-MODEL-ROLE-GEMINI-2.5-FLASH"',
+                '"SNOWFLAKE"."CORTEX-MODEL-ROLE-GEMINI-2.5-FLASH"',
+            ),
+            ("myapp.my_role", "myapp.my_role"),
+            ("snowflake", '"SNOWFLAKE"'),
+        ],
+    )
+    def test_snowflaky_application_role(self, name, expected):
+        assert SnowflakeConnector.snowflaky_application_role(name) == expected
+
+    @pytest.mark.parametrize(
+        "granted_on,expected",
+        [
+            ("APPLICATION_ROLE", "application role"),
+            ("APPLICATION ROLE", "application role"),
+            ("DATABASE_ROLE", "database role"),
+            ("TABLE", "table"),
+        ],
+    )
+    def test_normalise_granted_on_application_role(self, granted_on, expected):
+        assert SnowflakeConnector.normalise_granted_on(granted_on) == expected

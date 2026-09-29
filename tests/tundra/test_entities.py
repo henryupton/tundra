@@ -213,3 +213,16 @@ def test_filter_by_type(entities):
         EntityGenerator.filter_grouped_entities_by_type(grouped_entities, "roles")
         == expected
     )
+
+
+def test_application_role_refs_start_empty():
+    """
+    The entity generator cannot tell an application role from a database role by
+    its spelling; the spec loader moves refs across after asking Snowflake.
+    """
+    spec = {"roles": [{"role_1": {"member_of": ["mydb.db_role_1"]}}]}
+
+    entities = EntityGenerator(spec).inspect_entities()
+
+    assert entities["database_role_refs"] == {"mydb.db_role_1"}
+    assert entities["application_role_refs"] == set()

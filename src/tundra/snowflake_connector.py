@@ -37,6 +37,12 @@ FUTURE_PLACEHOLDER_PATTERN = "^<({})>$".format(
 # this constant is both sides, and the spec side reaches it via the same normalisation.
 DATABASE_ROLE_GRANT_TYPE = "database role"
 
+# Application roles (app.role) are reported as APPLICATION_ROLE / APPLICATION ROLE and
+# keyed under this, mirroring DATABASE_ROLE_GRANT_TYPE. The SNOWFLAKE application ships
+# its telemetry viewers (CORTEX_ANALYST_REQUESTS_VIEWER, AI_OBSERVABILITY_READER, ...)
+# as application roles, which GRANT DATABASE ROLE cannot reach.
+APPLICATION_ROLE_GRANT_TYPE = "application role"
+
 # Don't show all the info log messages from Snowflake
 for logger_name in ["snowflake.connector", "bot", "boto3"]:
     log = logging.getLogger(logger_name)
@@ -345,6 +351,17 @@ class SnowflakeConnector:
                 )
                 continue
 
+            # Application roles are FQNs (app.role) too. Grants the application made
+            # itself are system-managed: SECURITYADMIN cannot revoke them and no spec
+            # should try, so they are not recorded at all.
+            if granted_on == APPLICATION_ROLE_GRANT_TYPE:
+                if SnowflakeConnector.is_system_application_role_grant(result):
+                    continue
+                grants.setdefault(privilege, {}).setdefault(granted_on, []).append(
+                    SnowflakeConnector.snowflaky_application_role(result["name"])
+                )
+                continue
+
             if bool(re.match("^[a-zA-Z0-9_]*$", result["name"])):
                 clean_name = result["name"].lower()
             else:
@@ -460,6 +477,50 @@ class SnowflakeConnector:
             database_roles.append(SnowflakeConnector.snowflaky_database_role(name))
 
         return database_roles
+
+    def show_application_roles(self, application: str) -> List[str]:
+        """
+        List the application roles of an installed application as app.role FQNs.
+
+        Returns an empty list when <application> is not an installed application,
+        so a DB.ROLE reference that turns out not to be a database role can fall
+        through to this without failing the whole spec.
+        """
+        application_identifier = SnowflakeConnector.snowflaky_application_role(
+            application
+        )
+        query = f"SHOW APPLICATION ROLES IN APPLICATION {application_identifier}"
+        try:
+            results = self.run_query(query).fetchall()
+        except Exception as error:
+            logger.debug(
+                f"{application} is not an application, no application roles: {error}"
+            )
+            return []
+
+        application_roles = []
+        for result in results:
+            # SHOW APPLICATION ROLES reports the bare role name, which may itself
+            # contain periods (CORTEX-MODEL-ROLE-GEMINI-2.5-FLASH), so prefix it
+            # unconditionally rather than sniffing for one.
+            application_roles.append(
+                SnowflakeConnector.snowflaky_application_role(
+                    f"{application}.{result['name']}"
+                )
+            )
+
+        return application_roles
+
+    @staticmethod
+    def is_system_application_role_grant(result: Dict[str, Any]) -> bool:
+        """
+        True when a SHOW GRANTS row for an application role was granted by the
+        application itself (granted_by is empty or names the application), as the
+        SNOWFLAKE application does for ACCOUNTADMIN. Those grants are not ours to manage.
+        """
+        application = result["name"].partition(".")[0].strip('"').lower()
+        granted_by = (result.get("granted_by") or "").strip('"').lower()
+        return granted_by in ("", application)
 
     def run_query(self, query: str) -> "_BufferedResult":
         from sqlalchemy import text
@@ -593,6 +654,9 @@ class SnowflakeConnector:
         if normalised in ("database_role", DATABASE_ROLE_GRANT_TYPE):
             return DATABASE_ROLE_GRANT_TYPE
 
+        if normalised in ("application_role", APPLICATION_ROLE_GRANT_TYPE):
+            return APPLICATION_ROLE_GRANT_TYPE
+
         return normalised
 
     @staticmethod
@@ -607,21 +671,36 @@ class SnowflakeConnector:
         e.g. snowflake.organization_billing_viewer --> "SNOWFLAKE".organization_billing_viewer
              my-db.my-role                         --> "MY-DB"."MY-ROLE"
         """
-        name_parts = name.split(".")
-        new_name_parts = []
+        return ".".join(
+            SnowflakeConnector._snowflaky_fqn_part(part) for part in name.split(".")
+        )
 
-        for part in name_parts:
-            if re.match('^".*"$', part) is not None:
-                new_name_parts.append(part)
-            elif (
-                re.match("^[a-z_][0-9a-z_$]*$", part) is None
-                and re.match("^[A-Z_][0-9A-Z_$]*$", part) is None
-            ) or part.lower() in SnowflakeConnector.reserved_keywords():
-                new_name_parts.append(f'"{part.upper()}"')
-            else:
-                new_name_parts.append(part.lower())
+    @staticmethod
+    def snowflaky_application_role(name: str) -> str:
+        """
+        Convert an application role FQN (app.role) to a properly quoted Snowflake
+        identifier, with the same casing rules as snowflaky_database_role().
 
-        return ".".join(new_name_parts)
+        Only the first period separates application from role, so a quoted role name
+        that itself contains periods (SNOWFLAKE."CORTEX-MODEL-ROLE-GEMINI-2.5-FLASH")
+        survives intact. A bare application name is quoted on its own.
+
+        e.g. snowflake.cortex_analyst_requests_viewer --> "SNOWFLAKE".cortex_analyst_requests_viewer
+        """
+        application, separator, role = name.partition(".")
+        parts = [application, role] if separator else [application]
+        return ".".join(SnowflakeConnector._snowflaky_fqn_part(part) for part in parts)
+
+    @staticmethod
+    def _snowflaky_fqn_part(part: str) -> str:
+        if re.match('^".*"$', part) is not None:
+            return part
+        if (
+            re.match("^[a-z_][0-9a-z_$]*$", part) is None
+            and re.match("^[A-Z_][0-9A-Z_$]*$", part) is None
+        ) or part.lower() in SnowflakeConnector.reserved_keywords():
+            return f'"{part.upper()}"'
+        return part.lower()
 
     @staticmethod
     def snowflaky_user_property(name: str) -> str:
