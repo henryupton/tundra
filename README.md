@@ -229,6 +229,29 @@ cannot contain one. Database roles can only be granted to other roles, so they
 are not valid in a user's `member_of`. Both cases are rejected when the spec is
 loaded.
 
+### Application roles
+
+Snowflake's telemetry viewers for Cortex Analyst, AI Observability and data quality
+monitoring (`SNOWFLAKE.CORTEX_ANALYST_REQUESTS_VIEWER`, `SNOWFLAKE.AI_OBSERVABILITY_READER`,
+`SNOWFLAKE.DATA_QUALITY_MONITORING_VIEWER`, ...) are application roles of the `SNOWFLAKE`
+application, not database roles, and need `GRANT APPLICATION ROLE`. They are written in
+`member_of` exactly like database roles:
+
+```yaml
+roles:
+    - monitor:
+        member_of:
+            - snowflake.usage_viewer
+            - snowflake.cortex_analyst_requests_viewer
+```
+
+A `DB.ROLE` reference that `SHOW DATABASE ROLES` does not know is looked up with
+`SHOW APPLICATION ROLES IN APPLICATION` for an application of the same name, and is
+granted and revoked as an application role if it is one. Grants the application made
+itself (`granted_by` is the application, as the `SNOWFLAKE` application does for
+ACCOUNTADMIN) are never recorded, so they are never revoked. Tundra has to run as
+SECURITYADMIN or higher to grant application roles.
+
 Objects like warehouses and integrations that only have one tundra permission type just
 needs to be specified in the role (see below).
 

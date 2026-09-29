@@ -2,7 +2,11 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from tundra.grant_coverage import GrantCoverage
 from tundra.logger import GLOBAL_LOGGER as logger
-from tundra.snowflake_connector import DATABASE_ROLE_GRANT_TYPE, SnowflakeConnector
+from tundra.snowflake_connector import (
+    APPLICATION_ROLE_GRANT_TYPE,
+    DATABASE_ROLE_GRANT_TYPE,
+    SnowflakeConnector,
+)
 from tundra.table_object_types import TABLE_OBJECT_TYPES, TableObjectType
 
 GRANT_ROLE_TEMPLATE = "GRANT ROLE {role_name} TO {type} {entity_name}"
@@ -13,6 +17,14 @@ REVOKE_ROLE_TEMPLATE = "REVOKE ROLE {role_name} FROM {type} {entity_name}"
 
 REVOKE_DATABASE_ROLE_TEMPLATE = (
     "REVOKE DATABASE ROLE {role_name} FROM ROLE {entity_name}"
+)
+
+GRANT_APPLICATION_ROLE_TEMPLATE = (
+    "GRANT APPLICATION ROLE {role_name} TO ROLE {entity_name}"
+)
+
+REVOKE_APPLICATION_ROLE_TEMPLATE = (
+    "REVOKE APPLICATION ROLE {role_name} FROM ROLE {entity_name}"
 )
 
 GRANT_PRIVILEGES_TEMPLATE = (
@@ -59,6 +71,7 @@ class SnowflakeGrantsGenerator:
         roles_granted_to_user: Dict[str, List[str]],
         ignore_memberships: Optional[bool] = False,
         conn: Optional[SnowflakeConnector] = None,
+        application_roles: Optional[Set[str]] = None,
     ) -> None:
         """
         Initializes a grants generator, used to generate SQL for generating grants
@@ -74,11 +87,21 @@ class SnowflakeGrantsGenerator:
 
         conn: optional SnowflakeConnector instance. If not provided, creates a new one.
 
+        application_roles: the member_of references (app.role) the spec loader resolved
+            to application roles rather than database roles, e.g.
+            {'snowflake.cortex_analyst_requests_viewer'}
+
         """
         self.grants_to_role = grants_to_role
         self.roles_granted_to_user = roles_granted_to_user
         self.ignore_memberships = ignore_memberships
         self.conn = conn or SnowflakeConnector()
+        # Normalised the same way _generate_member_lists normalises member_of entries,
+        # so membership can be tested on the normalised list.
+        self.application_roles = {
+            SnowflakeConnector.snowflaky_database_role(role)
+            for role in (application_roles or set())
+        }
 
     def is_granted_privilege(
         self, role: str, privilege: str, entity_type: str, entity_name: str
@@ -119,6 +142,26 @@ class SnowflakeGrantsGenerator:
         )
 
         return SnowflakeConnector.snowflaky_database_role(database_role) in granted
+
+    def is_granted_application_role(self, role: str, application_role: str) -> bool:
+        """
+        Check if <role> has been granted membership of the application role
+        <application_role>, given as an app.role FQN.
+
+        For example:
+        is_granted_application_role('monitor', 'snowflake.cortex_analyst_requests_viewer') -> True
+        means that role monitor has already been granted the SNOWFLAKE application's
+        CORTEX_ANALYST_REQUESTS_VIEWER application role on the Snowflake server.
+        """
+        granted = (
+            self.grants_to_role.get(role, {})
+            .get("usage", {})
+            .get(APPLICATION_ROLE_GRANT_TYPE, [])
+        )
+
+        return (
+            SnowflakeConnector.snowflaky_application_role(application_role) in granted
+        )
 
     def _all_privileges_granted(
         self, role: str, privileges: List[str], entity_type: str, entity_name: str
@@ -204,9 +247,13 @@ class SnowflakeGrantsGenerator:
 
         sql_commands = []
         for member_role in member_of_list:
-            is_database_role = "." in member_role
+            is_application_role = member_role in self.application_roles
+            is_database_role = "." in member_role and not is_application_role
             already_granted = False
-            if is_database_role:
+            if is_application_role:
+                if self.is_granted_application_role(entity, member_role):
+                    already_granted = True
+            elif is_database_role:
                 if self.is_granted_database_role(entity, member_role):
                     already_granted = True
             else:
@@ -235,7 +282,17 @@ class SnowflakeGrantsGenerator:
             ):
                 continue
 
-            if is_database_role:
+            if is_application_role:
+                sql_commands.append(
+                    {
+                        "already_granted": already_granted,
+                        "sql": GRANT_APPLICATION_ROLE_TEMPLATE.format(
+                            role_name=member_role,
+                            entity_name=SnowflakeConnector.snowflaky_user_role(entity),
+                        ),
+                    }
+                )
+            elif is_database_role:
                 sql_commands.append(
                     {
                         "already_granted": already_granted,
@@ -334,6 +391,24 @@ class SnowflakeGrantsGenerator:
                             role_name=SnowflakeConnector.snowflaky_database_role(
                                 granted_database_role
                             ),
+                            entity_name=SnowflakeConnector.snowflaky_user_role(
+                                rolename
+                            ),
+                        ),
+                    }
+                )
+
+        for granted_application_role in (
+            self.grants_to_role.get(rolename, {})
+            .get("usage", {})
+            .get(APPLICATION_ROLE_GRANT_TYPE, [])
+        ):
+            if granted_application_role not in member_of_list:
+                sql_commands.append(
+                    {
+                        "already_granted": False,
+                        "sql": REVOKE_APPLICATION_ROLE_TEMPLATE.format(
+                            role_name=granted_application_role,
                             entity_name=SnowflakeConnector.snowflaky_user_role(
                                 rolename
                             ),

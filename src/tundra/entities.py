@@ -15,6 +15,7 @@ class EntitySchema(TypedDict):
     roles: Set[str]
     role_refs: Set[str]
     database_role_refs: Set[str]
+    application_role_refs: Set[str]
     users: Set[str]
     warehouses: Set[str]
     warehouse_refs: Set[str]
@@ -38,6 +39,7 @@ class EntityGenerator:
             "roles": set(),
             "role_refs": set(),
             "database_role_refs": set(),
+            "application_role_refs": set(),
             "users": set(),
             "warehouses": set(),
             "warehouse_refs": set(),
@@ -378,6 +380,8 @@ class EntityGenerator:
         """
         Route a member_of entry to the right reference set. Anything containing a
         period is a database role FQN (db.role), everything else is an account role.
+        The spec loader later moves the DB.ROLE refs that Snowflake reports as
+        application roles into application_role_refs; the spec spells both the same.
         """
         if "." in member_role:
             self.entities["database_role_refs"].add(member_role)
