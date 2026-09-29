@@ -111,10 +111,13 @@ class SnowflakeSpecLoader:
         click.secho(f"  Current user is: {conn.get_current_user()}.", fg="green")
 
         current_role = conn.get_current_role()
-        if "securityadmin" != current_role:
+        if current_role != "securityadmin" and not conn.is_role_in_session(
+            "securityadmin"
+        ):
             error_messages.append(
-                "Current role is not securityadmin! "
-                "Tundra expects to run as securityadmin, please update your connection settings."
+                "Current role is not securityadmin and does not inherit it! "
+                "Tundra needs MANAGE GRANTS: run as securityadmin, or as a role that "
+                "has been granted securityadmin."
             )
         click.secho(f"  Current role is: {current_role}.", fg="green")
 

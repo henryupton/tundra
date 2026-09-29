@@ -249,8 +249,10 @@ A `DB.ROLE` reference that `SHOW DATABASE ROLES` does not know is looked up with
 `SHOW APPLICATION ROLES IN APPLICATION` for an application of the same name, and is
 granted and revoked as an application role if it is one. Grants the application made
 itself (`granted_by` is the application, as the `SNOWFLAKE` application does for
-ACCOUNTADMIN) are never recorded, so they are never revoked. Tundra has to run as
-SECURITYADMIN or higher to grant application roles.
+ACCOUNTADMIN) are never recorded, so they are never revoked. MANAGE GRANTS does not
+reach the `SNOWFLAKE` application's roles: only a role that itself holds one of them can
+see it or grant it on, so the role tundra runs as must hold every application role the
+spec hands out (a role granted SECURITYADMIN plus those application roles, see below).
 
 Objects like warehouses and integrations that only have one tundra permission type just
 needs to be specified in the role (see below).
@@ -542,8 +544,10 @@ $PERMISSION_BOT_DATABASE
 $PERMISSION_BOT_ROLE
 ```
 
-Currently, Tundra assumes you are using the SECURITYADMIN role and will fail
-validation if you are not.
+Tundra needs MANAGE GRANTS. Validation fails unless the current role is SECURITYADMIN
+or a role that has been granted SECURITYADMIN (checked with `IS_ROLE_IN_SESSION`), so a
+purpose-built role holding SECURITYADMIN plus whatever application roles the spec grants
+is a valid `PERMISSION_BOT_ROLE`.
 
 ### OAuth
 
