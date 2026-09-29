@@ -22,6 +22,9 @@ class MockSnowflakeConnector(SnowflakeConnector):
     def show_database_roles(self, database: str) -> List[str]:
         return []
 
+    def show_application_roles(self, application: str) -> List[str]:
+        return []
+
     def show_users(self) -> List[str]:
         return []
 

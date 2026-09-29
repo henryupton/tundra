@@ -1925,3 +1925,128 @@ class TestUserParameters:
         mocker.patch.object(mock_connector, "show_users", return_value=["testusername"])
 
         SnowflakeSpecLoader("", mock_connector)
+
+
+class TestApplicationRoleEntities:
+    def test_dotted_member_of_ref_resolves_to_application_role(
+        self, mocker, mock_connector
+    ):
+        """
+        A DB.ROLE reference SHOW DATABASE ROLES does not know is looked up as an
+        application role of the same-named application and moved to
+        application_role_refs; the real database role stays where it was.
+        """
+        spec_file_data = (
+            SnowflakeSchemaBuilder()
+            .add_role(
+                member_of=[
+                    "snowflake.cortex_analyst_requests_viewer",
+                    "snowflake.usage_viewer",
+                ]
+            )
+            .build()
+        )
+        mocker.patch("builtins.open", mocker.mock_open(read_data=spec_file_data))
+        mocker.patch.object(mock_connector, "show_roles", return_value=["testrole"])
+        mocker.patch.object(
+            mock_connector,
+            "show_database_roles",
+            return_value=['"SNOWFLAKE".usage_viewer'],
+        )
+        mocker.patch.object(
+            mock_connector,
+            "show_application_roles",
+            return_value=['"SNOWFLAKE".cortex_analyst_requests_viewer'],
+        )
+
+        loader = SnowflakeSpecLoader("", mock_connector)
+
+        mock_connector.show_application_roles.assert_called_once_with(
+            application="snowflake"
+        )
+        assert loader.entities["application_role_refs"] == {
+            "snowflake.cortex_analyst_requests_viewer"
+        }
+        assert loader.entities["database_role_refs"] == {"snowflake.usage_viewer"}
+
+    def test_application_role_membership_generates_grant_application_role(
+        self, mocker, mock_connector
+    ):
+        spec_file_data = (
+            SnowflakeSchemaBuilder()
+            .add_role(
+                member_of=[
+                    "snowflake.cortex_analyst_requests_viewer",
+                    "snowflake.usage_viewer",
+                ]
+            )
+            .build()
+        )
+        mocker.patch("builtins.open", mocker.mock_open(read_data=spec_file_data))
+        mocker.patch.object(mock_connector, "show_roles", return_value=["testrole"])
+        mocker.patch.object(
+            mock_connector,
+            "show_database_roles",
+            return_value=['"SNOWFLAKE".usage_viewer'],
+        )
+        mocker.patch.object(
+            mock_connector,
+            "show_application_roles",
+            return_value=['"SNOWFLAKE".cortex_analyst_requests_viewer'],
+        )
+
+        loader = SnowflakeSpecLoader("", mock_connector)
+        sql_commands = [
+            command["sql"] for command in loader.generate_permission_queries()
+        ]
+
+        assert (
+            'GRANT APPLICATION ROLE "SNOWFLAKE".cortex_analyst_requests_viewer'
+            " TO ROLE testrole" in sql_commands
+        )
+        assert 'GRANT DATABASE ROLE "SNOWFLAKE".usage_viewer TO ROLE testrole' in (
+            sql_commands
+        )
+
+    def test_dotted_member_of_ref_missing_everywhere_errors(
+        self, mocker, mock_connector
+    ):
+        spec_file_data = (
+            SnowflakeSchemaBuilder().add_role(member_of=["mydb.db_role_1"]).build()
+        )
+        mocker.patch("builtins.open", mocker.mock_open(read_data=spec_file_data))
+        mocker.patch.object(mock_connector, "show_roles", return_value=["testrole"])
+        mocker.patch.object(mock_connector, "show_database_roles", return_value=[])
+        mocker.patch.object(mock_connector, "show_application_roles", return_value=[])
+
+        with pytest.raises(SpecLoadingError) as context:
+            SnowflakeSpecLoader("", mock_connector)
+
+        assert (
+            "Missing Entity Error: Database role mydb.db_role_1 was not found"
+            in str(context.value)
+        )
+        mock_connector.show_application_roles.assert_called_once_with(
+            application="mydb"
+        )
+
+    def test_application_roles_not_looked_up_when_all_database_roles_exist(
+        self, mocker, mock_connector
+    ):
+        spec_file_data = (
+            SnowflakeSchemaBuilder()
+            .add_role(member_of=["snowflake.usage_viewer"])
+            .build()
+        )
+        mocker.patch("builtins.open", mocker.mock_open(read_data=spec_file_data))
+        mocker.patch.object(mock_connector, "show_roles", return_value=["testrole"])
+        mocker.patch.object(
+            mock_connector,
+            "show_database_roles",
+            return_value=['"SNOWFLAKE".usage_viewer'],
+        )
+        mocker.patch.object(mock_connector, "show_application_roles", return_value=[])
+
+        SnowflakeSpecLoader("", mock_connector)
+
+        mock_connector.show_application_roles.assert_not_called()
