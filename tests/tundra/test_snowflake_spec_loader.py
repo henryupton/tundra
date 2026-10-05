@@ -1461,6 +1461,23 @@ class TestSpecFileLoading:
             )
             mock_connector.get_current_role.assert_called()
 
+    def test_check_permissions_on_snowflake_server_as_role_inheriting_securityadmin(
+        self, test_dir, mocker, mock_connector
+    ):
+        """
+        A custom role granted SECURITYADMIN passes: IS_ROLE_IN_SESSION decides.
+        """
+        mocker.patch.object(
+            MockSnowflakeConnector, "get_current_role", return_value="grantor"
+        )
+        mocker.patch.object(
+            MockSnowflakeConnector, "is_role_in_session", return_value=True
+        )
+        SnowflakeSpecLoader(
+            os.path.join(test_dir, "specs", "snowflake_spec_blank.yml"), mock_connector
+        )
+        mock_connector.is_role_in_session.assert_called_once_with("securityadmin")
+
     def test_check_permissions_on_snowflake_server_gets_current_user_info(
         self, test_dir, mocker, mock_connector
     ):

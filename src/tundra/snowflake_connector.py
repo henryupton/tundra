@@ -443,6 +443,12 @@ class SnowflakeConnector:
         result = self.run_query(query).fetchone()
         return result["role"].lower()
 
+    def is_role_in_session(self, role: str) -> bool:
+        """True when <role> is the current role or one the current role inherits."""
+        query = f"SELECT IS_ROLE_IN_SESSION('{role.upper()}') AS IN_SESSION"
+        result = self.run_query(query).fetchone()
+        return bool(result["in_session"])
+
     def show_roles(self) -> Dict[str, str]:
         roles = {}
 
