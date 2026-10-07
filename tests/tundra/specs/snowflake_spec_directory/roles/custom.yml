@@ -1,0 +1,8 @@
+roles:
+  - demo:
+      warehouses:
+        - demo
+      privileges:
+        databases:
+          read:
+            - demo

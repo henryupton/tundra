@@ -497,6 +497,33 @@ roles: !include roles.yml
 users: !include users.yml
 ```
 
+### Spec directories
+
+`tundra run` and `tundra spec-test` also accept a directory. Every `.yml` / `.yaml` file under it (recursively,
+in sorted path order, skipping dotfiles and dot-directories) is a fragment holding any of the top-level spec keys,
+and the fragments are merged into one spec before validation:
+
+```
+spec/
+  settings.yml           # version, require-owner
+  databases.yml          # databases:
+  warehouses.yml         # warehouses:
+  roles/builtin.yml      # roles: (accountadmin, sysadmin, ...)
+  roles/custom.yml       # roles:
+  users/person.yml       # users:
+  users/service.yml      # users:
+```
+
+```bash
+tundra run spec/
+```
+
+- List sections (`databases`, `warehouses`, `roles`, `users`, `integrations`, `external_volumes`) are concatenated.
+- An entity defined in more than one fragment is an error naming both files.
+- Scalar settings (`version`, `require-owner`) may appear in several fragments only if they agree.
+- Every fragment must be a mapping. `!include` still works inside a fragment, but keep the included files outside
+  the spec directory, since a bare list there is rejected as a fragment.
+
 ### Settings
 
 All settings are declared here with their default values and are described
