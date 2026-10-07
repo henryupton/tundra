@@ -126,9 +126,85 @@ def ensure_valid_schema(spec: Dict) -> List[str]:
     return error_messages
 
 
+def _spec_files_in(spec_dir: str) -> List[str]:
+    """Every YAML file under spec_dir, recursively, in sorted path order.
+
+    Dotfiles and dot-dirs are skipped.
+    """
+    found: List[str] = []
+    for root, dirs, files in os.walk(spec_dir):
+        dirs[:] = [d for d in dirs if not d.startswith(".")]
+        found.extend(
+            os.path.join(root, f)
+            for f in files
+            if not f.startswith(".") and f.endswith((".yml", ".yaml"))
+        )
+    return sorted(found)
+
+
+def load_spec_directory(spec_dir: str) -> Dict[str, Any]:
+    """
+    Merge every YAML file under spec_dir into one spec.
+
+    Each file is a mapping of top-level spec keys. List sections (roles, users,
+    databases, ...) are concatenated across files; an entity defined in more than
+    one file is an error. Scalar settings (version, require-owner) must agree
+    wherever they are set.
+    """
+    files = _spec_files_in(spec_dir)
+    if not files:
+        raise SpecLoadingError(f"Spec directory {spec_dir} contains no YAML files")
+
+    spec: Dict[str, Any] = {}
+    scalar_sources: Dict[str, str] = {}
+    entity_sources: Dict[tuple, str] = {}
+    errors = []
+
+    for path in files:
+        rel = os.path.relpath(path, spec_dir)
+        with open(path, "r") as stream:
+            fragment = yaml.safe_load(stream)
+        if fragment is None:
+            continue
+        if not isinstance(fragment, dict):
+            errors.append(
+                f"Spec error: {rel}: expected a mapping of spec sections, "
+                f"got {type(fragment).__name__}"
+            )
+            continue
+
+        for key, value in fragment.items():
+            if isinstance(value, list):
+                for entity in value:
+                    if isinstance(entity, dict) and len(entity) == 1:
+                        name = next(iter(entity))
+                        first = entity_sources.setdefault((key, name), rel)
+                        if first != rel:
+                            errors.append(
+                                f'Spec error: {key} "{name}" is defined in both '
+                                f"{first} and {rel}"
+                            )
+                spec.setdefault(key, []).extend(value)
+            elif value is None:
+                spec.setdefault(key, None)
+            elif key in spec and spec[key] != value:
+                errors.append(
+                    f'Spec error: "{key}" is {spec[key]!r} in {scalar_sources[key]} '
+                    f"but {value!r} in {rel}"
+                )
+            else:
+                spec[key] = value
+                scalar_sources.setdefault(key, rel)
+
+    if errors:
+        raise SpecLoadingError("\n".join(errors))
+    return spec
+
+
 def load_spec(spec_path: str) -> TundraSpecSchema:
     """
-    Load a permissions specification from a file.
+    Load a permissions specification from a file, or from a directory of spec
+    fragments (see load_spec_directory).
 
     If the file is not found or at least an error is found during validation,
     raise a SpecLoadingError with the appropriate error messages.
@@ -141,11 +217,15 @@ def load_spec(spec_path: str) -> TundraSpecSchema:
 
     Returns the spec as a dictionary if everything is OK
     """
-    try:
-        with open(spec_path, "r") as stream:
-            spec = yaml.safe_load(stream)
-    except FileNotFoundError:
-        raise SpecLoadingError(f"Spec File {spec_path} not found")
+    spec: Any
+    if os.path.isdir(spec_path):
+        spec = load_spec_directory(spec_path)
+    else:
+        try:
+            with open(spec_path, "r") as stream:
+                spec = yaml.safe_load(stream)
+        except FileNotFoundError:
+            raise SpecLoadingError(f"Spec File {spec_path} not found")
 
     error_messages = ensure_valid_schema(spec)
     if error_messages:

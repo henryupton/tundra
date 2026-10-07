@@ -1,0 +1,1 @@
+warehouses: !include ../snowflake_spec_directory_includes/warehouses.yml

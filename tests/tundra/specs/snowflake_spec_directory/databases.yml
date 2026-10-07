@@ -1,0 +1,5 @@
+databases:
+  - demo:
+      shared: no
+  - shared_demo:
+      shared: yes

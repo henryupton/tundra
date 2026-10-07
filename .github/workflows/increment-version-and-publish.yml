@@ -44,10 +44,20 @@ jobs:
 
       - name: Calculate new version
         id: new-version
+        env:
+          HEAD_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
         run: |
           LATEST_TAG="${{ steps.get-tag.outputs.latest_tag }}"
-          # Use patch as default for push events, otherwise use input
+          # Push events default to patch; a Conventional Commits breaking marker
+          # (`type(scope)!:` title or a `BREAKING CHANGE:` footer) on the squashed
+          # merge commit bumps major instead.
           VERSION_BUMP="${{ inputs.version_bump || 'patch' }}"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            if printf '%s\n' "$HEAD_COMMIT_MESSAGE" | head -n1 | grep -Eq '^[a-z]+(\([^)]*\))?!:' \
+              || printf '%s\n' "$HEAD_COMMIT_MESSAGE" | grep -Eq '^BREAKING[ -]CHANGE:'; then
+              VERSION_BUMP="major"
+            fi
+          fi
           
           # Remove 'v' prefix if it exists
           VERSION=${LATEST_TAG#v}
