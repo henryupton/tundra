@@ -1,6 +1,7 @@
 import os
 
 import pytest
+import snowflake.connector
 import sqlalchemy
 from tundra.snowflake_connector import SnowflakeConnector
 from tundra.table_object_types import (
@@ -869,3 +870,125 @@ class TestApplicationRoles:
     )
     def test_normalise_granted_on_application_role(self, granted_on, expected):
         assert SnowflakeConnector.normalise_granted_on(granted_on) == expected
+
+
+def snowflake_error(message: str, errno: int = 2003) -> sqlalchemy.exc.DBAPIError:
+    """A failure shaped like the one run_query raises, Snowflake's error wrapped by SQLAlchemy."""
+    orig = snowflake.connector.errors.ProgrammingError(
+        msg=f"SQL compilation error:\n{message}", errno=errno, sqlstate="02000"
+    )
+    return sqlalchemy.exc.ProgrammingError("GRANT ...", None, orig)
+
+
+class TestMissingObjects:
+    # Wording captured from live Snowflake for each kind.
+    @pytest.mark.parametrize(
+        "message, expected",
+        [
+            (
+                "Database 'ZZ_DB' does not exist or not authorized.",
+                ("database", "ZZ_DB"),
+            ),
+            (
+                "Schema 'TEST_ANALYTICS.PR_1__DATA_1' does not exist or not authorized.",
+                ("schema", "TEST_ANALYTICS.PR_1__DATA_1"),
+            ),
+            (
+                "Table 'DB.S.T' does not exist or not authorized.",
+                ("table", "DB.S.T"),
+            ),
+            ("View 'DB.S.V' does not exist or not authorized.", ("view", "DB.S.V")),
+            (
+                "Dynamic table 'DB.S.D' does not exist or not authorized.",
+                ("dynamic table", "DB.S.D"),
+            ),
+            (
+                "Iceberg table 'DB.S.I' does not exist or not authorized.",
+                ("iceberg table", "DB.S.I"),
+            ),
+            (
+                "Streamlit 'DB.S.APP' does not exist or not authorized.",
+                ("streamlit", "DB.S.APP"),
+            ),
+            (
+                "Semantic View 'DB.S.SVW' does not exist or not authorized.",
+                ("semantic view", "DB.S.SVW"),
+            ),
+        ],
+    )
+    def test_missing_object_names_kind_and_object(self, message, expected):
+        assert SnowflakeConnector.missing_object(snowflake_error(message)) == expected
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "Role 'ZZ_ROLE' does not exist or not authorized.",
+            "Warehouse 'ZZ_WH' does not exist or not authorized.",
+            "Insufficient privileges to operate on schema 'S'.",
+        ],
+    )
+    def test_missing_object_ignores_spec_managed_entities_and_other_failures(
+        self, message
+    ):
+        assert SnowflakeConnector.missing_object(snowflake_error(message)) is None
+
+    def test_object_exists_schema(self, mocker):
+        conn = MockSnowflakeConnector()
+        show_schemas = mocker.patch.object(
+            conn, "show_schemas", return_value=["test_analytics.pr_1__data_1"]
+        )
+
+        assert conn.object_exists("schema", "TEST_ANALYTICS.PR_1__DATA_1")
+        assert not conn.object_exists("schema", "TEST_ANALYTICS.PR_2__DATA_2")
+        show_schemas.assert_called_with(database="test_analytics")
+
+    def test_object_exists_database(self, mocker):
+        conn = MockSnowflakeConnector()
+        mocker.patch.object(conn, "show_databases", return_value=["analytics"])
+
+        assert conn.object_exists("database", "ANALYTICS")
+        assert not conn.object_exists("database", "ZZ_DB")
+
+    def test_object_exists_table_like_looks_in_its_schema(self, mocker):
+        conn = MockSnowflakeConnector()
+        show = mocker.patch.object(
+            conn, "show_table_objects", return_value=["db.s.svw"]
+        )
+
+        assert conn.object_exists("semantic view", "DB.S.SVW")
+        show.assert_called_with(SEMANTIC_VIEW, schema="db.s")
+
+    @pytest.mark.parametrize(
+        "kind, name, lookup, error",
+        [
+            (
+                "schema",
+                "DB.S",
+                "show_schemas",
+                snowflake_error("Database 'DB' does not exist or not authorized."),
+            ),
+            (
+                "table",
+                "DB.S.T",
+                "show_table_objects",
+                snowflake_error(
+                    "Object does not exist, or operation cannot be performed.", 2043
+                ),
+            ),
+        ],
+    )
+    def test_object_gone_with_its_parent(self, mocker, kind, name, lookup, error):
+        conn = MockSnowflakeConnector()
+        mocker.patch.object(conn, lookup, side_effect=error)
+
+        assert not conn.object_exists(kind, name)
+
+    def test_object_exists_when_lookup_fails_otherwise(self, mocker):
+        conn = MockSnowflakeConnector()
+        mocker.patch.object(
+            conn,
+            "show_schemas",
+            side_effect=sqlalchemy.exc.OperationalError("", None, Exception("timeout")),
+        )
+
+        assert conn.object_exists("schema", "DB.S")
