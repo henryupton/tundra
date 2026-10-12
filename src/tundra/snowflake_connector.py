@@ -3,7 +3,7 @@ import os
 import re
 import subprocess
 import warnings
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 from urllib.parse import quote_plus
 
 import snowflake.connector
@@ -42,6 +42,27 @@ DATABASE_ROLE_GRANT_TYPE = "database role"
 # its telemetry viewers (CORTEX_ANALYST_REQUESTS_VIEWER, AI_OBSERVABILITY_READER, ...)
 # as application roles, which GRANT DATABASE ROLE cannot reach.
 APPLICATION_ROLE_GRANT_TYPE = "application role"
+
+# Snowflake's wording for a statement whose target is gone, e.g. `Schema 'DB.SCHEMA' does
+# not exist or not authorized.` A missing parent is reported as the parent, so a grant on a
+# table in a dropped schema names the schema. Only databases, schemas and table-like objects
+# are matched: roles, warehouses and users are spec-managed, so their absence is a real
+# failure rather than something another process dropped mid-run.
+MISSING_OBJECT_PATTERN = re.compile(
+    r"\b(?P<kind>{}) '(?P<name>[^']+)' does not exist or not authorized".format(
+        "|".join(
+            sorted(
+                ["database", "schema"] + [t.name for t in TABLE_OBJECT_TYPES],
+                key=len,
+                reverse=True,
+            )
+        )
+    ),
+    re.IGNORECASE,
+)
+
+# SHOW ... IN SCHEMA against a schema that is gone fails with this rather than naming it.
+MISSING_CONTAINER_ERROR = "Object does not exist, or operation cannot be performed"
 
 # Don't show all the info log messages from Snowflake
 for logger_name in ["snowflake.connector", "bot", "boto3"]:
@@ -537,6 +558,37 @@ class SnowflakeConnector:
             rows = result.mappings().all() if result.returns_rows else []
 
         return _BufferedResult(rows)
+
+    @staticmethod
+    def missing_object(error: Exception) -> Optional[Tuple[str, str]]:
+        """
+        The (kind, name) a failed statement reports as missing, or None when it failed
+        for any other reason. See MISSING_OBJECT_PATTERN for which kinds count.
+        """
+        match = MISSING_OBJECT_PATTERN.search(str(error))
+        if match is None:
+            return None
+        return match.group("kind").lower(), match.group("name")
+
+    def object_exists(self, kind: str, name: str) -> bool:
+        """
+        Look an object up with the same SHOW that discovered it at plan time. A parent
+        that is gone too means the object is gone. A lookup that fails for any other
+        reason reports the object as present, since its absence can't be confirmed.
+        """
+        identifier = SnowflakeConnector.snowflaky(name)
+        parent = identifier.rsplit(".", 1)[0]
+        try:
+            if kind == "database":
+                found = [SnowflakeConnector.snowflaky(d) for d in self.show_databases()]
+            elif kind == "schema":
+                found = self.show_schemas(database=parent)
+            else:
+                object_type = next(t for t in TABLE_OBJECT_TYPES if t.name == kind)
+                found = self.show_table_objects(object_type, schema=parent)
+        except Exception as exc:
+            return not (self.missing_object(exc) or MISSING_CONTAINER_ERROR in str(exc))
+        return identifier in found
 
     def full_schema_list(self, schema: str) -> List[str]:
         """

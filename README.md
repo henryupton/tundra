@@ -549,7 +549,14 @@ the server and run; They are just returned to the user for examining them and
 running them manually.
 
 When this flag is not set, the commands will be executed on Snowflake and their
-status will be returned and shown on the command line.
+status will be returned and shown on the command line. A failed command prints
+Snowflake's error beneath it.
+
+Commands are generated from a snapshot of the account, so a database, schema or
+table that something else drops mid-run (a CI job recreating its schema, say)
+would fail every command still queued against it. Those print as `[VANISHED]`
+rather than `[ERROR]` once a fresh lookup confirms the object is gone. If the
+object has been recreated in the meantime, the command is retried once.
 
 ## Connection Parameters
 
