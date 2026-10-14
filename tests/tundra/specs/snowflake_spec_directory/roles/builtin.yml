@@ -1,0 +1,9 @@
+roles:
+  - securityadmin:
+      warehouses:
+        - loading
+      member_of:
+        - useradmin
+  - useradmin:
+      warehouses:
+        - loading

@@ -22,6 +22,9 @@ class MockSnowflakeConnector(SnowflakeConnector):
     def show_database_roles(self, database: str) -> List[str]:
         return []
 
+    def show_application_roles(self, application: str) -> List[str]:
+        return []
+
     def show_users(self) -> List[str]:
         return []
 
@@ -58,6 +61,11 @@ class MockSnowflakeConnector(SnowflakeConnector):
     ) -> List[str]:
         return []
 
+    def show_semantic_views(
+        self, database: Optional[str] = None, schema: Optional[str] = None
+    ) -> List[str]:
+        return []
+
     def show_future_grants(
         self, database: Optional[str] = None, schema: Optional[str] = None
     ) -> List[str]:
@@ -80,6 +88,9 @@ class MockSnowflakeConnector(SnowflakeConnector):
 
     def get_current_role(self) -> str:
         return "securityadmin"
+
+    def is_role_in_session(self, role: str) -> bool:
+        return False
 
     def full_schema_list(self, schema: str) -> List[str]:
         return []

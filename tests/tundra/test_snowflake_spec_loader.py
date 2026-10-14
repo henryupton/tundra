@@ -1461,6 +1461,23 @@ class TestSpecFileLoading:
             )
             mock_connector.get_current_role.assert_called()
 
+    def test_check_permissions_on_snowflake_server_as_role_inheriting_securityadmin(
+        self, test_dir, mocker, mock_connector
+    ):
+        """
+        A custom role granted SECURITYADMIN passes: IS_ROLE_IN_SESSION decides.
+        """
+        mocker.patch.object(
+            MockSnowflakeConnector, "get_current_role", return_value="grantor"
+        )
+        mocker.patch.object(
+            MockSnowflakeConnector, "is_role_in_session", return_value=True
+        )
+        SnowflakeSpecLoader(
+            os.path.join(test_dir, "specs", "snowflake_spec_blank.yml"), mock_connector
+        )
+        mock_connector.is_role_in_session.assert_called_once_with("securityadmin")
+
     def test_check_permissions_on_snowflake_server_gets_current_user_info(
         self, test_dir, mocker, mock_connector
     ):
@@ -1510,6 +1527,11 @@ class TestSpecFileLoading:
             "show_streamlits",
             return_value=[],
         )
+        mocker.patch.object(
+            SnowflakeConnector,
+            "show_semantic_views",
+            return_value=[],
+        )
 
         expected = [
             "ALTER USER \"first.last\" SET DISABLED = FALSE, TYPE = 'PERSON', DEFAULT_SECONDARY_ROLES = ()",
@@ -1526,7 +1548,7 @@ class TestSpecFileLoading:
             "GRANT usage ON schema database_1.write_schema TO ROLE test_role",
             "GRANT usage ON warehouse warehouse_1 TO ROLE test_role",
             "GRANT usage, monitor, create schema ON database database_1 TO ROLE test_role",
-            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server ON schema database_1.write_schema TO ROLE test_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create semantic view, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server ON schema database_1.write_schema TO ROLE test_role",
         ]
 
         mocker.patch.object(SnowflakeConnector, "show_views", return_value=[])
@@ -1860,3 +1882,188 @@ class TestParallelRoleFetch:
 
         assert any("db2.s.t_missing" in e for e in errors)
         assert "db2.s.t_missing" in loader.missing_entities["tables"]
+
+
+class TestUserParameters:
+    def test_unknown_parameter_fails_spec_load(self, mocker, mock_connector):
+        """Only allow-listed session parameters may appear under a user's `parameters`."""
+        spec_file_data = (
+            SnowflakeSchemaBuilder().add_user(parameters={"not_a_parameter": 1}).build()
+        )
+        mocker.patch("builtins.open", mocker.mock_open(read_data=spec_file_data))
+        mocker.patch.object(mock_connector, "show_users", return_value=["testusername"])
+
+        with pytest.raises(SpecLoadingError) as context:
+            SnowflakeSpecLoader("", mock_connector)
+
+        assert 'users "testusername", field "parameters"' in str(context.value)
+        assert "not_a_parameter" in str(context.value)
+
+    def test_unknown_timezone_fails_spec_load(self, mocker, mock_connector):
+        """A `timezone` that is not an IANA zone name is rejected before Snowflake sees it."""
+        spec_file_data = (
+            SnowflakeSchemaBuilder()
+            .add_user(parameters={"timezone": "Mars/Olympus_Mons"})
+            .build()
+        )
+        mocker.patch("builtins.open", mocker.mock_open(read_data=spec_file_data))
+        mocker.patch.object(mock_connector, "show_users", return_value=["testusername"])
+
+        with pytest.raises(SpecLoadingError) as context:
+            SnowflakeSpecLoader("", mock_connector)
+
+        assert "Mars/Olympus_Mons" in str(context.value)
+        assert "IANA" in str(context.value)
+
+    def test_missing_tz_database_fails_spec_load(self, mocker, mock_connector):
+        """No IANA database means no validation is possible; fail loudly rather than accept anything."""
+        spec_file_data = (
+            SnowflakeSchemaBuilder()
+            .add_user(parameters={"timezone": "Pacific/Auckland"})
+            .build()
+        )
+        mocker.patch("builtins.open", mocker.mock_open(read_data=spec_file_data))
+        mocker.patch.object(mock_connector, "show_users", return_value=["testusername"])
+        mocker.patch("tundra.spec_file_loader.iana_timezones", return_value=set())
+
+        with pytest.raises(SpecLoadingError) as context:
+            SnowflakeSpecLoader("", mock_connector)
+
+        assert "tzdata" in str(context.value)
+
+    def test_valid_parameters_load(self, mocker, mock_connector):
+        """A spec with allow-listed parameters and a real IANA zone loads cleanly."""
+        spec_file_data = (
+            SnowflakeSchemaBuilder()
+            .add_user(parameters={"timezone": "Pacific/Auckland", "week_start": 1})
+            .build()
+        )
+        mocker.patch("builtins.open", mocker.mock_open(read_data=spec_file_data))
+        mocker.patch.object(mock_connector, "show_users", return_value=["testusername"])
+
+        SnowflakeSpecLoader("", mock_connector)
+
+
+class TestApplicationRoleEntities:
+    def test_dotted_member_of_ref_resolves_to_application_role(
+        self, mocker, mock_connector
+    ):
+        """
+        A DB.ROLE reference SHOW DATABASE ROLES does not know is looked up as an
+        application role of the same-named application and moved to
+        application_role_refs; the real database role stays where it was.
+        """
+        spec_file_data = (
+            SnowflakeSchemaBuilder()
+            .add_role(
+                member_of=[
+                    "snowflake.cortex_analyst_requests_viewer",
+                    "snowflake.usage_viewer",
+                ]
+            )
+            .build()
+        )
+        mocker.patch("builtins.open", mocker.mock_open(read_data=spec_file_data))
+        mocker.patch.object(mock_connector, "show_roles", return_value=["testrole"])
+        mocker.patch.object(
+            mock_connector,
+            "show_database_roles",
+            return_value=['"SNOWFLAKE".usage_viewer'],
+        )
+        mocker.patch.object(
+            mock_connector,
+            "show_application_roles",
+            return_value=['"SNOWFLAKE".cortex_analyst_requests_viewer'],
+        )
+
+        loader = SnowflakeSpecLoader("", mock_connector)
+
+        mock_connector.show_application_roles.assert_called_once_with(
+            application="snowflake"
+        )
+        assert loader.entities["application_role_refs"] == {
+            "snowflake.cortex_analyst_requests_viewer"
+        }
+        assert loader.entities["database_role_refs"] == {"snowflake.usage_viewer"}
+
+    def test_application_role_membership_generates_grant_application_role(
+        self, mocker, mock_connector
+    ):
+        spec_file_data = (
+            SnowflakeSchemaBuilder()
+            .add_role(
+                member_of=[
+                    "snowflake.cortex_analyst_requests_viewer",
+                    "snowflake.usage_viewer",
+                ]
+            )
+            .build()
+        )
+        mocker.patch("builtins.open", mocker.mock_open(read_data=spec_file_data))
+        mocker.patch.object(mock_connector, "show_roles", return_value=["testrole"])
+        mocker.patch.object(
+            mock_connector,
+            "show_database_roles",
+            return_value=['"SNOWFLAKE".usage_viewer'],
+        )
+        mocker.patch.object(
+            mock_connector,
+            "show_application_roles",
+            return_value=['"SNOWFLAKE".cortex_analyst_requests_viewer'],
+        )
+
+        loader = SnowflakeSpecLoader("", mock_connector)
+        sql_commands = [
+            command["sql"] for command in loader.generate_permission_queries()
+        ]
+
+        assert (
+            'GRANT APPLICATION ROLE "SNOWFLAKE".cortex_analyst_requests_viewer'
+            " TO ROLE testrole" in sql_commands
+        )
+        assert 'GRANT DATABASE ROLE "SNOWFLAKE".usage_viewer TO ROLE testrole' in (
+            sql_commands
+        )
+
+    def test_dotted_member_of_ref_missing_everywhere_errors(
+        self, mocker, mock_connector
+    ):
+        spec_file_data = (
+            SnowflakeSchemaBuilder().add_role(member_of=["mydb.db_role_1"]).build()
+        )
+        mocker.patch("builtins.open", mocker.mock_open(read_data=spec_file_data))
+        mocker.patch.object(mock_connector, "show_roles", return_value=["testrole"])
+        mocker.patch.object(mock_connector, "show_database_roles", return_value=[])
+        mocker.patch.object(mock_connector, "show_application_roles", return_value=[])
+
+        with pytest.raises(SpecLoadingError) as context:
+            SnowflakeSpecLoader("", mock_connector)
+
+        assert (
+            "Missing Entity Error: Database role mydb.db_role_1 was not found"
+            in str(context.value)
+        )
+        mock_connector.show_application_roles.assert_called_once_with(
+            application="mydb"
+        )
+
+    def test_application_roles_not_looked_up_when_all_database_roles_exist(
+        self, mocker, mock_connector
+    ):
+        spec_file_data = (
+            SnowflakeSchemaBuilder()
+            .add_role(member_of=["snowflake.usage_viewer"])
+            .build()
+        )
+        mocker.patch("builtins.open", mocker.mock_open(read_data=spec_file_data))
+        mocker.patch.object(mock_connector, "show_roles", return_value=["testrole"])
+        mocker.patch.object(
+            mock_connector,
+            "show_database_roles",
+            return_value=['"SNOWFLAKE".usage_viewer'],
+        )
+        mocker.patch.object(mock_connector, "show_application_roles", return_value=[])
+
+        SnowflakeSpecLoader("", mock_connector)
+
+        mock_connector.show_application_roles.assert_not_called()

@@ -1,0 +1,5 @@
+users:
+  - airflow_demo:
+      can_login: yes
+      member_of:
+        - demo

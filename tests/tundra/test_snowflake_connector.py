@@ -1,11 +1,13 @@
 import os
 
 import pytest
+import snowflake.connector
 import sqlalchemy
 from tundra.snowflake_connector import SnowflakeConnector
 from tundra.table_object_types import (
     DYNAMIC_TABLE,
     ICEBERG_TABLE,
+    SEMANTIC_VIEW,
     STREAMLIT,
     TABLE,
     VIEW,
@@ -666,6 +668,10 @@ class TestSnowflakyFuturePlaceholders:
             SnowflakeConnector.snowflaky("db_1.schema_1.<STREAMLIT>")
             == "db_1.schema_1.<streamlit>"
         )
+        assert (
+            SnowflakeConnector.snowflaky("db_1.schema_1.<SEMANTIC_VIEW>")
+            == "db_1.schema_1.<semantic_view>"
+        )
         assert SnowflakeConnector.snowflaky("db_1.<TABLE>") == "db_1.<table>"
         assert SnowflakeConnector.snowflaky("db_1.<VIEW>") == "db_1.<view>"
         assert SnowflakeConnector.snowflaky("db_1.<SCHEMA>") == "db_1.<schema>"
@@ -696,6 +702,9 @@ class TestShowTableObjects:
 
         conn.show_table_objects(STREAMLIT, schema="db_1.schema_1")
         run_query.assert_called_with("SHOW STREAMLITS IN SCHEMA db_1.schema_1")
+
+        conn.show_table_objects(SEMANTIC_VIEW, schema="db_1.schema_1")
+        run_query.assert_called_with("SHOW SEMANTIC VIEWS IN SCHEMA db_1.schema_1")
 
         conn.show_table_objects(ICEBERG_TABLE, database="db_1")
         run_query.assert_called_with("SHOW ICEBERG TABLES IN DATABASE db_1")
@@ -733,3 +742,253 @@ class TestShowTableObjects:
         generic.assert_called_with(ICEBERG_TABLE, database="db", schema=None)
         conn.show_streamlits(database="db")
         generic.assert_called_with(STREAMLIT, database="db", schema=None)
+        conn.show_semantic_views(database="db")
+        generic.assert_called_with(SEMANTIC_VIEW, database="db", schema=None)
+
+
+class TestApplicationRoles:
+    def test_show_application_roles(self, mocker):
+        """
+        Application roles come back as app.role FQNs. The role name is prefixed
+        unconditionally because it may itself contain periods.
+        """
+        mocker.patch("sqlalchemy.create_engine")
+        conn = SnowflakeConnector()
+        conn.run_query = mocker.MagicMock()
+        mocker.patch.object(
+            conn.run_query(),
+            "fetchall",
+            return_value=[
+                {"name": "CORTEX_ANALYST_REQUESTS_VIEWER"},
+                {"name": "CORTEX-MODEL-ROLE-GEMINI-2.5-FLASH"},
+            ],
+        )
+
+        application_roles = conn.show_application_roles(application="snowflake")
+
+        conn.run_query.assert_has_calls(
+            [mocker.call('SHOW APPLICATION ROLES IN APPLICATION "SNOWFLAKE"')]
+        )
+        assert application_roles == [
+            '"SNOWFLAKE".cortex_analyst_requests_viewer',
+            '"SNOWFLAKE"."CORTEX-MODEL-ROLE-GEMINI-2.5-FLASH"',
+        ]
+
+    def test_show_application_roles_not_an_application(self, mocker):
+        """
+        A database that is not an application has no application roles, rather
+        than failing the spec load.
+        """
+        mocker.patch("sqlalchemy.create_engine")
+        conn = SnowflakeConnector()
+        conn.run_query = mocker.MagicMock(side_effect=Exception("does not exist"))
+
+        assert conn.show_application_roles(application="mydb") == []
+
+    @pytest.mark.parametrize("granted_on", ["APPLICATION_ROLE", "APPLICATION ROLE"])
+    def test_show_grants_to_role_application_roles(self, granted_on, mocker):
+        """
+        Application role grants are keyed under "application role" whichever spelling
+        Snowflake reports, normalised like the spec side, and the grants the
+        application made itself (granted_by empty or the application) are dropped.
+        """
+        mocker.patch("sqlalchemy.create_engine")
+        conn = SnowflakeConnector()
+        conn.run_query = mocker.MagicMock()
+        mocker.patch.object(
+            conn.run_query(),
+            "fetchall",
+            return_value=[
+                {
+                    "privilege": "USAGE",
+                    "granted_on": granted_on,
+                    "name": "SNOWFLAKE.CORTEX_ANALYST_REQUESTS_VIEWER",
+                    "granted_by": "SECURITYADMIN",
+                },
+                {
+                    "privilege": "USAGE",
+                    "granted_on": granted_on,
+                    "name": 'SNOWFLAKE."CORTEX-MODEL-ROLE-GEMINI-2.5-FLASH"',
+                    "granted_by": "ACCOUNTADMIN",
+                },
+                {
+                    "privilege": "USAGE",
+                    "granted_on": granted_on,
+                    "name": "SNOWFLAKE.AI_OBSERVABILITY_READER",
+                    "granted_by": "SNOWFLAKE",
+                },
+                {
+                    "privilege": "USAGE",
+                    "granted_on": granted_on,
+                    "name": "SNOWFLAKE.DATA_QUALITY_MONITORING_VIEWER",
+                    "granted_by": "",
+                },
+            ],
+        )
+
+        grants = conn.show_grants_to_role("test_role")
+
+        assert grants == {
+            "usage": {
+                "application role": [
+                    '"SNOWFLAKE".cortex_analyst_requests_viewer',
+                    '"SNOWFLAKE"."CORTEX-MODEL-ROLE-GEMINI-2.5-FLASH"',
+                ]
+            }
+        }
+
+    @pytest.mark.parametrize(
+        "name,expected",
+        [
+            (
+                "snowflake.cortex_analyst_requests_viewer",
+                '"SNOWFLAKE".cortex_analyst_requests_viewer',
+            ),
+            (
+                "SNOWFLAKE.CORTEX_ANALYST_REQUESTS_VIEWER",
+                '"SNOWFLAKE".cortex_analyst_requests_viewer',
+            ),
+            (
+                'SNOWFLAKE."CORTEX-MODEL-ROLE-GEMINI-2.5-FLASH"',
+                '"SNOWFLAKE"."CORTEX-MODEL-ROLE-GEMINI-2.5-FLASH"',
+            ),
+            ("myapp.my_role", "myapp.my_role"),
+            ("snowflake", '"SNOWFLAKE"'),
+        ],
+    )
+    def test_snowflaky_application_role(self, name, expected):
+        assert SnowflakeConnector.snowflaky_application_role(name) == expected
+
+    @pytest.mark.parametrize(
+        "granted_on,expected",
+        [
+            ("APPLICATION_ROLE", "application role"),
+            ("APPLICATION ROLE", "application role"),
+            ("DATABASE_ROLE", "database role"),
+            ("TABLE", "table"),
+        ],
+    )
+    def test_normalise_granted_on_application_role(self, granted_on, expected):
+        assert SnowflakeConnector.normalise_granted_on(granted_on) == expected
+
+
+def snowflake_error(message: str, errno: int = 2003) -> sqlalchemy.exc.DBAPIError:
+    """A failure shaped like the one run_query raises, Snowflake's error wrapped by SQLAlchemy."""
+    orig = snowflake.connector.errors.ProgrammingError(
+        msg=f"SQL compilation error:\n{message}", errno=errno, sqlstate="02000"
+    )
+    return sqlalchemy.exc.ProgrammingError("GRANT ...", None, orig)
+
+
+class TestMissingObjects:
+    # Wording captured from live Snowflake for each kind.
+    @pytest.mark.parametrize(
+        "message, expected",
+        [
+            (
+                "Database 'ZZ_DB' does not exist or not authorized.",
+                ("database", "ZZ_DB"),
+            ),
+            (
+                "Schema 'TEST_ANALYTICS.PR_1__DATA_1' does not exist or not authorized.",
+                ("schema", "TEST_ANALYTICS.PR_1__DATA_1"),
+            ),
+            (
+                "Table 'DB.S.T' does not exist or not authorized.",
+                ("table", "DB.S.T"),
+            ),
+            ("View 'DB.S.V' does not exist or not authorized.", ("view", "DB.S.V")),
+            (
+                "Dynamic table 'DB.S.D' does not exist or not authorized.",
+                ("dynamic table", "DB.S.D"),
+            ),
+            (
+                "Iceberg table 'DB.S.I' does not exist or not authorized.",
+                ("iceberg table", "DB.S.I"),
+            ),
+            (
+                "Streamlit 'DB.S.APP' does not exist or not authorized.",
+                ("streamlit", "DB.S.APP"),
+            ),
+            (
+                "Semantic View 'DB.S.SVW' does not exist or not authorized.",
+                ("semantic view", "DB.S.SVW"),
+            ),
+        ],
+    )
+    def test_missing_object_names_kind_and_object(self, message, expected):
+        assert SnowflakeConnector.missing_object(snowflake_error(message)) == expected
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "Role 'ZZ_ROLE' does not exist or not authorized.",
+            "Warehouse 'ZZ_WH' does not exist or not authorized.",
+            "Insufficient privileges to operate on schema 'S'.",
+        ],
+    )
+    def test_missing_object_ignores_spec_managed_entities_and_other_failures(
+        self, message
+    ):
+        assert SnowflakeConnector.missing_object(snowflake_error(message)) is None
+
+    def test_object_exists_schema(self, mocker):
+        conn = MockSnowflakeConnector()
+        show_schemas = mocker.patch.object(
+            conn, "show_schemas", return_value=["test_analytics.pr_1__data_1"]
+        )
+
+        assert conn.object_exists("schema", "TEST_ANALYTICS.PR_1__DATA_1")
+        assert not conn.object_exists("schema", "TEST_ANALYTICS.PR_2__DATA_2")
+        show_schemas.assert_called_with(database="test_analytics")
+
+    def test_object_exists_database(self, mocker):
+        conn = MockSnowflakeConnector()
+        mocker.patch.object(conn, "show_databases", return_value=["analytics"])
+
+        assert conn.object_exists("database", "ANALYTICS")
+        assert not conn.object_exists("database", "ZZ_DB")
+
+    def test_object_exists_table_like_looks_in_its_schema(self, mocker):
+        conn = MockSnowflakeConnector()
+        show = mocker.patch.object(
+            conn, "show_table_objects", return_value=["db.s.svw"]
+        )
+
+        assert conn.object_exists("semantic view", "DB.S.SVW")
+        show.assert_called_with(SEMANTIC_VIEW, schema="db.s")
+
+    @pytest.mark.parametrize(
+        "kind, name, lookup, error",
+        [
+            (
+                "schema",
+                "DB.S",
+                "show_schemas",
+                snowflake_error("Database 'DB' does not exist or not authorized."),
+            ),
+            (
+                "table",
+                "DB.S.T",
+                "show_table_objects",
+                snowflake_error(
+                    "Object does not exist, or operation cannot be performed.", 2043
+                ),
+            ),
+        ],
+    )
+    def test_object_gone_with_its_parent(self, mocker, kind, name, lookup, error):
+        conn = MockSnowflakeConnector()
+        mocker.patch.object(conn, lookup, side_effect=error)
+
+        assert not conn.object_exists(kind, name)
+
+    def test_object_exists_when_lookup_fails_otherwise(self, mocker):
+        conn = MockSnowflakeConnector()
+        mocker.patch.object(
+            conn,
+            "show_schemas",
+            side_effect=sqlalchemy.exc.OperationalError("", None, Exception("timeout")),
+        )
+
+        assert conn.object_exists("schema", "DB.S")

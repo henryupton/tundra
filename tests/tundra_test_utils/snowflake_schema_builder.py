@@ -1,6 +1,6 @@
 import os
 import json
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 
 class SnowflakeSchemaBuilder:
@@ -65,6 +65,11 @@ class SnowflakeSchemaBuilder:
                         spec_yaml.append(f"        - {role}")
                 else:
                     spec_yaml.append("      default_secondary_roles: []")
+
+            if user["parameters"] is not None:
+                spec_yaml.append("      parameters:")
+                for key, value in user["parameters"].items():
+                    spec_yaml.append(f"        {key}: {value}")
 
         if len(self.warehouses) > 0:
             spec_yaml.append("warehouses:")
@@ -300,6 +305,7 @@ class SnowflakeSchemaBuilder:
         default_role: Optional[str] = None,
         default_secondary_roles: Optional[List[str]] = None,
         type: Optional[str] = None,
+        parameters: Optional[Dict[str, Any]] = None,
     ):
         """
         Adds user to spec file
@@ -320,6 +326,7 @@ class SnowflakeSchemaBuilder:
                 "default_role": default_role,
                 "default_secondary_roles": default_secondary_roles,
                 "type": type,
+                "parameters": parameters,
             }
         )
         return self

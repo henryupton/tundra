@@ -112,6 +112,14 @@ def test_roles_spec_file():
             name="test_user_with_invalid_type",
             type="INVALID_TYPE",
         )
+        .add_user(
+            name="test_user_with_parameters",
+            parameters={
+                "timezone": "Pacific/Auckland",
+                "week_start": 1,
+                "client_session_keep_alive": True,
+            },
+        )
         .build()
     )
     yield spec_file_data
@@ -147,6 +155,7 @@ def test_roles_mock_connector(mocker):
             "test_user_with_legacy_service_type",
             "test_user_with_legacy_service_mixed_case",
             "test_user_with_invalid_type",
+            "test_user_with_parameters",
         ],
     )
     yield mock_connector
@@ -577,3 +586,20 @@ class TestSnowflakeUserProperties:
             spec_loader.generate_permission_queries(
                 users=["test_user_with_invalid_type"], run_list=["users"]
             )
+
+    def test_user_with_parameters(
+        self, mocker, test_roles_mock_connector, test_roles_spec_file
+    ):
+        """Session parameters under `parameters` are set on the user: strings quoted, numbers and booleans bare."""
+
+        mocker.patch("builtins.open", mocker.mock_open(read_data=test_roles_spec_file))
+        spec_loader = SnowflakeSpecLoader(spec_path="", conn=test_roles_mock_connector)
+        queries = spec_loader.generate_permission_queries(
+            users=["test_user_with_parameters"], run_list=["users"]
+        )
+        assert queries == [
+            {
+                "already_granted": False,
+                "sql": "ALTER USER test_user_with_parameters SET DISABLED = FALSE, TYPE = 'PERSON', DEFAULT_SECONDARY_ROLES = (), TIMEZONE = 'Pacific/Auckland', WEEK_START = 1, CLIENT_SESSION_KEEP_ALIVE = TRUE",
+            }
+        ]

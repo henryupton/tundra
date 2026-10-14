@@ -1,5 +1,6 @@
 import os
 import sys
+from typing import Optional
 
 import click
 
@@ -31,11 +32,53 @@ def print_command(command, diff, dry=False):
     elif command.get("run_status") is None:
         foreground_color = "cyan"
         run_prefix = "[SKIPPED] "
+    elif command.get("vanished"):
+        foreground_color = "yellow"
+        run_prefix = "[VANISHED] "
     else:
         foreground_color = "red"
         run_prefix = "[ERROR] "
 
     click.secho(f"{diff_prefix}{run_prefix}{command['sql']};", fg=foreground_color)
+    if command.get("error"):
+        click.secho(f"    {command['error']}", fg=foreground_color)
+
+
+def error_detail(error: Exception) -> str:
+    """Snowflake's own message on one line, without SQLAlchemy's wrapper and SQL echo."""
+    return " ".join(str(getattr(error, "orig", error)).split())
+
+
+def _run(conn, sql: str) -> Optional[Exception]:
+    try:
+        conn.run_query(sql)
+    except Exception as exc:
+        return exc
+    return None
+
+
+def apply_query(conn, query):
+    """
+    Run one generated statement, recording run_status and, on failure, the error.
+
+    Statements are generated from a snapshot of the account, so an object something else
+    drops between planning and applying (a CI job recreating its schema, say) fails every
+    statement still queued against it. A fresh lookup separates the two outcomes: still
+    gone marks the statement vanished, as there is nothing left to grant on; back again
+    means it was recreated, so the statement is retried once against the new object.
+    """
+    sql = query.get("sql", "")
+    error = _run(conn, sql)
+
+    missing = SnowflakeConnector.missing_object(error) if error else None
+    if missing and conn.object_exists(*missing):
+        error = _run(conn, sql)
+    elif missing:
+        query["vanished"] = True
+
+    query["run_status"] = error is None
+    if error is not None:
+        query["error"] = error_detail(error)
 
 
 @cli.command()  # type: ignore
@@ -95,7 +138,7 @@ def run(
 ):
     """
     Grant the permissions provided in the provided specification file for specific users and roles.
-    This fork includes support for Iceberg tables, dynamic tables, streamlit apps, external volumes, and catalog integrations.
+    This fork includes support for Iceberg tables, dynamic tables, streamlit apps, semantic views, external volumes, and catalog integrations.
     """
     if role and user:
         run_list = ["roles", "users"]
@@ -240,17 +283,9 @@ def tundra_grants(
     conn = SnowflakeConnector()
     for query in sql_grant_queries:
         if not dry:
-            status = None
             if not query.get("already_granted"):
-                try:
-                    conn.run_query(query.get("sql", ""))
-                    status = True
-                except Exception:
-                    status = False
-
-                ran_query = query
-                ran_query["run_status"] = status
-                print_command(ran_query, diff)
+                apply_query(conn, query)
+                print_command(query, diff)
             # If already granted, print command
             elif print_skipped:
                 print_command(query, diff)

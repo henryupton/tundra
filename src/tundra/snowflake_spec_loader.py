@@ -7,7 +7,11 @@ from tundra.concurrency import parallel_map
 from tundra.entities import EntityGenerator
 from tundra.error import SpecLoadingError
 from tundra.logger import GLOBAL_LOGGER as logger
-from tundra.snowflake_connector import DATABASE_ROLE_GRANT_TYPE, SnowflakeConnector
+from tundra.snowflake_connector import (
+    APPLICATION_ROLE_GRANT_TYPE,
+    DATABASE_ROLE_GRANT_TYPE,
+    SnowflakeConnector,
+)
 from tundra.snowflake_grants import SnowflakeGrantsGenerator
 from tundra.spec_file_loader import load_spec
 from tundra.table_object_types import PRIVILEGE_FAMILIES
@@ -78,6 +82,9 @@ class SnowflakeSpecLoader:
                 "Skipping entity validation checks (--skip-validation flag set)",
                 fg="yellow",
             )
+            # Application roles are only told apart from database roles by asking
+            # Snowflake, so that one lookup still runs when validation is skipped.
+            self.resolve_application_role_refs(self.conn)
 
         # Get the privileges granted to users and roles in the Snowflake account
         # Used in order to figure out which permissions in the spec file are
@@ -107,10 +114,13 @@ class SnowflakeSpecLoader:
         click.secho(f"  Current user is: {conn.get_current_user()}.", fg="green")
 
         current_role = conn.get_current_role()
-        if "securityadmin" != current_role:
+        if current_role != "securityadmin" and not conn.is_role_in_session(
+            "securityadmin"
+        ):
             error_messages.append(
-                "Current role is not securityadmin! "
-                "Tundra expects to run as securityadmin, please update your connection settings."
+                "Current role is not securityadmin and does not inherit it! "
+                "Tundra needs MANAGE GRANTS: run as securityadmin, or as a role that "
+                "has been granted securityadmin."
             )
         click.secho(f"  Current role is: {current_role}.", fg="green")
 
@@ -264,26 +274,60 @@ class SnowflakeSpecLoader:
             logger.debug("`roles` not found in spec, skipping SHOW ROLES call.")
         return error_messages
 
+    def resolve_application_role_refs(self, conn) -> List[str]:
+        """
+        Sort the DB.ROLE references in member_of into database roles and application
+        roles by asking Snowflake, and return the references that are neither.
+
+        The spec spells both kinds the same way (snowflake.usage_viewer is a database
+        role, snowflake.cortex_analyst_requests_viewer an application role), so a
+        reference SHOW DATABASE ROLES does not know is looked up with SHOW APPLICATION
+        ROLES for an application of the same name. Resolved application roles move to
+        entities["application_role_refs"] so the grants generator emits GRANT
+        APPLICATION ROLE for them.
+        """
+        unresolved: List[str] = []
+        refs_by_database: Dict[str, Any] = {}
+        for database_role in self.entities["database_role_refs"]:
+            database = database_role.split(".")[0]
+            refs_by_database.setdefault(database, set()).add(database_role)
+
+        for database, database_roles in refs_by_database.items():
+            existing_database_roles = conn.show_database_roles(database=database)
+            not_database_roles = [
+                database_role
+                for database_role in sorted(database_roles)
+                if SnowflakeConnector.snowflaky_database_role(database_role)
+                not in existing_database_roles
+            ]
+            if not not_database_roles:
+                continue
+
+            existing_application_roles = conn.show_application_roles(
+                application=database
+            )
+            for ref in not_database_roles:
+                if (
+                    SnowflakeConnector.snowflaky_application_role(ref)
+                    in existing_application_roles
+                ):
+                    self.entities["application_role_refs"].add(ref)
+                    self.entities["database_role_refs"].discard(ref)
+                else:
+                    unresolved.append(ref)
+
+        return unresolved
+
     def check_database_role_entities(self, conn):
         error_messages = []
         if len(self.entities["database_role_refs"]) > 0:
-            refs_by_database: Dict[str, Any] = {}
-            for database_role in self.entities["database_role_refs"]:
-                database = database_role.split(".")[0]
-                refs_by_database.setdefault(database, set()).add(database_role)
-
-            for database, database_roles in refs_by_database.items():
-                existing_database_roles = conn.show_database_roles(database=database)
-                for database_role in database_roles:
-                    if (
-                        SnowflakeConnector.snowflaky_database_role(database_role)
-                        not in existing_database_roles
-                    ):
-                        self.missing_entities["database_roles"].add(database_role)
-                        error_messages.append(
-                            f"Missing Entity Error: Database role {database_role} was not"
-                            " found on Snowflake Server. Please create it before continuing."
-                        )
+            for database_role in self.resolve_application_role_refs(conn):
+                self.missing_entities["database_roles"].add(database_role)
+                error_messages.append(
+                    f"Missing Entity Error: Database role {database_role} was not"
+                    " found on Snowflake Server, as a database role or an application"
+                    " role. Please create it before continuing."
+                )
         else:
             logger.debug(
                 "no database roles referenced in spec, skipping SHOW DATABASE ROLES call."
@@ -524,10 +568,10 @@ class SnowflakeSpecLoader:
         # show_account_grants_to_role), which also carries the grantor. Pass through.
         elif grant_on == "account":
             return filter_set
-        # Database roles are db.role FQNs, but membership of them is managed the same
-        # way as account roles: the spec is the source of truth regardless of whether
-        # the owning database is tracked. Pass through as-is.
-        elif grant_on == DATABASE_ROLE_GRANT_TYPE:
+        # Database and application roles are db.role / app.role FQNs, but membership
+        # of them is managed the same way as account roles: the spec is the source of
+        # truth regardless of whether the owning database is tracked. Pass through as-is.
+        elif grant_on in (DATABASE_ROLE_GRANT_TYPE, APPLICATION_ROLE_GRANT_TYPE):
             return filter_set
         else:
             # Everything else should be binary: it has a dot or it doesn't
@@ -612,6 +656,7 @@ class SnowflakeSpecLoader:
             ignore_memberships=ignore_memberships,
             conn=self.conn,
             account_grants_to_role=self.account_grants_to_role,
+            application_roles=self.entities["application_role_refs"],
         )
 
         click.secho("Generating permission Queries:", fg="green")
