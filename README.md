@@ -1,683 +1,148 @@
 # Tundra
 
-**Snowflake permissions management tool with Apache Iceberg table support**
+A fork of [Permifrost](https://gitlab.com/gitlab-data/permifrost) for managing Snowflake permissions from a
+declarative YAML spec. It's faster on big accounts and understands the object types Snowflake has shipped since
+Permifrost stopped keeping up.
 
-Tundra is a modern fork of tundra that adds comprehensive support for Apache Iceberg tables in Snowflake, while maintaining all the original functionality for managing permissions on databases, schemas, tables, and views.
-
-We welcome contributions! Please submit issues or pull requests on [GitHub](https://github.com/henryupton/tundra/issues).
-
-## Installation
-
-Install the latest version using:
+Anything not covered here (spec structure, `read`/`write` semantics, wildcards, ownership, `--diff`, `--role`,
+`--user`, `!include`, `require-owner`) works exactly as it does upstream. See the
+[Permifrost README](https://gitlab.com/gitlab-data/permifrost/-/blob/master/README.md).
 
 ```bash
-pip install tundra-cli==1.0.1
-```
-
-For development or latest features, install directly from GitHub:
-
-```bash
+pip install tundra-cli
+# or the latest main
 pip install git+https://github.com/henryupton/tundra.git
+
+tundra run spec.yml --dry
+tundra spec-test spec.yml
 ```
 
-## ⭐ What's New: Iceberg Table & External Volume Support
+## Performance
 
-Tundra extends the original tundra functionality with comprehensive support for **Apache Iceberg tables** and **External Volumes** in Snowflake:
+Permifrost runs every Snowflake round trip serially, and on a large account most of them are wasted.
 
-### 🏔️ Iceberg Table Support
-- 🔍 **Discovery**: Automatically discovers Iceberg tables using `SHOW ICEBERG TABLES`
-- 📊 **Permissions**: Grants both read (`SELECT`) and write (`INSERT`, `UPDATE`, `DELETE`, etc.) privileges
-- 🌟 **Wildcards**: Includes Iceberg tables in schema-level wildcards (`database.schema.*`)
-- 🔄 **Revocation**: Properly revokes Iceberg table permissions when configurations change
+- **Parallel fetch.** Role grants, user grants and table-existence checks are fetched concurrently and merged
+  back in a deterministic order, so output is identical run to run. Concurrency is `--max-workers` (or
+  `PERMISSION_BOT_MAX_WORKERS`, default 8), and the connection pool is sized to match.
+- **No enumeration under wildcards.** A `db.schema.*` grant is issued as `ON ALL` plus `ON FUTURE`, yet
+  Permifrost still ran `SHOW <objects> IN SCHEMA` per schema, per object type, per role just to build its revoke
+  allowlist. Tundra tracks wildcard coverage by schema scope instead, so those calls are gone. On one production
+  spec that was 1,658s of a 4,938s apply. Emitted SQL is unchanged.
+- **Skip what you don't need.** `--skip-validation` skips the entity-existence checks, and
+  `--ignore-missing-objects` drops grants on missing objects rather than failing the run.
 
-### 📦 External Volume Support
-- 🔗 **Storage Access**: Grants `USAGE` privileges on external volumes (S3, Azure, GCS)
-- ⚡ **Essential for Iceberg**: External volumes are required for Iceberg table operations
-- 🔄 **Auto-revocation**: Automatically revokes unused external volume access
-- 🛡️ **Security**: Manages fine-grained access to external storage locations
+## New object types
 
-Example configuration:
+All table-like types ride the existing `tables` read/write lists, and a wildcard covers every type.
+
+| Type          | read     | write                                          | Schema write adds      |
+| ------------- | -------- | ---------------------------------------------- | ---------------------- |
+| Iceberg table | `select` | `insert, update, delete, truncate, references` | `create iceberg table` |
+| Dynamic table | `select` | `monitor, operate`                             |                        |
+| Streamlit     | `usage`  | `usage`                                        | `create streamlit`     |
+| Semantic view | `select` | `select`                                       | `create semantic view` |
+
+These matter because Snowflake's `ON ALL TABLES` / `ON ALL VIEWS` don't reach any of them, so under Permifrost they
+go silently ungranted. Schema write also grants `create cortex search service` and `create mcp server`. New types
+are one entry in [`src/tundra/table_object_types.py`](src/tundra/table_object_types.py).
+
+**External volumes** are a top-level spec section, granted `USAGE` from a role's `external_volumes:` list (needed to
+read or write Iceberg tables):
+
 ```yaml
-# Define external volumes for Iceberg tables
 external_volumes:
-  - s3_iceberg_volume:
+  - s3_iceberg:
       storage_provider: s3
-      owner: sysadmin
 
 roles:
-  data_engineer:
-    # Grant access to external volumes (required for Iceberg tables)
-    external_volumes:
-      - s3_iceberg_volume
-    privileges:
-      tables:
-        read:
-          - analytics.public.*           # Includes Iceberg tables
-        write:
-          - analytics.public.output_*    # Write access to Iceberg tables
+  - data_engineer:
+      external_volumes: [s3_iceberg]
 ```
 
-## Usage
+## Database and application roles
 
-Use this command to check and manage the permissions of a Snowflake account.
-
-```bash
-tundra [-v] run <spec_file> [--role] [--dry] [--diff] [--user] [--ignore-memberships]
-```
-
-```shell
-#> tundra run --help
-Usage: tundra run [OPTIONS] SPEC
-
-  Grant the permissions provided in the provided specification file for
-  specific users and roles
-
-Options:
-  --dry        Do not actually run, just check.
-  --diff       Show full diff, both new and existing permissions, use with -v.
-  --role TEXT  Run grants for specific roles. Usage: --role testrole --role
-               testrole2.
-
-  --user TEXT  Run grants for specific users. Usage: --user testuser --user
-               testuser2.
-
-  --ignore-memberships  Do not handle role membership grants/revokes
-  --help       Show this message and exit.
-```
-
-Use this utility command to run the SnowFlake specification loader to confirm that your `roles.yml` file is valid.
-```bash
-tundra [-v] spec-test <spec_file> [--role] [--user] [--ignore-memberships]
-```
-
-```shell
-#>  tundra spec-test --help
-Usage: tundra spec-test [OPTIONS] SPEC
-
-  Load SnowFlake spec based on the roles.yml provided. CLI use only for confirming specifications are valid.
-
-Options:
-  --role TEXT           Run grants for specific roles. Usage: --role testrole
-                        --role testrole2.
-
-  --user TEXT           Run grants for specific users. Usage: --user testuser
-                        --user testuser2.
-
-  --ignore-memberships  Do not handle role membership grants/revokes
-  --run-list TEXT       Run grants for specific users. Usage: --user testuser
-                        --user testuser2.
-
-  --help                Show this message and exit.
-```
-Given the parameters to connect to a Snowflake account and a YAML file (a
-"spec") representing the desired database configuration, this command makes sure
-that the configuration of that database matches the spec. If there are
-differences, it will return the sql grant and revoke commands required to make
-it match the spec. If there are additional permissions set in the database this
-command will create the necessary revoke commands with the exception of:
-
-- Object Ownership
-- Warehouse Privileges
-
-Furthermore, if you are using the recommended role of `SECURITYADMIN`, `ALTER USER ...` commands will fail on users that are owned by `ACCOUNTADMIN`. In these circumstances, it is highly recommended to log into the Snowflake instance and update ownership of all users to belong to `USERADMIN` as per Snowflake recommended best practices.
-
-Lastly, note that the default roles cannot have their role hierarchies modified. As such, any `GRANT ROLE <default role> TO ROLE <default role>;` will be excluded from the permission set generated by Tundra.
-
-For example:
-
-```yaml
-...
-roles:
-  public:
-    member_of:
-      - useradmin
-  securityadmin:
-    member_of:
-      - useradmin
-...
-```
-Both of the above relationships will be skipped as this attempts to modify a default Snowflake permission structure which would generate an error on attempting to implement.
-
-Tundra is heavily inspired by
-[pgbedrock](https://github.com/Squarespace/pgbedrock) which can be used for
-managing the permissions in a Postgres database.
-
-## spec_file
-
-The YAML specification file is used to define in a declarative way the
-databases, roles, users and warehouses in a Snowflake account, together with the
-permissions for databases, schemas and tables for the same account.
-
-All permissions are abbreviated as `read` or `write` permissions, with
-Tundra generating the proper grants for each type of object. This includes
-shared databases which have simpler and more limited permissions than non-shared
-databases.
-
-According to the `read` vs. `write` permissions approach, you should be able to
-grant granular access like `read` permissions for usage of database and schema
-and `write` permissions to insert data into a specific table within that
-database and schema.
-
-Please find below the links between Tundra permissions and Snowflake grants.
-
-| Objects   | Tundra permissions | Snowflake grants                                                                                                    |
-|-----------|------------------------|---------------------------------------------------------------------------------------------------------------------|
-| Databases | read                   | usage                                                                                                               |
-|           | write                  | monitor, create schema                                                                                              |
-| Schemas   | read                   | usage                                                                                                               |
-|           | write                  | monitor, create table, create view, create iceberg table, create streamlit, create semantic view, create stage, create file format, create sequence, create function, create pipe |
-| Table     | read                   | select                                                                                                              |
-|           | write                  | insert, update, delete, truncate, references                                                                        |
-
-
-Tables, views, Iceberg tables, dynamic tables, Streamlit apps, and semantic views are all listed under
-`tables` and handled properly behind the scenes. Streamlit apps expose only `USAGE`: read and write both grant
-`usage`, and a `create streamlit` schema privilege is granted with schema write access. Because Streamlit apps
-ride the `tables` read list, a `database.schema.*` read wildcard also grants `USAGE` on all and future Streamlit
-apps in that schema. Semantic views behave like views: read and write both grant `select`, `create semantic view`
-comes with schema write access, and a read wildcard grants `select` on all and future semantic views. Snowflake's
-`ON ALL|FUTURE VIEWS` does not cover semantic views, so without this entry they would go ungranted. New
-table-like object types are defined in `src/tundra/table_object_types.py`.
-
-If `*` is provided as the parameter for tables the grant statement will use the
-`ALL <object_type>s in SCHEMA` syntax. It will also grant to future tables and
-views. See Snowflake documentation for [`ON
-FUTURE`](https://docs.snowflake.net/manuals/sql-reference/sql/grant-privilege.html#optional-parameters)
-
-If a schema name includes an asterisk (prefix or suffix), such as `snowplow_*` or `*_snowplow`, then all schemas
-that match this pattern will be included in the grant statement _unless it is
-for ownership_, in which case the asterisk is not supported. This can be coupled
-with the asterisk for table grants to grant permissions on all tables in all
-schemas that match the given pattern. This is useful for date-partitioned
-schemas.
-
-All entities must be explicitly referenced. For example, if a permission is
-granted to a schema or table then the database must be explicitly referenced for
-permissioning as well. Additionally, role membership must be explicit in the
-config file. If a role does not have a `member_of` list, it will have all roles
-it currently has revoked.
-
-Roles can accept "_" as a role name either alone or nested under the `include`
-key. There is optionally an `exclude` key that can be used if `include` is used.
-`"_"`will grant membership to all roles defined in the spec. Any roles defined
-in`exclude`will be removed from the list defined in`include`.
-
-### Database roles
-
-A `member_of` entry containing a period is treated as a database role, given as
-`DB.ROLE`. This is how Snowflake's premade roles are granted:
+A `member_of` entry containing a period is a `DB.ROLE` reference. Tundra checks it against
+`SHOW DATABASE ROLES`, falls back to `SHOW APPLICATION ROLES` for an application of the same name, and grants or
+revokes accordingly. Membership is fully managed: anything granted but not listed is revoked.
 
 ```yaml
 roles:
-    - reporter:
-        member_of:
-            - transformer
-            - snowflake.usage_viewer
-            - snowflake.organization_billing_viewer
+  - monitor:
+      member_of:
+        - snowflake.usage_viewer                    # database role
+        - snowflake.cortex_analyst_requests_viewer  # application role
 ```
 
-Database role membership is managed declaratively in the same way as account
-role membership: anything granted on Snowflake but absent from `member_of` is
-revoked, including database roles belonging to databases not otherwise tracked
-in the spec. Database roles are only referenced, never defined, so their
-privileges are not managed by Tundra, but they must already exist on Snowflake.
-Referenced database roles are checked with one `SHOW DATABASE ROLES IN DATABASE`
-per database, in the same way roles and warehouses are checked.
+Database and application roles are referenced, never defined, and must already exist. Spec roles can't contain a
+period, and users can't be granted either kind. Grants an application made itself are never revoked. `MANAGE GRANTS`
+doesn't reach the `SNOWFLAKE` application's roles, so the role Tundra runs as must hold every application role the
+spec hands out.
 
-Because the period is what marks a database role, roles defined in the spec
-cannot contain one. Database roles can only be granted to other roles, so they
-are not valid in a user's `member_of`. Both cases are rejected when the spec is
-loaded.
+## Users
 
-### Application roles
-
-Snowflake's telemetry viewers for Cortex Analyst, AI Observability and data quality
-monitoring (`SNOWFLAKE.CORTEX_ANALYST_REQUESTS_VIEWER`, `SNOWFLAKE.AI_OBSERVABILITY_READER`,
-`SNOWFLAKE.DATA_QUALITY_MONITORING_VIEWER`, ...) are application roles of the `SNOWFLAKE`
-application, not database roles, and need `GRANT APPLICATION ROLE`. They are written in
-`member_of` exactly like database roles:
+On top of Permifrost's user properties:
 
 ```yaml
-roles:
-    - monitor:
-        member_of:
-            - snowflake.usage_viewer
-            - snowflake.cortex_analyst_requests_viewer
-```
-
-A `DB.ROLE` reference that `SHOW DATABASE ROLES` does not know is looked up with
-`SHOW APPLICATION ROLES IN APPLICATION` for an application of the same name, and is
-granted and revoked as an application role if it is one. Grants the application made
-itself (`granted_by` is the application, as the `SNOWFLAKE` application does for
-ACCOUNTADMIN) are never recorded, so they are never revoked. MANAGE GRANTS does not
-reach the `SNOWFLAKE` application's roles: only a role that itself holds one of them can
-see it or grant it on, so the role tundra runs as must hold every application role the
-spec hands out (a role granted SECURITYADMIN plus those application roles, see below).
-
-Objects like warehouses and integrations that only have one tundra permission type just
-needs to be specified in the role (see below).
-
-Objects can have a `meta` dictionary which may contain information that is not relevant for Tundra's
-execution and are ignored by Tundra itself.
-
-A specification file has the following structure:
-
-```bash
-# Databases
-databases:
-    - db_name:
-        shared: boolean
-    - db_name:
-        shared: boolean
-        owner: role_name
-        meta:
-            some_key: some_value
-            ...
-    ... ... ...
-
-# Roles
-roles:
-    - role_name:
-        warehouses:
-            - warehouse_name
-            - warehouse_name
-            ...
-
-        member_of:
-            - role_name
-            - role_name
-            ...
-
-            # or
-
-        member_of:
-            include:
-                - "*"
-            exclude:
-                - role_name
-
-        privileges:
-            databases:
-                read:
-                    - database_name
-                    - database_name
-                    ...
-                write:
-                    - database_name
-                    - database_name
-                    ...
-            schemas:
-                read:
-                    - database_name.*
-                    - database_name.schema_name
-                    - database_name.schema_partial_*
-                    - database_name.*_schema_partial
-
-                    ...
-                write:
-                    - database_name.*
-                    - database_name.schema_name
-                    - database_name.schema_partial_*
-                    - database_name.*_schema_partial
-                    ...
-            tables:
-                read:
-                    - database_name.*.*
-                    - database_name.schema_name.*
-                    - database_name.schema_partial_*.*
-                    - database_name.*_schema_partial.*
-                    - database_name.schema_name.table_name
-                    ...
-                write:
-                    - database_name.*.*
-                    - database_name.schema_name.*
-                    - database_name.schema_partial_*.*
-                    - database_name.*_schema_partial.*
-                    - database_name.schema_name.table_name
-                    ...
-
-        owns:
-            databases:
-                - database_name
-                ...
-            schemas:
-                - database_name.*
-                - database_name.schema_name
-                ...
-            tables:
-                - database_name.*.*
-                - database_name.schema_name.*
-                - database_name.schema_name.table_name
-                ...
-
-        meta:
-            some_key: some_value
-            ...
-
-    - role_name:
-        owner: role_name
-    ... ... ...
-
-# Users
-# can_login is required the rest of the parameters are optional
-# None of the values are validated in Snowflake, hence default_warehouse, default_namespace and default_role
-# can contain invalid values
 users:
-    - user_name:
-        can_login: boolean
-        member_of:
-            - role_name
-            ...
-        has_password: boolean
-        display_name: string
-        first_name: string
-        middle_name: string
-        last_name: string
-        email: string
-        comment: string
-        default_warehouse: string
-        default_namespace: string
-        default_role: string
-        default_secondary_roles:
-            - string
-            ...
-        type: string
-        parameters:
-            timezone: string   # IANA zone name, validated at spec load
-            week_start: integer
-            ...                # any allow-listed session parameter, see below
-        meta:
-            some_key: some_value
-            ...
-    - user_name:
-        owner: role_name
-    ... ... ...
-
-# User `parameters` set the user-level default for a Snowflake session parameter
-# (`ALTER USER ... SET TIMEZONE = 'Pacific/Auckland'`). Keys are allow-listed:
-# timezone, week_start, week_of_year_policy, date_output_format, time_output_format,
-# timestamp_output_format, timestamp_ltz_output_format, timestamp_ntz_output_format,
-# timestamp_tz_output_format, timestamp_type_mapping, query_tag,
-# statement_timeout_in_seconds, statement_queued_timeout_in_seconds, client_session_keep_alive.
-# A parameter is set only while it is declared; removing it from the spec leaves the value
-# in place (ALTER USER ... UNSET <parameter> by hand to fall back to the account default).
-
-# Warehouses
-# Warehouse sizes are informative and not altered by Tundra to align with the spec file
-warehouses:
-    - warehouse_name:
-        size: x-small
-        meta:
-            some_key: some_value
-            ...
-    - warehouse_name:
-        size: x-small
-        owner: role_name
-    ... ... ...
-
-# Integrations
-# Integration categories are informative and not altered by Tundra to align with the spec file
-integrations:
-    - integration_name:
-        category: storage
-        meta:
-            some_key: some_value
-            ...
-    - integration_name:
-        category: security
-        owner: role_name
-    ... ... ...
+  - etl_service:
+      can_login: true
+      type: service                 # person (default), service, legacy_service
+      default_secondary_roles: [all]
+      parameters:
+        timezone: Pacific/Auckland  # validated IANA name
+        week_start: 1
 ```
 
-# External Volumes
-External volumes provide access to external storage locations (S3, Azure Blob Storage, Google Cloud Storage) and are essential for Apache Iceberg table operations. They are defined at the top level and referenced in roles.
+- `has_password: true` rewrites `type: service` to `legacy_service`, since Snowflake won't let a `SERVICE` user hold
+  a password. `has_password: false` sets `PASSWORD = NULL`. Omit it for `SERVICE` users.
+- `parameters` sets user-level session defaults. Allowed keys are `timezone`, `week_start`, `week_of_year_policy`,
+  the `*_output_format` family, `timestamp_type_mapping`, `query_tag`, `statement_timeout_in_seconds`,
+  `statement_queued_timeout_in_seconds` and `client_session_keep_alive`. Removing one leaves the value in place.
+- User identifiers and property values are quoted and uppercased properly.
 
-```yaml
-# External volume definitions
-external_volumes:
-    - s3_iceberg_volume:
-        storage_provider: s3
-        owner: sysadmin
-    - azure_data_lake:
-        storage_provider: azure
-        owner: data_admin
-    - gcs_analytics:
-        storage_provider: gcs
-        owner: analytics_admin
+## Spec directories
 
-# Role configuration with external volume access
-roles:
-    - data_engineer:
-        external_volumes:
-            - s3_iceberg_volume
-            - azure_data_lake
-        privileges:
-            tables:
-                read:
-                    - analytics.public.*    # Includes Iceberg tables
-                write:
-                    - analytics.staging.*   # Write to Iceberg tables
-```
-
-**Important**: External volumes are required for Iceberg table operations. Roles that need to read from or write to Iceberg tables must have `USAGE` privileges on the appropriate external volumes where the Iceberg table data is stored.
-
-For a working example with external volumes, check the [`examples/external_volumes_example.yml`](examples/external_volumes_example.yml) file.
-
-Note: The spec file must all be in lowercase.
-
-### Spec file inheritance/inclusion
-
-To achieve better organization, you can include content from other YML files into your spec file using the `!include` format.
-
-For example, the following imports the content of a `warehouses.yml` file (among others) into `snowflake_spec.yml`
-
-```yml
-# warehouses.yml
-
-- wh_loading:
-    size: x-small
-    auto_suspend: 600
-    auto_resume: true
-    initially_suspended: true
-```
-
-```yml
-# snowflake_spec.yml
-
-# Databases
-databases: !include databases.yml
-
-# Warehouses
-warehouses: !include warehouses.yml
-
-# Roles
-roles: !include roles.yml
-
-# Users
-users: !include users.yml
-```
-
-### Spec directories
-
-`tundra run` and `tundra spec-test` also accept a directory. Every `.yml` / `.yaml` file under it (recursively,
-in sorted path order, skipping dotfiles and dot-directories) is a fragment holding any of the top-level spec keys,
-and the fragments are merged into one spec before validation:
+`run` and `spec-test` accept a directory. Every `.yml`/`.yaml` under it (recursive, sorted, dotfiles skipped) is a
+fragment holding any top-level keys, merged before validation:
 
 ```
 spec/
-  settings.yml           # version, require-owner
-  databases.yml          # databases:
-  warehouses.yml         # warehouses:
-  roles/builtin.yml      # roles: (accountadmin, sysadmin, ...)
-  roles/custom.yml       # roles:
-  users/person.yml       # users:
-  users/service.yml      # users:
+  settings.yml
+  databases.yml
+  roles/custom.yml
+  users/service.yml
 ```
+
+List sections concatenate. An entity defined twice is an error naming both files. Scalar settings must agree.
+
+## Running it
+
+**Objects dropped mid-run.** Grants are planned from a snapshot, so a schema that CI drops and recreates while
+Tundra is applying would fail every queued statement. Tundra re-looks up the object instead: gone prints
+`[VANISHED]` (not a failure), recreated is retried once. Every `[ERROR]` prints Snowflake's message beneath it.
+
+**Running role.** The current role must be `SECURITYADMIN` or a role that has been granted it (checked with
+`IS_ROLE_IN_SESSION`), so a purpose-built role works.
+
+**Workload identity federation.** Short-lived OIDC tokens (GitHub Actions, say) with no stored secret:
 
 ```bash
-tundra run spec/
+PERMISSION_BOT_AUTHENTICATOR=WORKLOAD_IDENTITY
+PERMISSION_BOT_WORKLOAD_IDENTITY_PROVIDER=OIDC
+PERMISSION_BOT_TOKEN_COMMAND='python mint_token.py --audience my-account'
 ```
 
-- List sections (`databases`, `warehouses`, `roles`, `users`, `integrations`, `external_volumes`) are concatenated.
-- An entity defined in more than one fragment is an error naming both files.
-- Scalar settings (`version`, `require-owner`) may appear in several fragments only if they agree.
-- Every fragment must be a mapping. `!include` still works inside a fragment, but keep the included files outside
-  the spec directory, since a bare list there is rejected as a fragment.
+The command's stdout is the token, and it's rerun for every pooled connection so a long run never reuses an expired
+one. It takes precedence over the other auth methods, which are otherwise
+[as upstream](https://gitlab.com/gitlab-data/permifrost/-/blob/master/README.md#connection-parameters).
 
-### Settings
-
-All settings are declared here with their default values and are described
-below. These can be added to your spec.yaml file.
-
-```yaml
-require-owner: false
-```
-
-`require-owner`: Set to true to force having to set the `owner` property on all
-objects defined.
-
-## --diff
-
-When this flag is set, a full diff with both new and already granted commands is
-returned. Otherwise, only required commands for matching the definitions on the
-spec are returned.
-
-## --dry
-
-When this flag is set, the permission queries generated are not actually sent to
-the server and run; They are just returned to the user for examining them and
-running them manually.
-
-When this flag is not set, the commands will be executed on Snowflake and their
-status will be returned and shown on the command line. A failed command prints
-Snowflake's error beneath it.
-
-Commands are generated from a snapshot of the account, so a database, schema or
-table that something else drops mid-run (a CI job recreating its schema, say)
-would fail every command still queued against it. Those print as `[VANISHED]`
-rather than `[ERROR]` once a fresh lookup confirms the object is gone. If the
-object has been recreated in the meantime, the command is retried once.
-
-## Connection Parameters
-
-The following environmental variables must be available to connect to Snowflake:
-
-```bash
-$PERMISSION_BOT_USER
-$PERMISSION_BOT_ACCOUNT
-$PERMISSION_BOT_WAREHOUSE
-```
-
-### Username and Password
-
-To connect using a username and password, also include the following:
-
-```bash
-$PERMISSION_BOT_PASSWORD
-$PERMISSION_BOT_DATABASE
-$PERMISSION_BOT_ROLE
-```
-
-Tundra needs MANAGE GRANTS. Validation fails unless the current role is SECURITYADMIN
-or a role that has been granted SECURITYADMIN (checked with `IS_ROLE_IN_SESSION`), so a
-purpose-built role holding SECURITYADMIN plus whatever application roles the spec grants
-is a valid `PERMISSION_BOT_ROLE`.
-
-### OAuth
-
-To connect using an OAuth token, also include the following:
-
-```bash
-$PERMISSION_BOT_OAUTH_TOKEN
-```
-
-### External Browser SSO Auth
-
-To connect using an external browser with SSO Auth, also include the following:
-
-```bash
-$PERMISSION_BOT_AUTHENTICATOR='externalbrowser'
-```
-
-### Key Pair Authentication
-
-Rather than supplying a password or an oauth token, it's possible to connect via
-Snowflake's Key Pair authentication by setting the following:
-
-```bash
-$PERMISSION_BOT_KEY_PATH
-$PERMISSION_BOT_KEY_PASSPHRASE
-```
-
-See [Snowflake-sqlalchemy](https://github.com/snowflakedb/snowflake-sqlalchemy#key-pair-authentication-support) for more info.
-
-### Workload Identity Federation
-
-To connect with a short-lived token from a workload identity provider (for example the
-OIDC token GitHub Actions issues to a job), set:
-
-```bash
-$PERMISSION_BOT_AUTHENTICATOR='WORKLOAD_IDENTITY'
-$PERMISSION_BOT_WORKLOAD_IDENTITY_PROVIDER='OIDC'
-$PERMISSION_BOT_TOKEN_COMMAND='python mint_token.py --audience my-account'
-```
-
-The command is run through the shell, and its stdout is the token. Tundra reruns it for
-every connection its pool opens, so a token that expires part-way through a long run is
-never reused. `PERMISSION_BOT_TOKEN_COMMAND` takes precedence over the other auth methods.
+**Warehouses.** `size` is optional.
 
 ## Contributing
 
-Contributing to Tundra is easy, and most commands to do so are available
-within the Makefile.
+Issues and PRs welcome on [GitHub](https://github.com/henryupton/tundra/issues). Tests run on every PR. Versions are
+bumped by the release workflow on merge to `main`, not by hand.
 
-The easiest way to start developing is to run `make initial-setup` to install
-all the necessary packages to develop on the project. Next run `make
-tundra` in a second terminal, this will open a shell in a docker container
-with the local version of Tundra installed.
-
-You can now make changes to the files in your editor and it will be reflected in
-the commands that you run from the docker shell.
-
-To check code quality prior to committing changes, you can use `make local-lint`.
-
-See the [Makefile](Makefile) for more details.
-
-**WARNINGS**
-
-DO NOT name git branches with forward slashes `/` as the current CI pipeline is
-unable to manage names like this. (i.e. `username/feature/feature-name` will
-break the CI pipeline so `username.feature.feature-name` should be used
-instead)
-
-This project has [pre-commit
-hooks](https://github.com/pre-commit/pre-commit-hooks) installed to maintain
-the existing code quality. As such, we strongly recommend you use a terminal to
-**commit** and **push** code changes. Specifically, avoid using git
-integrations on IDEs to make **commits** or **pushes**. **Adding** files
-through the IDE git integrations are okay, but do not **commit** through the
-IDE. Use the terminal to commit changes because it will show the output of each
-of the pre-commit checks to allow you to make changes as needed.
-
-For committing work-in-progress changes use `git commit --no-verify -m "WIP:
-<message>"`.
-
-For committing finalized changes, the below workflow will identify errors and allow for easier development:
-* Make your changes and `git add <file name(s)>`
-* `git commit` to identify/format errors in the changed files
-    * Repeat the following steps until all checks pass
-    * `git add <file name(s)>`
-    * `git commit`
-* Add message at the prompt and save/exit the commit file
-* When you are ready to push changes to the remote host, run `git push origin <branch name>`. This will perform additional linting/formatting checks.
-    * Repeat the following steps until all checks pass
-    * `git push origin <branch name>`
-    * `git add <file name(s)>`
-    * `git commit`
-* Add message at the prompt and save/exit the commit file
-* `git push origin <branch name>` until all checks pass
-
-## Releasing
-
-See the [issue template](https://gitlab.com/gitlab-data/tundra/-/blob/master/.gitlab/issue_templates/Releasing%20update.md)
-for guidance on how to release a new version of this project to PyPi
+```bash
+PYTHONPATH=src python -m pytest tests -q
+```
