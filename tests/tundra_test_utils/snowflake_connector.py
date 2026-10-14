@@ -56,6 +56,11 @@ class MockSnowflakeConnector(SnowflakeConnector):
     ) -> List[str]:
         return []
 
+    def show_tasks(
+        self, database: Optional[str] = None, schema: Optional[str] = None
+    ) -> List[str]:
+        return []
+
     def show_semantic_views(
         self, database: Optional[str] = None, schema: Optional[str] = None
     ) -> List[str]:
@@ -67,6 +72,9 @@ class MockSnowflakeConnector(SnowflakeConnector):
         return []
 
     def show_grants_to_role(self, role) -> Dict[str, Any]:
+        return {}
+
+    def show_account_grants_to_role(self, role) -> Dict[str, str]:
         return {}
 
     def show_grants_to_role_with_grant_option(self, role) -> Dict[str, Any]:

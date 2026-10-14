@@ -20,10 +20,11 @@ class ReadWriteSchema(TypedDict, total=False):
     write: List[str]
 
 
-class PrivilegeSchema(TypedDict):
+class PrivilegeSchema(TypedDict, total=False):
     databases: ReadWriteSchema
     schemas: ReadWriteSchema
     tables: ReadWriteSchema
+    tasks: ReadWriteSchema
 
 
 class OwnsSchema(TypedDict):
@@ -36,6 +37,7 @@ class RoleSchemaBase(TypedDict, total=False):
     warehouses: List[str]
     integrations: List[str]
     external_volumes: List[str]
+    account_privileges: List[str]
     member_of: Union[MemberDictType, List[str]]
     privileges: PrivilegeSchema
     owns: OwnsSchema

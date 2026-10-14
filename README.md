@@ -59,6 +59,43 @@ roles:
       external_volumes: [s3_iceberg]
 ```
 
+## Account privileges and tasks
+
+**Account privileges** (`GRANT ... ON ACCOUNT`) are a flat list on the role:
+
+```yaml
+roles:
+  - sysadmin:
+      account_privileges: [execute task, execute managed task]
+  - transformer:
+      account_privileges: [apply tag, manage grants]
+```
+
+Declaring the key makes the list authoritative, like `warehouses`: undeclared account grants on that role are
+revoked, and a role without the key is left alone. Names are case- and whitespace-insensitive. Two kinds of grant
+are never revoked: Snowflake's own privileges on its system roles (no grantor in `SHOW GRANTS`), and the
+ACCOUNTADMIN-only `create share`, `import share` and `manage share target`, which `SECURITYADMIN` can't touch. The
+latter are also rejected at spec load, so grant them outside Tundra.
+
+**Tasks** get their own `privileges.tasks` family beside `tables`, with the same pattern shapes and `ON ALL` plus
+`ON FUTURE` grants:
+
+```yaml
+roles:
+  - orchestrator:
+      privileges:
+        tasks:
+          write: [raw.*.*]
+```
+
+| read      | write              |
+| --------- | ------------------ |
+| `monitor` | `monitor, operate` |
+
+They're kept out of `tables` on purpose, so a `tables` wildcard never hands a reader `MONITOR` on a schema's tasks.
+Task grants inside the spec's databases are fully managed. No `create task` schema privilege is derived: ownership
+stays with whichever role creates the task, and `EXECUTE TASK` comes from `account_privileges`.
+
 ## Database and application roles
 
 A `member_of` entry containing a period is a `DB.ROLE` reference. Tundra checks it against

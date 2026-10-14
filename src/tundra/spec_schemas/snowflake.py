@@ -94,6 +94,10 @@ SNOWFLAKE_SPEC_ROLE_SCHEMA = """
         type: list
         schema:
             type: string
+    account_privileges:
+        type: list
+        schema:
+            type: string
     member_of:
         anyof:
             - type: dict
@@ -120,6 +124,7 @@ SNOWFLAKE_SPEC_ROLE_SCHEMA = """
             - databases
             - schemas
             - tables
+            - tasks
         valuesrules:
             type: dict
             allowed:

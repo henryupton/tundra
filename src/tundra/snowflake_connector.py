@@ -16,18 +16,19 @@ from snowflake.sqlalchemy import URL
 
 from tundra.logger import GLOBAL_LOGGER as logger
 from tundra.table_object_types import (
+    ALL_OBJECT_TYPES,
     DYNAMIC_TABLE,
     ICEBERG_TABLE,
     SEMANTIC_VIEW,
     STREAMLIT,
     TABLE,
-    TABLE_OBJECT_TYPES,
+    TASK,
     VIEW,
     TableObjectType,
 )
 
 FUTURE_PLACEHOLDER_PATTERN = "^<({})>$".format(
-    "|".join([t.grant_key for t in TABLE_OBJECT_TYPES] + ["schema"])
+    "|".join([t.grant_key for t in ALL_OBJECT_TYPES] + ["schema"])
 )
 
 # The key database role grants are stored under in grants_to_role. Snowflake reports
@@ -45,14 +46,14 @@ APPLICATION_ROLE_GRANT_TYPE = "application role"
 
 # Snowflake's wording for a statement whose target is gone, e.g. `Schema 'DB.SCHEMA' does
 # not exist or not authorized.` A missing parent is reported as the parent, so a grant on a
-# table in a dropped schema names the schema. Only databases, schemas and table-like objects
+# table in a dropped schema names the schema. Only databases, schemas and registry objects
 # are matched: roles, warehouses and users are spec-managed, so their absence is a real
 # failure rather than something another process dropped mid-run.
 MISSING_OBJECT_PATTERN = re.compile(
     r"\b(?P<kind>{}) '(?P<name>[^']+)' does not exist or not authorized".format(
         "|".join(
             sorted(
-                ["database", "schema"] + [t.name for t in TABLE_OBJECT_TYPES],
+                ["database", "schema"] + [t.name for t in ALL_OBJECT_TYPES],
                 key=len,
                 reverse=True,
             )
@@ -298,6 +299,11 @@ class SnowflakeConnector:
     ) -> List[str]:
         return self.show_table_objects(ICEBERG_TABLE, database=database, schema=schema)
 
+    def show_tasks(
+        self, database: Optional[str] = None, schema: Optional[str] = None
+    ) -> List[str]:
+        return self.show_table_objects(TASK, database=database, schema=schema)
+
     def show_users(self) -> List[str]:
         return self.show_query("USERS")
 
@@ -391,6 +397,23 @@ class SnowflakeConnector:
             grants.setdefault(privilege, {}).setdefault(granted_on, []).append(
                 SnowflakeConnector.snowflaky(clean_name)
             )
+
+        return grants
+
+    def show_account_grants_to_role(self, role) -> Dict[str, str]:
+        """
+        The account-level privileges held by <role>, mapped to the role that granted
+        each one. Snowflake's own privileges on its system-defined roles report an
+        empty grantor, which is how the generator knows never to revoke them.
+        """
+        grants: Dict[str, str] = {}
+
+        query = f"SHOW GRANTS TO ROLE {SnowflakeConnector.snowflaky_user_role(role)}"
+
+        for result in self.run_query(query).fetchall():
+            if result["granted_on"].lower() != "account":
+                continue
+            grants[result["privilege"].lower()] = (result["granted_by"] or "").lower()
 
         return grants
 
@@ -584,7 +607,7 @@ class SnowflakeConnector:
             elif kind == "schema":
                 found = self.show_schemas(database=parent)
             else:
-                object_type = next(t for t in TABLE_OBJECT_TYPES if t.name == kind)
+                object_type = next(t for t in ALL_OBJECT_TYPES if t.name == kind)
                 found = self.show_table_objects(object_type, schema=parent)
         except Exception as exc:
             return not (self.missing_object(exc) or MISSING_CONTAINER_ERROR in str(exc))
