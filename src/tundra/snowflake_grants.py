@@ -55,6 +55,10 @@ REVOKE_FUTURE_PRIVILEGES_TEMPLATE = "REVOKE {privileges} ON FUTURE {resource_typ
 
 ALTER_USER_TEMPLATE = "ALTER USER {user_name} SET {privileges}"
 
+SET_USER_TAG_TEMPLATE = "ALTER USER {user_name} SET TAG {tag} = {value}"
+
+UNSET_USER_TAG_TEMPLATE = "ALTER USER {user_name} UNSET TAG {tag}"
+
 GRANT_OWNERSHIP_TEMPLATE = "GRANT OWNERSHIP ON {resource_type} {resource_name} TO ROLE {role_name} COPY CURRENT GRANTS"
 
 SCHEMA_PARTIAL_WRITE_PRIVILEGES = ", ".join(
@@ -85,6 +89,7 @@ class SnowflakeGrantsGenerator:
         conn: Optional[SnowflakeConnector] = None,
         account_grants_to_role: Optional[Dict[str, Dict[str, str]]] = None,
         application_roles: Optional[Set[str]] = None,
+        tags_on_user: Optional[Dict[str, Dict[str, str]]] = None,
     ) -> None:
         """
         Initializes a grants generator, used to generate SQL for generating grants
@@ -106,6 +111,9 @@ class SnowflakeGrantsGenerator:
         application_roles: the member_of references (app.role) the spec loader resolved
             to application roles rather than database roles, e.g.
             {'snowflake.cortex_analyst_requests_viewer'}
+        tags_on_user: a dict, mapping each user to the tags set directly on it and
+            their values, keyed by snowflaky_tag() FQN.
+            e.g. {'user_name': {'cost_management.tags.team': 'marketing'}}
 
         """
         self.grants_to_role = grants_to_role
@@ -113,6 +121,7 @@ class SnowflakeGrantsGenerator:
         self.ignore_memberships = ignore_memberships
         self.conn = conn or SnowflakeConnector()
         self.account_grants_to_role = account_grants_to_role or {}
+        self.tags_on_user = tags_on_user or {}
         # Normalised the same way _generate_member_lists normalises member_of entries,
         # so membership can be tested on the normalised list.
         self.application_roles = {
@@ -1983,6 +1992,52 @@ class SnowflakeGrantsGenerator:
                         user_name=SnowflakeConnector.snowflaky_user_role(user),
                         privileges=", ".join(alter_privileges),
                     ),
+                }
+            )
+
+        return sql_commands
+
+    def generate_user_tags(self, user: str, config: Dict[str, Any]) -> List[Dict]:
+        """
+        Generate the SET / UNSET TAG statements for a USER.
+
+        The spec owns every tag set directly on a user it lists: each tag under `tags`
+        is set to its value, and any other tag on the user is unset, so a tag set by
+        hand or removed from the spec does not linger.
+
+        user: the name of the USER
+        config: the subtree for the user as specified in the spec
+
+        Returns the SQL commands generated as a List
+        """
+        sql_commands: List[Dict] = []
+        if self.ignore_memberships:
+            return sql_commands
+
+        user_name = SnowflakeConnector.snowflaky_user_role(user)
+        live_tags = self.tags_on_user.get(user, {})
+        spec_tags = {
+            SnowflakeConnector.snowflaky_tag(tag): value
+            for tag, value in config.get("tags", {}).items()
+        }
+
+        for tag, value in sorted(spec_tags.items()):
+            sql_commands.append(
+                {
+                    "already_granted": live_tags.get(tag) == value,
+                    "sql": SET_USER_TAG_TEMPLATE.format(
+                        user_name=user_name,
+                        tag=tag,
+                        value=self._sql_parameter_literal(value),
+                    ),
+                }
+            )
+
+        for tag in sorted(set(live_tags) - set(spec_tags)):
+            sql_commands.append(
+                {
+                    "already_granted": False,
+                    "sql": UNSET_USER_TAG_TEMPLATE.format(user_name=user_name, tag=tag),
                 }
             )
 

@@ -230,6 +230,14 @@ SNOWFLAKE_SPEC_USER_SCHEMA = """
                 type: integer
             client_session_keep_alive:
                 type: boolean
+    tags:
+        type: dict
+        required: False
+        keysrules:
+            type: string
+            regex: '^[^.\s]+\.[^.\s]+\.[^.\s]+$'
+        valuesrules:
+            type: string
     type:
         type: string
         required: False

@@ -67,6 +67,7 @@ class UserSchema(UserSchemaBase, total=False):
     default_secondary_roles: List[str]
     type: str
     parameters: Dict[str, Any]
+    tags: Dict[str, str]
 
 
 # size is optional: adaptive warehouses (Snowflake-managed sizing) have none.
