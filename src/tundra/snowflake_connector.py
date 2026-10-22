@@ -477,6 +477,55 @@ class SnowflakeConnector:
 
         return roles
 
+    def show_tags_on_user(self, user: str) -> Dict[str, str]:
+        """
+        The tags set directly on <user>, keyed by tag FQN as snowflaky_tag() renders it.
+        Inherited tags (level differs from domain) are left out: they belong to the
+        parent object, not the user. The SNOWFLAKE database is queried because it
+        exists in every account and tundra runs with no session database.
+        """
+        identifier = SnowflakeConnector.snowflaky_user_role(user).replace("'", "''")
+        query = (
+            "SELECT tag_database, tag_schema, tag_name, tag_value FROM TABLE("
+            f"SNOWFLAKE.INFORMATION_SCHEMA.TAG_REFERENCES('{identifier}', 'USER')"
+            ") WHERE level = domain"
+        )
+        results = self.run_query(query).fetchall()
+
+        return {
+            ".".join(
+                SnowflakeConnector._stored_identifier_part(result[part])
+                for part in ("tag_database", "tag_schema", "tag_name")
+            ): result["tag_value"]
+            for result in results
+        }
+
+    @staticmethod
+    def snowflaky_tag(name: str) -> str:
+        """
+        Convert a tag FQN (db.schema.tag) to a properly quoted Snowflake identifier,
+        with the same casing rules as snowflaky_database_role().
+
+        e.g. cost_management.tags.team --> cost_management.tags.team
+             snowflake.core.privacy_category --> "SNOWFLAKE".core.privacy_category
+        """
+        return ".".join(
+            SnowflakeConnector._snowflaky_fqn_part(part) for part in name.split(".")
+        )
+
+    @staticmethod
+    def _stored_identifier_part(part: str) -> str:
+        """
+        Render an identifier as Snowflake stores it (metadata views report the
+        resolved name) the way snowflaky_tag() renders the spec's spelling of it.
+        """
+        if (
+            re.match("^[A-Z_][0-9A-Z_$]*$", part) is not None
+            and part.lower() not in SnowflakeConnector.reserved_keywords()
+        ):
+            return part.lower()
+        return f'"{part}"'
+
     def get_current_user(self) -> str:
         query = "SELECT CURRENT_USER() AS USER"
         result = self.run_query(query).fetchone()

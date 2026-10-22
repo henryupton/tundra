@@ -83,6 +83,9 @@ class MockSnowflakeConnector(SnowflakeConnector):
     def show_roles_granted_to_user(self, user) -> List[str]:
         return []
 
+    def show_tags_on_user(self, user: str) -> Dict[str, str]:
+        return {}
+
     def get_current_user(self) -> str:
         return ""
 
