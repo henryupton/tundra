@@ -2003,7 +2003,8 @@ class SnowflakeGrantsGenerator:
 
         The spec owns every tag set directly on a user it lists: each tag under `tags`
         is set to its value, and any other tag on the user is unset, so a tag set by
-        hand or removed from the spec does not linger.
+        hand or removed from the spec does not linger. Values are case-insensitive in
+        the spec and set upper case, like the user's `type`.
 
         user: the name of the USER
         config: the subtree for the user as specified in the spec
@@ -2017,7 +2018,7 @@ class SnowflakeGrantsGenerator:
         user_name = SnowflakeConnector.snowflaky_user_role(user)
         live_tags = self.tags_on_user.get(user, {})
         spec_tags = {
-            SnowflakeConnector.snowflaky_tag(tag): value
+            SnowflakeConnector.snowflaky_tag(tag): value.upper()
             for tag, value in config.get("tags", {}).items()
         }
 
