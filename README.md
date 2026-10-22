@@ -128,6 +128,8 @@ users:
       parameters:
         timezone: Pacific/Auckland  # validated IANA name
         week_start: 1
+      tags:
+        cost_management.tags.team: data  # fully qualified tag: value
 ```
 
 - `has_password: true` rewrites `type: service` to `legacy_service`, since Snowflake won't let a `SERVICE` user hold
@@ -135,6 +137,10 @@ users:
 - `parameters` sets user-level session defaults. Allowed keys are `timezone`, `week_start`, `week_of_year_policy`,
   the `*_output_format` family, `timestamp_type_mapping`, `query_tag`, `statement_timeout_in_seconds`,
   `statement_queued_timeout_in_seconds` and `client_session_keep_alive`. Removing one leaves the value in place.
+- `tags` is fully managed, unlike `parameters`: every tag set directly on a listed user is read from
+  `TAG_REFERENCES`, the ones the spec declares are set, and any other is unset, including on a user with no `tags`
+  key. Users not in the spec are left alone. The tags must already exist, and the role Tundra runs as needs
+  `APPLY TAG` on the account.
 - User identifiers and property values are quoted and uppercased properly.
 
 ## Spec directories

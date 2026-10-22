@@ -71,6 +71,11 @@ class SnowflakeSchemaBuilder:
                 for key, value in user["parameters"].items():
                     spec_yaml.append(f"        {key}: {value}")
 
+            if user["tags"] is not None:
+                spec_yaml.append("      tags:")
+                for key, value in user["tags"].items():
+                    spec_yaml.append(f"        {key}: {value}")
+
         if len(self.warehouses) > 0:
             spec_yaml.append("warehouses:")
         for warehouse in self.warehouses:
@@ -306,6 +311,7 @@ class SnowflakeSchemaBuilder:
         default_secondary_roles: Optional[List[str]] = None,
         type: Optional[str] = None,
         parameters: Optional[Dict[str, Any]] = None,
+        tags: Optional[Dict[str, str]] = None,
     ):
         """
         Adds user to spec file
@@ -327,6 +333,7 @@ class SnowflakeSchemaBuilder:
                 "default_secondary_roles": default_secondary_roles,
                 "type": type,
                 "parameters": parameters,
+                "tags": tags,
             }
         )
         return self

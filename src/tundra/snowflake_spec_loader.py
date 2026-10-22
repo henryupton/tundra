@@ -91,6 +91,7 @@ class SnowflakeSpecLoader:
         #  new ones and which already exist (and there is no need to re-grant them)
         self.grants_to_role: Dict[str, Any] = {}
         self.roles_granted_to_user: Dict[str, Any] = {}
+        self.tags_on_user: Dict[str, Dict[str, str]] = {}
         self.account_grants_to_role: Dict[str, Dict[str, str]] = {}
 
         if not spec_test:
@@ -515,6 +516,15 @@ class SnowflakeSpecLoader:
         for user, roles_granted in zip(user_entities, results):
             self.roles_granted_to_user[user] = roles_granted
 
+        # Every listed user's tags are fetched, not only those declaring `tags`: the
+        # spec owns all of them, so a tag on a user with no `tags` key is unset.
+        tag_results = parallel_map(
+            lambda u: conn.show_tags_on_user(u),
+            user_entities,
+            self.max_workers,
+        )
+        self.tags_on_user = dict(zip(user_entities, tag_results))
+
     def get_privileges_from_snowflake_server(
         self,
         conn: Optional[SnowflakeConnector] = None,
@@ -657,6 +667,7 @@ class SnowflakeSpecLoader:
             conn=self.conn,
             account_grants_to_role=self.account_grants_to_role,
             application_roles=self.entities["application_role_refs"],
+            tags_on_user=self.tags_on_user,
         )
 
         click.secho("Generating permission Queries:", fg="green")
@@ -758,6 +769,7 @@ class SnowflakeSpecLoader:
         sql_commands = []
         click.secho(f"     Processing user {entity_name}", fg="green")
         sql_commands.extend(generator.generate_alter_user(entity_name, config))
+        sql_commands.extend(generator.generate_user_tags(entity_name, config))
 
         sql_commands.extend(
             generator.generate_grant_roles(entity_type, entity_name, config)

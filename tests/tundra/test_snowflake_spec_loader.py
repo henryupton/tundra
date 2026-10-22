@@ -1856,10 +1856,17 @@ class TestParallelRoleFetch:
         mocker.patch.object(
             conn, "show_roles_granted_to_user", side_effect=lambda u: [f"{u}_role"]
         )
+        mocker.patch.object(
+            conn, "show_tags_on_user", side_effect=lambda u: {"db.s.team": u}
+        )
 
         loader.get_user_privileges_from_snowflake_server(conn=conn, users=["u1", "u3"])
 
         assert loader.roles_granted_to_user == {"u1": ["u1_role"], "u3": ["u3_role"]}
+        assert loader.tags_on_user == {
+            "u1": {"db.s.team": "u1"},
+            "u3": {"db.s.team": "u3"},
+        }
 
     def test_check_table_refs_parallel_reports_missing(self, mocker):
         mocker.patch.object(SnowflakeSpecLoader, "__init__", lambda *a, **k: None)
