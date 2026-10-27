@@ -46,34 +46,34 @@ class TestUserTags:
         assert tag_queries(mocker, spec_file, "tagged", {}) == [
             {
                 "already_granted": False,
-                "sql": f"ALTER USER tagged SET TAG {TEAM} = 'marketing'",
+                "sql": f"ALTER USER tagged SET TAG {TEAM} = 'MARKETING'",
             }
         ]
 
     def test_matching_tag_is_already_granted(self, mocker, spec_file):
-        live = {"tagged": {TEAM: "marketing"}}
+        live = {"tagged": {TEAM: "MARKETING"}}
         assert tag_queries(mocker, spec_file, "tagged", live) == [
             {
                 "already_granted": True,
-                "sql": f"ALTER USER tagged SET TAG {TEAM} = 'marketing'",
+                "sql": f"ALTER USER tagged SET TAG {TEAM} = 'MARKETING'",
             }
         ]
 
     def test_changed_value_is_set(self, mocker, spec_file):
-        live = {"tagged": {TEAM: "finance"}}
+        live = {"tagged": {TEAM: "FINANCE"}}
         assert tag_queries(mocker, spec_file, "tagged", live) == [
             {
                 "already_granted": False,
-                "sql": f"ALTER USER tagged SET TAG {TEAM} = 'marketing'",
+                "sql": f"ALTER USER tagged SET TAG {TEAM} = 'MARKETING'",
             }
         ]
 
     def test_tag_not_in_spec_is_unset(self, mocker, spec_file):
-        live = {"tagged": {TEAM: "marketing", "governance.tags.tier": "gold"}}
+        live = {"tagged": {TEAM: "MARKETING", "governance.tags.tier": "GOLD"}}
         assert tag_queries(mocker, spec_file, "tagged", live) == [
             {
                 "already_granted": True,
-                "sql": f"ALTER USER tagged SET TAG {TEAM} = 'marketing'",
+                "sql": f"ALTER USER tagged SET TAG {TEAM} = 'MARKETING'",
             },
             {
                 "already_granted": False,
@@ -92,19 +92,36 @@ class TestUserTags:
 
     def test_tags_are_emitted_in_name_order(self, mocker, spec_file):
         assert [q["sql"] for q in tag_queries(mocker, spec_file, "multi", {})] == [
-            f"ALTER USER multi SET TAG {TEAM} = 'finance'",
-            "ALTER USER multi SET TAG governance.tags.tier = 'gold'",
+            f"ALTER USER multi SET TAG {TEAM} = 'FINANCE'",
+            "ALTER USER multi SET TAG governance.tags.tier = 'GOLD'",
         ]
 
     def test_tag_names_compare_case_insensitively(self, mocker):
         spec = SnowflakeSchemaBuilder().add_user(
             name="tagged", tags={"COST_MANAGEMENT.TAGS.TEAM": "marketing"}
         )
-        live = {"tagged": {TEAM: "marketing"}}
+        live = {"tagged": {TEAM: "MARKETING"}}
         assert tag_queries(mocker, spec.build(), "tagged", live) == [
             {
                 "already_granted": True,
-                "sql": f"ALTER USER tagged SET TAG {TEAM} = 'marketing'",
+                "sql": f"ALTER USER tagged SET TAG {TEAM} = 'MARKETING'",
+            }
+        ]
+
+    def test_value_is_set_upper_case(self, mocker):
+        spec = SnowflakeSchemaBuilder().add_user(
+            name="tagged", tags={TEAM: "Data_Platform"}
+        )
+        assert [q["sql"] for q in tag_queries(mocker, spec.build(), "tagged", {})] == [
+            f"ALTER USER tagged SET TAG {TEAM} = 'DATA_PLATFORM'"
+        ]
+
+    def test_lower_case_live_value_is_reset(self, mocker, spec_file):
+        live = {"tagged": {TEAM: "marketing"}}
+        assert tag_queries(mocker, spec_file, "tagged", live) == [
+            {
+                "already_granted": False,
+                "sql": f"ALTER USER tagged SET TAG {TEAM} = 'MARKETING'",
             }
         ]
 
@@ -113,7 +130,7 @@ class TestUserTags:
             name="tagged", tags={TEAM: '"o\'neill"'}
         )
         assert [q["sql"] for q in tag_queries(mocker, spec.build(), "tagged", {})] == [
-            f"ALTER USER tagged SET TAG {TEAM} = 'o''neill'"
+            f"ALTER USER tagged SET TAG {TEAM} = 'O''NEILL'"
         ]
 
     def test_ignore_memberships_skips_tags(self, mocker, spec_file):
