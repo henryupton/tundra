@@ -343,11 +343,6 @@ class SnowflakeConnector:
                 privilege = result["privilege"].lower()
                 granted_on = result["grant_on"].lower()
 
-                if bool(re.match("^[a-zA-Z0-9_]*$", result["name"])):
-                    clean_name = result["name"].lower()
-                else:
-                    clean_name = result["name"]
-
                 future_grants.setdefault(role, {}).setdefault(privilege, {}).setdefault(
                     granted_on, []
                 ).append(SnowflakeConnector.snowflaky(result["name"]))
@@ -726,6 +721,12 @@ class SnowflakeConnector:
              527-INVESTIGATE$ISSUES.ANALYTICS.COUNTRY_CODES -->
              --> "527-INVESTIGATE$ISSUES".ANALYTICS.COUNTRY_CODES;
              DEPARTMENT - DATA --> "DEPARTMENT - DATA"
+             LANDING_GA4."AGGREGATE" --> landing_ga4.aggregate
+             analytics.group --> analytics."GROUP"
+
+        Every spelling of the same object comes out as the same string, because fetched
+        grant state and spec entries are compared on it. SHOW GRANTS quotes keywords
+        that aren't reserved (AGGREGATE), and the spec doesn't.
 
         Pronounced /snəʊfleɪkɪ/ like saying very fast snowflak[e and clarif]y
         Permission granted to use snowflaky as a verb.
@@ -751,7 +752,9 @@ class SnowflakeConnector:
         new_name_parts = []
 
         for part in name_parts:
-            # If already quoted, return as-is
+            part = SnowflakeConnector._unquote_plain_identifier(part)
+
+            # Still quoted, so case-sensitive or not a valid unquoted identifier: as-is
             if re.match('^".*"$', part) is not None:
                 new_name_parts.append(part)
 
@@ -759,14 +762,18 @@ class SnowflakeConnector:
             elif re.match(FUTURE_PLACEHOLDER_PATTERN, part, re.IGNORECASE) is not None:
                 new_name_parts.append(part.lower())
 
-            # If does not meet requirements for unquoted object identifiers or collides with reserved keywords,
-            # add double-quotes. See https://docs.snowflake.com/en/sql-reference/identifiers-syntax.html for what
-            # those requirements are and https://docs.snowflake.com/en/sql-reference/reserved-keywords for keywords
+            # If does not meet requirements for unquoted object identifiers, add double-quotes. See
+            # https://docs.snowflake.com/en/sql-reference/identifiers-syntax.html for what those requirements are
             elif (
                 re.match("^[a-z_][0-9a-z_$]*$", part) is None
                 and re.match("^[A-Z_][0-9A-Z_$]*$", part) is None
-            ) or part.lower() in SnowflakeConnector.reserved_keywords():
+            ):
                 new_name_parts.append(f'"{part}"')
+
+            # Reserved keywords must be quoted, and uppercased to match the stored form. See
+            # https://docs.snowflake.com/en/sql-reference/reserved-keywords
+            elif part.lower() in SnowflakeConnector.reserved_keywords():
+                new_name_parts.append(f'"{part.upper()}"')
 
             else:
                 new_name_parts.append(part.lower())
@@ -822,7 +829,18 @@ class SnowflakeConnector:
         return ".".join(SnowflakeConnector._snowflaky_fqn_part(part) for part in parts)
 
     @staticmethod
+    def _unquote_plain_identifier(part: str) -> str:
+        """
+        Strip the quotes from a part that is a plain uppercase identifier, since
+        "AGGREGATE" and AGGREGATE name the same object. Anything else that's quoted is
+        case-sensitive or needs the quotes, so it's returned untouched.
+        """
+        match = re.match(r'^"([A-Z_][0-9A-Z_$]*)"$', part)
+        return match.group(1) if match else part
+
+    @staticmethod
     def _snowflaky_fqn_part(part: str) -> str:
+        part = SnowflakeConnector._unquote_plain_identifier(part)
         if re.match('^".*"$', part) is not None:
             return part
         if (
@@ -984,5 +1002,6 @@ class SnowflakeConnector:
             "when",
             "whenever",
             "where",
+            "window",
             "with",
         }
