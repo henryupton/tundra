@@ -103,6 +103,37 @@ class TestSnowflakeConnector:
             max_overflow=8,
         )
 
+    def test_uses_token_command_for_every_pooled_connection(
+        self, mocker, snowflake_connector_env
+    ):
+        # Workload identity tokens live five minutes, so each connection the pool
+        # opens runs the command again rather than reusing the first token.
+        create_engine = mocker.patch("sqlalchemy.create_engine")
+        connect = mocker.patch("snowflake.connector.connect")
+        mocker.patch.object(
+            SnowflakeConnector, "run_token_command", side_effect=["token-1", "token-2"]
+        )
+        os.environ["PERMISSION_BOT_TOKEN_COMMAND"] = "print-token"
+        os.environ["PERMISSION_BOT_AUTHENTICATOR"] = "WORKLOAD_IDENTITY"
+        os.environ["PERMISSION_BOT_WORKLOAD_IDENTITY_PROVIDER"] = "OIDC"
+        try:
+            SnowflakeConnector()
+        finally:
+            del os.environ["PERMISSION_BOT_TOKEN_COMMAND"]
+            del os.environ["PERMISSION_BOT_AUTHENTICATOR"]
+            del os.environ["PERMISSION_BOT_WORKLOAD_IDENTITY_PROVIDER"]
+
+        creator = create_engine.call_args.kwargs["creator"]
+        creator()
+        creator()
+
+        assert [c.kwargs["token"] for c in connect.call_args_list] == [
+            "token-1",
+            "token-2",
+        ]
+        assert connect.call_args.kwargs["authenticator"] == "WORKLOAD_IDENTITY"
+        assert connect.call_args.kwargs["workload_identity_provider"] == "OIDC"
+
     def test_uses_key_pair_if_available(self, mocker, snowflake_connector_env):
         mocker.patch("sqlalchemy.create_engine")
 

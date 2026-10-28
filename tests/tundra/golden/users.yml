@@ -1,0 +1,40 @@
+version: "1.0"
+
+roles:
+  - analyst:
+      warehouses:
+        - reporting_wh
+  - monitor:
+      warehouses:
+        - reporting_wh
+
+warehouses:
+  - reporting_wh:
+      size: x-small
+
+users:
+  - heidi:
+      can_login: yes
+      member_of:
+        - analyst
+      display_name: Heidi
+      email: heidi@example.com
+      type: person
+      default_role: monitor
+      default_warehouse: reporting_wh
+      default_namespace: analytics.marts
+      default_secondary_roles:
+        - all
+      parameters:
+        timezone: Pacific/Auckland
+        week_start: 1
+      tags:
+        governance.tags.team: data
+
+  - gitlab-ci:
+      can_login: yes
+      has_password: no
+      type: service
+      default_namespace: raw."Mixed-Case"
+      member_of:
+        - monitor

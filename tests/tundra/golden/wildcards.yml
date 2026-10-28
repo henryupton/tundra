@@ -1,0 +1,54 @@
+version: "1.0"
+
+databases:
+  - raw:
+      shared: no
+  - partner_share:
+      shared: yes
+
+external_volumes:
+  - iceberg_volume:
+      storage_provider: s3
+
+roles:
+  - engineer:
+      member_of:
+        include:
+          - "*"
+        exclude:
+          - admin_role
+      external_volumes:
+        - iceberg_volume
+      account_privileges:
+        - apply tag
+      owns:
+        schemas:
+          - raw.*
+        tables:
+          - raw.public.*
+          - raw.*.*
+      privileges:
+        databases:
+          read:
+            - raw
+        tasks:
+          read:
+            - raw.public.nightly_load
+
+  - analyst:
+      privileges:
+        databases:
+          read:
+            - raw
+
+  - admin_role:
+      privileges:
+        databases:
+          read:
+            - raw
+
+users:
+  - robot:
+      can_login: no
+      has_password: yes
+      type: service

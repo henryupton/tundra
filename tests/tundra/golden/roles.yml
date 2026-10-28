@@ -1,0 +1,83 @@
+version: "1.0"
+
+databases:
+  - analytics:
+      shared: no
+  - raw:
+      shared: no
+  - partner_share:
+      shared: yes
+
+warehouses:
+  - reporting_wh:
+      size: x-small
+  - etl-wh:
+      size: x-small
+
+integrations:
+  - s3_integration:
+      category: storage
+
+external_volumes:
+  - iceberg_volume:
+      storage_provider: s3
+
+roles:
+  - loader:
+      warehouses:
+        - reporting_wh
+        - etl-wh
+      integrations:
+        - s3_integration
+      external_volumes:
+        - iceberg_volume
+      account_privileges:
+        - apply tag
+      member_of:
+        - monitor
+        - analytics.reader
+        - snowflake.cortex_user
+      privileges:
+        databases:
+          read:
+            - analytics
+            - partner_share
+          write:
+            - raw
+        schemas:
+          read:
+            - analytics.*
+          write:
+            - raw.public
+            - raw.loading_*
+            - raw."Mixed-Case"
+        tables:
+          read:
+            - analytics.*.*
+          write:
+            - raw.public.*
+            - raw.loading_orders.charges
+
+  - monitor:
+      privileges:
+        databases:
+          read:
+            - analytics
+        schemas:
+          read:
+            - analytics.marts
+        tables:
+          read:
+            - analytics.marts.orders
+            - analytics.marts."Customer View"
+
+  - transformer:
+      owns:
+        databases:
+          - analytics
+        schemas:
+          - analytics.marts
+        tables:
+          - analytics.marts.orders
+      member_of:
+        - loader

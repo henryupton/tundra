@@ -1,0 +1,29 @@
+version: "1.0"
+
+databases:
+  - raw:
+      shared: no
+
+warehouses:
+  - reporting_wh:
+      size: x-small
+  - gone_wh:
+      size: x-small
+
+roles:
+  - reader:
+      warehouses:
+        - reporting_wh
+        - gone_wh
+      privileges:
+        databases:
+          read:
+            - raw
+        schemas:
+          read:
+            - raw.public
+            - raw.gone_schema
+        tables:
+          read:
+            - raw.public.events
+            - raw.public.gone_table

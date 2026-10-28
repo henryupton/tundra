@@ -1,0 +1,13 @@
+[SKIPPED] GRANT usage ON warehouse reporting_wh TO ROLE analyst
+[PENDING] GRANT operate ON warehouse reporting_wh TO ROLE analyst
+[PENDING] GRANT monitor ON warehouse reporting_wh TO ROLE analyst
+[PENDING] GRANT usage ON warehouse reporting_wh TO ROLE monitor
+[PENDING] GRANT operate ON warehouse reporting_wh TO ROLE monitor
+[PENDING] GRANT monitor ON warehouse reporting_wh TO ROLE monitor
+[PENDING] ALTER USER heidi SET DISABLED = FALSE, DISPLAY_NAME = 'Heidi', EMAIL = 'heidi@example.com', DEFAULT_WAREHOUSE = "REPORTING_WH", DEFAULT_NAMESPACE = "ANALYTICS"."MARTS", DEFAULT_ROLE = "MONITOR", TYPE = 'PERSON', DEFAULT_SECONDARY_ROLES = ('all'), TIMEZONE = 'Pacific/Auckland', WEEK_START = 1
+[PENDING] ALTER USER heidi SET TAG governance.tags.team = 'DATA'
+[PENDING] ALTER USER heidi UNSET TAG governance.tags.cost_centre
+[SKIPPED] GRANT ROLE analyst TO user heidi
+[PENDING] REVOKE ROLE stale_role FROM user heidi
+[PENDING] ALTER USER "gitlab-ci" SET DISABLED = FALSE, PASSWORD = NULL, DEFAULT_NAMESPACE = "RAW"."Mixed-Case", TYPE = 'SERVICE', DEFAULT_SECONDARY_ROLES = ()
+[PENDING] GRANT ROLE monitor TO user "gitlab-ci"
