@@ -63,3 +63,33 @@ class TestGrantCoverage:
 
     def test_empty_coverage_covers_nothing(self):
         assert not GrantCoverage().covers("database_1.schema_1.table_1")
+
+    def test_keyword_schema_matches_however_it_is_quoted(self):
+        # Regression: the spec says lab_results.aggregate, SHOW FUTURE GRANTS says
+        # LAB_RESULTS."AGGREGATE".<TABLE>. Both name the same schema.
+        coverage = GrantCoverage()
+        coverage.add_schema("lab_results.aggregate")
+
+        assert coverage.covers('LAB_RESULTS."AGGREGATE".<TABLE>')
+        assert coverage.covers('lab_results."AGGREGATE".table_1')
+
+        quoted = GrantCoverage()
+        quoted.add_schema('LAB_RESULTS."AGGREGATE"')
+
+        assert quoted.covers("lab_results.aggregate.<table>")
+
+    def test_reserved_schema_matches_however_it_is_quoted(self):
+        coverage = GrantCoverage()
+        coverage.add_schema("database_1.group")
+
+        assert coverage.covers('DATABASE_1."GROUP".<TABLE>')
+        assert coverage.covers('database_1."GROUP".table_1')
+
+    def test_case_sensitive_quoted_schema_is_a_different_schema(self):
+        # "aggregate" in quotes is stored lowercase, so it's not AGGREGATE.
+        coverage = GrantCoverage()
+        coverage.add_schema('database_1."aggregate"')
+
+        assert not coverage.covers('DATABASE_1."AGGREGATE".table_1')
+        assert not coverage.covers("database_1.aggregate.table_1")
+        assert coverage.covers('database_1."aggregate".table_1')
