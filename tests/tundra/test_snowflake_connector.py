@@ -47,10 +47,10 @@ class TestSnowflakeConnector:
         db18 = "DATABASE_1.SCHEMA_1.GROUP"
         db19 = None
 
-        assert SnowflakeConnector.snowflaky(db1) == 'analytics."schema"."table"'
-        assert SnowflakeConnector.snowflaky(db2) == '"1234raw"."schema"."table"'
-        assert SnowflakeConnector.snowflaky(db3) == '"123-with-quotes"."schema"."table"'
-        assert SnowflakeConnector.snowflaky(db4) == '"1_db-9-RANDOM"."schema"."table"'
+        assert SnowflakeConnector.snowflaky(db1) == 'analytics."SCHEMA"."TABLE"'
+        assert SnowflakeConnector.snowflaky(db2) == '"1234raw"."SCHEMA"."TABLE"'
+        assert SnowflakeConnector.snowflaky(db3) == '"123-with-quotes"."SCHEMA"."TABLE"'
+        assert SnowflakeConnector.snowflaky(db4) == '"1_db-9-RANDOM"."SCHEMA"."TABLE"'
         assert SnowflakeConnector.snowflaky(db5) == "database_1.schema_1.table_1"
         assert SnowflakeConnector.snowflaky(db6) == "database_1.schema_1.table$a"
         assert SnowflakeConnector.snowflaky(db7) == 'database_1.schema_1."GROUP"'
@@ -400,6 +400,33 @@ class TestSnowflakeConnector:
             }
         }
 
+    def test_show_future_grants_in_schema_named_after_a_keyword(self, mocker):
+        # Regression: Snowflake quotes AGGREGATE in SHOW FUTURE GRANTS output because
+        # it's a keyword, though not a reserved one. Left quoted, it never matched the
+        # spec's landing_ga4.aggregate, and every run re-granted then revoked it.
+        mocker.patch("sqlalchemy.create_engine")
+        conn = SnowflakeConnector()
+        conn.run_query = mocker.MagicMock()
+        mocker.patch.object(
+            conn.run_query(),
+            "fetchall",
+            return_value=[
+                {
+                    "grant_to": "ROLE",
+                    "grantee_name": "LOADER",
+                    "privilege": "SELECT",
+                    "grant_on": "TABLE",
+                    "name": 'LANDING_GA4."AGGREGATE".<TABLE>',
+                },
+            ],
+        )
+
+        future_grants = conn.show_future_grants(schema="landing_ga4.aggregate")
+
+        assert future_grants == {
+            "loader": {"select": {"table": ["landing_ga4.aggregate.<table>"]}}
+        }
+
     def test_show_future_grants_in_database(self, mocker):
         mocker.patch("sqlalchemy.create_engine")
         conn = SnowflakeConnector()
@@ -686,6 +713,90 @@ class TestSnowflakyFuturePlaceholders:
                 SnowflakeConnector.snowflaky(reported)
                 == f"db_1.schema_1.{object_type.future_placeholder}"
             )
+
+
+class TestSnowflakyQuotedIdentifiers:
+    # SHOW GRANTS and SHOW FUTURE GRANTS quote any name part Snowflake treats as a
+    # keyword, reserved or not, while the spec spells the same object unquoted. A quoted
+    # part that is a plain uppercase identifier names the same object as its unquoted
+    # spelling, so both have to canonicalise to one string.
+    @pytest.mark.parametrize(
+        "quoted,unquoted,expected",
+        [
+            (
+                'LANDING_GA4."AGGREGATE".<TABLE>',
+                "landing_ga4.aggregate.<table>",
+                "landing_ga4.aggregate.<table>",
+            ),
+            (
+                'LANDING_GA4."AGGREGATE"',
+                "LANDING_GA4.AGGREGATE",
+                "landing_ga4.aggregate",
+            ),
+            (
+                'DATABASE_1.SCHEMA_1."TABLE$A"',
+                "database_1.schema_1.table$a",
+                "database_1.schema_1.table$a",
+            ),
+            # Reserved words still need quoting, uppercased to match the stored form.
+            (
+                'DATABASE_1."GROUP".<TABLE>',
+                "database_1.group.<table>",
+                'database_1."GROUP".<table>',
+            ),
+            (
+                'DATABASE_1.SCHEMA_1."WINDOW"',
+                "database_1.schema_1.window",
+                'database_1.schema_1."WINDOW"',
+            ),
+        ],
+    )
+    def test_quoted_and_unquoted_spellings_agree(self, quoted, unquoted, expected):
+        assert SnowflakeConnector.snowflaky(quoted) == expected
+        assert SnowflakeConnector.snowflaky(unquoted) == expected
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            'database_1."aggregate"',
+            'database_1."Aggregate"',
+            'database_1."1_LEADING_DIGIT"',
+            'database_1."QUOTED!TABLE"',
+        ],
+    )
+    def test_case_sensitive_quoted_parts_pass_through(self, name):
+        # No unquoted spelling reaches these objects, so the quotes stay as written.
+        assert SnowflakeConnector.snowflaky(name) == name
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            'LANDING_GA4."AGGREGATE".<TABLE>',
+            "analytics.schema.table",
+            'DATABASE_1."GROUP"',
+            'database_1."Aggregate"',
+            "1_db-9-RANDOM.schema.table",
+        ],
+    )
+    def test_is_idempotent(self, name):
+        # Fetched state is snowflaky'd on the way in and again by every comparison.
+        once = SnowflakeConnector.snowflaky(name)
+        assert SnowflakeConnector.snowflaky(once) == once
+
+    @pytest.mark.parametrize(
+        "quoted,unquoted,expected",
+        [
+            ('DATABASE_1."AGGREGATE"', "database_1.aggregate", "database_1.aggregate"),
+            (
+                '"SNOWFLAKE".USAGE_VIEWER',
+                "snowflake.usage_viewer",
+                '"SNOWFLAKE".usage_viewer',
+            ),
+        ],
+    )
+    def test_database_role_spellings_agree(self, quoted, unquoted, expected):
+        assert SnowflakeConnector.snowflaky_database_role(quoted) == expected
+        assert SnowflakeConnector.snowflaky_database_role(unquoted) == expected
 
 
 class TestShowTableObjects:
