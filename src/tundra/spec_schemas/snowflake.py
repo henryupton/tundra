@@ -151,7 +151,7 @@ SNOWFLAKE_SPEC_ROLE_SCHEMA = """
             type: string
     """
 
-SNOWFLAKE_SPEC_USER_SCHEMA = """
+SNOWFLAKE_SPEC_USER_SCHEMA = r"""
     owner:
         type: string
         required: False
