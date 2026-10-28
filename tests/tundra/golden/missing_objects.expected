@@ -1,0 +1,6 @@
+[PENDING] GRANT usage ON warehouse reporting_wh TO ROLE reader
+[PENDING] GRANT operate ON warehouse reporting_wh TO ROLE reader
+[PENDING] GRANT monitor ON warehouse reporting_wh TO ROLE reader
+[PENDING] GRANT usage ON database raw TO ROLE reader
+[PENDING] GRANT usage ON schema raw.public TO ROLE reader
+[PENDING] GRANT select ON table raw.public.events TO ROLE reader

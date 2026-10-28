@@ -1,0 +1,18 @@
+version: "1.0"
+
+databases:
+  - lab_results:
+      shared: no
+
+roles:
+  - loader:
+      privileges:
+        databases:
+          read:
+            - lab_results
+        schemas:
+          read:
+            - lab_results.aggregate
+        tables:
+          read:
+            - lab_results.aggregate.*

@@ -1,0 +1,15 @@
+version: "1.0"
+
+databases:
+  - raw:
+      shared: no
+
+roles:
+  - loader:
+      privileges:
+        databases:
+          read:
+            - raw
+        schemas:
+          read:
+            - raw.MixedCase

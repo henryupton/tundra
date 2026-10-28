@@ -1,0 +1,2 @@
+[SKIPPED] GRANT usage ON database raw TO ROLE loader
+[SKIPPED] GRANT usage ON schema raw.mixedcase TO ROLE loader

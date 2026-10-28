@@ -1,0 +1,14 @@
+[SKIPPED] GRANT usage ON database lab_results TO ROLE loader
+[SKIPPED] GRANT usage ON schema lab_results.aggregate TO ROLE loader
+[SKIPPED] GRANT select ON FUTURE tables IN schema lab_results.aggregate TO ROLE loader
+[SKIPPED] GRANT select ON ALL tables IN schema lab_results.aggregate TO ROLE loader
+[SKIPPED] GRANT select ON FUTURE views IN schema lab_results.aggregate TO ROLE loader
+[SKIPPED] GRANT select ON ALL views IN schema lab_results.aggregate TO ROLE loader
+[PENDING] GRANT select ON FUTURE iceberg tables IN schema lab_results.aggregate TO ROLE loader
+[PENDING] GRANT select ON ALL iceberg tables IN schema lab_results.aggregate TO ROLE loader
+[PENDING] GRANT select ON FUTURE dynamic tables IN schema lab_results.aggregate TO ROLE loader
+[PENDING] GRANT select ON ALL dynamic tables IN schema lab_results.aggregate TO ROLE loader
+[PENDING] GRANT usage ON FUTURE streamlits IN schema lab_results.aggregate TO ROLE loader
+[PENDING] GRANT usage ON ALL streamlits IN schema lab_results.aggregate TO ROLE loader
+[PENDING] GRANT select ON FUTURE semantic views IN schema lab_results.aggregate TO ROLE loader
+[PENDING] GRANT select ON ALL semantic views IN schema lab_results.aggregate TO ROLE loader
