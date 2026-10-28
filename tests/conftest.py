@@ -31,8 +31,8 @@ def pytest_itemcollected(item):
         # Enables docstrings for class, methods, functions passed in mark.parametrize
         # to be concatenated and output to the CLI when pytest is run
         suf = " ".join(node.__doc__.split()) + " " if node.__doc__ else ""
-        if "[" in item._nodeid:
-            mark_list = item._nodeid.split("[")[-1][:-1].split("-")
+        if "[" in item.nodeid:
+            mark_list = item.nodeid.split("[")[-1][:-1].split("-")
         else:
             mark_list = []
         for pytest_mark in node.pytestmark:
@@ -46,7 +46,8 @@ def pytest_itemcollected(item):
         suf = suf = " ".join(node.__doc__.split()) + " " if node.__doc__ else ""
     except Exception:
         suf = suf = " ".join(node.__doc__.split()) + " " if node.__doc__ else ""
-    if pref or suf:
+    # pytest 9 keeps node ids elsewhere, and there the docstrings just aren't shown
+    if (pref or suf) and hasattr(item, "_nodeid"):
         item._nodeid = (
             Fore.YELLOW + "".join((pref, suf)) + "\n" + Style.RESET_ALL + item._nodeid
         )
