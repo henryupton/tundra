@@ -32,6 +32,13 @@ tundra compares Snowflake names by identity. Every spelling that Snowflake resol
 
   1.0.6 planned `GRANT ROLE "*"` for `['*', role_b]`, which fails when applied, ignored `exclude: ['*']`, and failed at the Snowflake check or while fetching grants for patterns. A quoted `'"*"'` is now a role named `*`, where 1.0.6 treated it as every role.
 - Malformed names in definitions, privileges, `member_of`, tags and user properties fail when the spec loads, before tundra connects to Snowflake. That covers stray or unterminated quotes (`raw.ab"c`), empty parts (`raw..x`), a `<table>`-style placeholder in a schema or table entry, and parts over 255 characters. 1.0.6 reported most of these as missing objects, dropped them, or planned broken SQL such as `DEFAULT_ROLE = "MY"ROLE"`. `owner` values aren't checked when the spec loads.
+- A malformed `--role` or `--user` value is a Name error that says what's wrong with it, before tundra loads the spec or connects, in both `run` and `spec-test`:
+
+  ```text
+  Name error: Not a valid role name for --role: '"loader': '"loader' isn't a quoted identifier; quote the whole part
+  ```
+
+  1.0.6 selected nothing for it and exited 0.
 
 ### Names
 

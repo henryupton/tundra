@@ -1118,7 +1118,90 @@ class TestSnowflakeSpecLoaderWithOwner:
         assert [] == queries
 
 
+def unquoted_filter_error(noun, spelling):
+    return (
+        f"Name error: Not a valid {noun} name for --{noun}: {spelling!r}: "
+        f"{spelling!r} isn't a quoted identifier; quote the whole part"
+    )
+
+
 class TestSnowflakeSpecLoaderUserRoleFilters:
+    def test_malformed_filter_fails_before_connecting(self, mocker):
+        """A --role or --user value that isn't a name is a Name error before tundra connects."""
+        connector = mocker.patch(
+            "tundra.snowflake_spec_loader.SnowflakeConnector",
+            side_effect=AssertionError("connected"),
+        )
+        load_spec = mocker.patch("tundra.snowflake_spec_loader.load_spec")
+
+        with pytest.raises(SpecLoadingError) as context:
+            SnowflakeSpecLoader(
+                spec_path="",
+                roles=['"loader', "analyst", '"loader'],
+                users=["", 'hei"di'],
+            )
+
+        assert str(context.value).splitlines() == [
+            unquoted_filter_error("role", '"loader'),
+            "Name error: Not a valid user name for --user: '' has an empty part",
+            unquoted_filter_error("user", 'hei"di'),
+        ]
+        connector.assert_not_called()
+        load_spec.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "noun,spelling", [("role", 'pri"mary'), ("user", 'test"username')]
+    )
+    def test_generate_permission_queries_rejects_malformed_filter(
+        self, mocker, test_roles_mock_connector, test_roles_spec_file, noun, spelling
+    ):
+        """generate_permission_queries reports a malformed filter the same way."""
+        mocker.patch("builtins.open", mocker.mock_open(read_data=test_roles_spec_file))
+        spec_loader = SnowflakeSpecLoader(spec_path="", conn=test_roles_mock_connector)
+
+        with pytest.raises(SpecLoadingError) as context:
+            spec_loader.generate_permission_queries(
+                **{f"{noun}s": [spelling]}, run_list=[f"{noun}s"]
+            )
+
+        assert str(context.value) == unquoted_filter_error(noun, spelling)
+
+    @pytest.mark.parametrize(
+        "noun,spelling", [("role", 'pri"mary'), ("user", 'test"username')]
+    )
+    def test_fetching_grants_rejects_malformed_filter(
+        self, mocker, test_roles_mock_connector, test_roles_spec_file, noun, spelling
+    ):
+        """Fetching grants for a malformed filter is the same Name error."""
+        mocker.patch("builtins.open", mocker.mock_open(read_data=test_roles_spec_file))
+        spec_loader = SnowflakeSpecLoader(spec_path="", conn=test_roles_mock_connector)
+        fetch = getattr(spec_loader, f"get_{noun}_privileges_from_snowflake_server")
+
+        with pytest.raises(SpecLoadingError) as context:
+            fetch(test_roles_mock_connector, **{f"{noun}s": [spelling]})
+
+        assert str(context.value) == unquoted_filter_error(noun, spelling)
+
+    def test_role_filter_iterator_reaches_the_fetch(
+        self, mocker, test_roles_mock_connector, test_roles_spec_file
+    ):
+        """A one-shot iterator of roles still filters the grants tundra fetches."""
+        mocker.patch("builtins.open", mocker.mock_open(read_data=test_roles_spec_file))
+        fetch = mocker.patch.object(
+            SnowflakeSpecLoader,
+            "get_role_privileges_from_snowflake_server",
+            return_value=None,
+        )
+
+        SnowflakeSpecLoader(
+            spec_path="",
+            conn=test_roles_mock_connector,
+            roles=iter(["primary"]),
+            run_list=["roles"],
+        )
+
+        assert fetch.call_args.kwargs["roles"] == ["primary"]
+
     def test_role_filter(self, mocker, test_roles_mock_connector, test_roles_spec_file):
         """GRANT queries list filtered by role."""
 
