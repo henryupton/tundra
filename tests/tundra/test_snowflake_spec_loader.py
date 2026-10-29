@@ -382,14 +382,16 @@ class TestSnowflakeSpecLoader:
         filter out secondarydb grant references as only primarydb is
         cited in the spec file
         """
-        mock_method = "show_future_grants"
+        # Future grants are read per role, so the reader answers with testrole's own
+        # grants rather than every grantee's, keyed by role
+        mock_method = "show_future_grants_to_role"
         spec_file_data = get_spec_from_file(
             "snowflake_server_filters_grants_to_role_to_items_defined_in_config.yml"
         )
         return_value = SnowflakeSchemaBuilder().build_from_file(
             SCHEMA_FILE_DIR,
             "snowflake_server_filters_grants_to_role_to_items_defined_in_config_future_grants.json",
-        )
+        )["testrole"]
         expected_value = SnowflakeSchemaBuilder().build_from_file(
             SCHEMA_FILE_DIR,
             "snowflake_server_filters_grants_to_role_to_items_defined_in_config_future_grants_expected_values.json",
@@ -1969,27 +1971,46 @@ class TestParallelRoleFetch:
         loader.grants_to_role = {}
         return loader
 
-    def test_fetches_future_grants_for_every_schema(self, mocker):
+    def test_fetches_future_grants_for_every_spec_role(self, mocker):
+        # Future grants are read per role, from every database at once, so no schema
+        # is listed to find them
         loader = self._loader(mocker)
         conn = MockSnowflakeConnector()
-        mocker.patch.object(
-            conn,
-            "show_schemas",
-            side_effect=lambda database=None: [f"{database}.s1", f"{database}.s2"],
+        show_schemas = mocker.patch.object(conn, "show_schemas", return_value=[])
+        future = mocker.patch.object(
+            conn, "show_future_grants_to_role", return_value={}
         )
-        future = mocker.patch.object(conn, "show_future_grants", return_value={})
         mocker.patch.object(conn, "show_grants_to_role", return_value={})
 
         loader.get_role_privileges_from_snowflake_server(conn=conn)
 
-        called = {c.kwargs.get("schema") for c in future.call_args_list}
-        assert {"db1.s1", "db1.s2", "db2.s1", "db2.s2"} <= called
+        assert {c.args[0] for c in future.call_args_list} == {"role_a", "role_b"}
+        show_schemas.assert_not_called()
+
+    def test_fetches_future_grants_under_ignore_memberships(self, mocker):
+        loader = self._loader(mocker)
+        conn = MockSnowflakeConnector()
+        mocker.patch.object(
+            conn,
+            "show_future_grants_to_role",
+            side_effect=lambda role: {"select": {"table": [f"db1.{role}.<table>"]}},
+        )
+        grants = mocker.patch.object(conn, "show_grants_to_role", return_value={})
+
+        loader.get_role_privileges_from_snowflake_server(
+            conn=conn, roles=["role_b"], ignore_memberships=True
+        )
+
+        grants.assert_not_called()
+        assert loader.grants_to_role == {
+            "role_b": {"select": {"table": ["db1.role_b.<table>"]}}
+        }
 
     def test_merges_role_grants_filtered_to_db_refs(self, mocker):
         loader = self._loader(mocker)
         conn = MockSnowflakeConnector()
-        mocker.patch.object(conn, "show_schemas", return_value=[])
-        mocker.patch.object(conn, "show_future_grants", return_value={})
+        # Future grants are read per role
+        mocker.patch.object(conn, "show_future_grants_to_role", return_value={})
         mocker.patch.object(
             conn,
             "show_grants_to_role",
@@ -2002,13 +2023,13 @@ class TestParallelRoleFetch:
         assert loader.grants_to_role["role_a"]["usage"]["database"] == ["db1"]
         assert loader.grants_to_role["role_b"]["usage"]["database"] == ["db1"]
 
-    def test_multi_db_schema_merge_order(self, mocker):
+    def test_role_merge_order(self, mocker):
         mocker.patch.object(SnowflakeSpecLoader, "__init__", lambda *a, **k: None)
         loader = SnowflakeSpecLoader("", None)
         loader.max_workers = 4
         loader.entities = {
             "database_refs": ["db1", "db2"],
-            "roles": [],
+            "roles": ["r"],
             "warehouse_refs": [],
             "integration_refs": [],
         }
@@ -2016,30 +2037,33 @@ class TestParallelRoleFetch:
         conn = MockSnowflakeConnector()
         mocker.patch.object(
             conn,
-            "show_schemas",
-            side_effect=lambda database=None: [f"{database}.s1", f"{database}.s2"],
+            "show_future_grants_to_role",
+            return_value={
+                "select": {
+                    "table": [
+                        "db2.s1.<table>",
+                        "other_db.<table>",
+                        "db1.<table>",
+                        "db1.s2.<table>",
+                    ]
+                }
+            },
         )
-
-        def future_grants(database=None, schema=None):
-            if schema is not None:
-                name = f"{schema}.tbl"
-            else:
-                name = f"{database}.dbgrant"
-            return {"r": {"select": {"table": [name]}}}
-
-        mocker.patch.object(conn, "show_future_grants", side_effect=future_grants)
-        mocker.patch.object(conn, "show_grants_to_role", return_value={})
+        mocker.patch.object(
+            conn,
+            "show_grants_to_role",
+            return_value={"select": {"table": ["db2.s1.t1", "db1.s1.t1"]}},
+        )
 
         loader.get_role_privileges_from_snowflake_server(conn=conn)
 
-        # Interleaved by database in order: db-level, then that db's schemas, then next db.
+        # The role's future grants as listed, less untracked databases, then its grants
         assert loader.grants_to_role["r"]["select"]["table"] == [
-            "db1.dbgrant",
-            "db1.s1.tbl",
-            "db1.s2.tbl",
-            "db2.dbgrant",
-            "db2.s1.tbl",
-            "db2.s2.tbl",
+            "db2.s1.<table>",
+            "db1.<table>",
+            "db1.s2.<table>",
+            "db2.s1.t1",
+            "db1.s1.t1",
         ]
 
     def test_user_fetch_is_filtered_and_populated(self, mocker):

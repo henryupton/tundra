@@ -3,11 +3,76 @@ import os
 import logging
 from colorama import init, Fore, Style
 
+from tundra.snowflake_connector import SnowflakeConnector
+from tundra_test_utils.offline import BUILD_API, GUARDS
+
 init()
 
 logging.basicConfig(level=logging.INFO)
 
 pytest_plugins = ["fixtures.fs", "fixtures.cli"]
+
+# These run once on each transport against the same expected output, so REST and SQL
+# reads are pinned to the same plans
+BOTH_TRANSPORTS = ("test_golden_scenarios", "test_identifier_rendering")
+
+# The connection settings every test starts from, whatever the shell running the tests
+# has: dummy credentials, and no other way to log in
+DUMMY_SETTINGS = ("USER", "PASSWORD", "ACCOUNT", "DATABASE", "ROLE", "WAREHOUSE")
+UNSET_SETTINGS = (
+    "AUTHENTICATOR",
+    "OAUTH_TOKEN",
+    "KEY_PATH",
+    "KEY_PASSPHRASE",
+    "TOKEN_COMMAND",
+    "WORKLOAD_IDENTITY_PROVIDER",
+    "SQL_ONLY",
+    "API_STRICT",
+)
+
+
+@pytest.fixture(autouse=True)
+def offline(monkeypatch):
+    """
+    No test reaches Snowflake. Logging in, building a snowflake.core Root and sending a
+    REST request raise OfflineError, which fails the test. A connector's API can't be
+    built either, unless FakeAccount.install has replaced SnowflakeConnector.api, so
+    without one the connector reads through SQL and never checks out a connection.
+    """
+    for owner, name, guard in GUARDS:
+        monkeypatch.setattr(owner, name, guard)
+    for setting in DUMMY_SETTINGS:
+        monkeypatch.setenv(f"PERMISSION_BOT_{setting}", "dummy")
+    for setting in UNSET_SETTINGS:
+        monkeypatch.delenv(f"PERMISSION_BOT_{setting}", raising=False)
+
+
+@pytest.fixture
+def real_build_api(offline, monkeypatch):
+    """
+    SnowflakeConnector.api built through the real _build_api, for tests that mock the
+    engine and Root themselves. A real engine still can't log in.
+    """
+    monkeypatch.setattr(SnowflakeConnector, "_build_api", BUILD_API)
+
+
+def pytest_generate_tests(metafunc):
+    if metafunc.module.__name__.rsplit(".", 1)[-1] in BOTH_TRANSPORTS:
+        metafunc.parametrize("read_transport", ["rest", "sql"], indirect=True)
+
+
+@pytest.fixture(autouse=True)
+def read_transport(request, offline, monkeypatch):
+    """
+    The transport a BOTH_TRANSPORTS test reads through. On rest, a listing that would
+    fall back to SQL fails the test, so SQL can't answer for the API and pass.
+    """
+    transport = getattr(request, "param", None)
+    if transport == "sql":
+        monkeypatch.setenv("PERMISSION_BOT_SQL_ONLY", "true")
+    elif transport == "rest":
+        monkeypatch.setenv("PERMISSION_BOT_API_STRICT", "true")
+    return transport
 
 
 @pytest.fixture(scope="session")

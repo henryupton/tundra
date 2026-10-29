@@ -1,8 +1,22 @@
+import json
 import logging
 import os
 import re
 import subprocess
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+import threading
+from collections import Counter
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+    TypeVar,
+    Union,
+)
 from urllib.parse import quote_plus
 
 import snowflake.connector
@@ -19,10 +33,13 @@ from tundra.identifiers import (
     NameLike,
     NamePattern,
     ObjectName,
+    api_granted_name,
+    canonical_from_api,
     granted_name,
     name_or_pattern,
 )
 from tundra.logger import GLOBAL_LOGGER as logger
+from tundra.snowflake_api import SnowflakeApi
 from tundra.table_object_types import (
     ALL_OBJECT_TYPES,
     DYNAMIC_TABLE,
@@ -73,10 +90,159 @@ MISSING_OBJECT_PATTERN = re.compile(
 # SHOW ... IN SCHEMA against a schema that is gone fails with this rather than naming it.
 MISSING_CONTAINER_ERROR = "Object does not exist, or operation cannot be performed"
 
+# SHOW FUTURE GRANTS TO ROLE for a role that doesn't exist
+MISSING_ROLE_PATTERN = re.compile(
+    r"\bRole '[^']+' does not exist or not authorized", re.IGNORECASE
+)
+
+# The error code snowflake.core's 404 carries for an object that doesn't exist, the one
+# SQL reports as "does not exist or not authorized"
+DOES_NOT_EXIST = "002003"
+
+SQL_ONLY_ENV = "PERMISSION_BOT_SQL_ONLY"
+API_STRICT_ENV = "PERMISSION_BOT_API_STRICT"
+
+API = "api"
+SQL = "sql"
+
+# Why a REST listing was read again through SQL, as the summary line words each reason
+FALLBACK_REASONS = {
+    "limit": "at the row limit",
+    "validation": "invalid model",
+    "api error": "API error",
+    "non-json": "non-JSON error",
+    "transport": "transport error",
+    "timeout": "retry timeout",
+}
+
+# After one of these the rest of the run reads through SQL, rather than wait out each
+# listing's own retries against an API that isn't answering
+STICKY_REASONS = frozenset({"transport", "timeout"})
+
+T = TypeVar("T")
+
 # Don't show all the info log messages from Snowflake
 for logger_name in ["snowflake.connector", "bot", "boto3"]:
     log = logging.getLogger(logger_name)
     log.setLevel(logging.WARNING)
+
+
+def _env_flag(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+class ApiFallbackError(Exception):
+    """A REST read that would have fallen back to SQL, raised under PERMISSION_BOT_API_STRICT."""
+
+    def __init__(self, reader: str, reason: str) -> None:
+        super().__init__(
+            f"{reader} would read through SQL instead of the API"
+            f" ({FALLBACK_REASONS[reason]}), and {API_STRICT_ENV} is set"
+        )
+        self.reader = reader
+        self.reason = reason
+
+
+def _is_missing(error: BaseException) -> bool:
+    """Whether a snowflake.core error is a 404 for an object that doesn't exist."""
+    from snowflake.core.exceptions import APIError
+
+    if not isinstance(error, APIError) or error.status != 404:
+        return False
+    try:
+        return str(error.get_request_info()["error_code"]) == DOES_NOT_EXIST
+    except ValueError:
+        return False
+
+
+def _fallback_reason(error: BaseException) -> Optional[str]:
+    """Why a failed REST listing should be read through SQL, or None to raise it."""
+    import urllib3
+    from pydantic import ValidationError
+    from snowflake.core.exceptions import APIError, RetryTimeoutError
+
+    if isinstance(error, ValidationError):
+        return "validation"
+    # Raised by APIError's constructor itself, for an error body that isn't JSON
+    if isinstance(error, json.JSONDecodeError):
+        return "non-json"
+    if isinstance(error, RetryTimeoutError):
+        return "timeout"
+    if isinstance(error, APIError):
+        # snowflake.core reports an SSL failure as status 0
+        return "api error" if error.status else "transport"
+    if isinstance(
+        error,
+        (urllib3.exceptions.HTTPError, OSError, snowflake.connector.errors.Error),
+    ):
+        return "transport"
+    # snowflake.core raises some transport failures again as its own error, such as
+    # an SSL hostname mismatch as a SnowflakePythonError from the MaxRetryError
+    if error.__cause__ is not None and _fallback_reason(error.__cause__) == "transport":
+        return "transport"
+    return None
+
+
+class ReadStats:
+    """
+    How many of the listings snowflake.core can give each transport answered, and why
+    any fell back to SQL, by reader.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.listings: Counter = Counter()
+        self.fallbacks: Counter = Counter()
+
+    def listed(self, reader: str, transport: str) -> None:
+        with self._lock:
+            self.listings[reader, transport] += 1
+
+    def fell_back(self, reader: str, reason: str) -> None:
+        with self._lock:
+            self.fallbacks[reader, reason] += 1
+
+    def by_transport(self) -> Counter:
+        return self._totals(self.listings)
+
+    def by_reason(self) -> Counter:
+        return self._totals(self.fallbacks)
+
+    def _totals(self, counts: Counter) -> Counter:
+        totals: Counter = Counter()
+        with self._lock:
+            for (_, key), count in counts.items():
+                totals[key] += count
+        return totals
+
+    def summary(self, sql_only: bool = False) -> str:
+        """
+        One line for the run: the listings that can go through the API, by transport,
+        and fallbacks by reason. Reads that are always SQL, like SHOW ROLES, aren't
+        counted.
+        """
+        listings = self.by_transport()
+        line = (
+            f"  API-capable listings: {listings[API]} through the API,"
+            f" {listings[SQL]} through SQL"
+        )
+        fallbacks = self.by_reason()
+        if fallbacks:
+            line += " (fallbacks: {})".format(
+                ", ".join(
+                    f"{fallbacks[reason]} {description}"
+                    for reason, description in FALLBACK_REASONS.items()
+                    if fallbacks[reason]
+                )
+                + (
+                    ", then SQL for the rest of the run"
+                    if STICKY_REASONS & fallbacks.keys()
+                    else ""
+                )
+            )
+        elif sql_only:
+            line += " (SQL only)"
+        return line + "."
 
 
 class _BufferedResult:
@@ -95,7 +261,17 @@ class _BufferedResult:
 
 
 class SnowflakeConnector:
-    def __init__(self, config: Optional[Dict] = None) -> None:
+    # Defaults for the read transport, so a connector built without __init__ (the test
+    # fakes, MockSnowflakeConnector) reads the same way
+    _sql_only = False
+    _api_failed = False
+    _api: Optional[SnowflakeApi] = None
+    _api_error: Optional[Exception] = None
+    _api_connection: Any = None
+    _api_lock = threading.Lock()
+
+    def __init__(self, config: Optional[Dict] = None, sql_only: bool = False) -> None:
+        self._sql_only = sql_only
         max_workers = int(os.getenv("PERMISSION_BOT_MAX_WORKERS", "8"))
         pool_kwargs = {"pool_size": max_workers, "max_overflow": max_workers}
 
@@ -224,6 +400,151 @@ class SnowflakeConnector:
             encryption_algorithm=serialization.NoEncryption(),
         )
 
+    @property
+    def sql_only(self) -> bool:
+        """
+        Whether every read and write goes through SQL rather than snowflake.core: set by
+        --sql-only or sql_only=True, or for the whole process by PERMISSION_BOT_SQL_ONLY.
+        """
+        return self._sql_only or _env_flag(SQL_ONLY_ENV)
+
+    @sql_only.setter
+    def sql_only(self, value: bool) -> None:
+        self._sql_only = value
+
+    @property
+    def api_strict(self) -> bool:
+        """PERMISSION_BOT_API_STRICT: a REST read that would fall back to SQL raises."""
+        return _env_flag(API_STRICT_ENV)
+
+    @property
+    def api(self) -> SnowflakeApi:
+        """
+        snowflake.core, built the first time a reader needs it over a connection checked
+        out of this connector's pool, and kept for the run. Root runs SELECT
+        SYSTEM$CLIENT_VERSION_INFO() as it's built.
+        """
+        if self._api is None:
+            with self._api_lock:
+                # Readers waiting on the lock don't log in again to fail the same way
+                if self._api_error is not None:
+                    raise self._api_error
+                if self._api is None:
+                    try:
+                        self._api = self._build_api()
+                    except Exception as error:
+                        self._api_error = error
+                        raise
+        return self._api
+
+    def _build_api(self) -> SnowflakeApi:
+        from snowflake.core import Root
+
+        pooled = self.engine.raw_connection()
+        try:
+            root = Root(pooled.driver_connection)
+        except BaseException:
+            pooled.close()
+            raise
+        # Root holds the DBAPI connection, and the pool takes it back once its wrapper
+        # is collected, so the wrapper is held too
+        self._api_connection = pooled
+        return SnowflakeApi(root)
+
+    @property
+    def read_stats(self) -> ReadStats:
+        stats = self.__dict__.get("_read_stats")
+        if stats is None:
+            stats = self.__dict__.setdefault("_read_stats", ReadStats())
+        return stats
+
+    def _read(
+        self,
+        reader: str,
+        listing: Callable[[SnowflakeApi], Sequence[Any]],
+        parse: Callable[[Sequence[Any]], T],
+        sql: Callable[[], T],
+    ) -> T:
+        """
+        Read through snowflake.core: `listing` fetches the models and `parse` reads
+        them. The SQL reader `sql` answers instead when the connector is SQL only, after
+        a transport error, and for any listing that falls back (see _fall_back). A 404
+        for an object that doesn't exist is raised, as SQL's "does not exist" is.
+        """
+        if self.sql_only or self._api_failed:
+            self.read_stats.listed(reader, SQL)
+            return sql()
+
+        try:
+            api = self.api
+        except Exception as error:
+            return self._fall_back(reader, "transport", sql, error)
+
+        try:
+            models = listing(api)
+        except Exception as error:
+            if _is_missing(error):
+                self.read_stats.listed(reader, API)
+                raise
+            reason = _fallback_reason(error)
+            if reason is None:
+                raise
+            return self._fall_back(reader, reason, sql, error)
+
+        if len(models) >= api.list_limit:
+            return self._fall_back(reader, "limit", sql)
+
+        try:
+            result = parse(models)
+        except InvalidNameError as error:
+            return self._fall_back(reader, "validation", sql, error)
+
+        self.read_stats.listed(reader, API)
+        return result
+
+    def _fall_back(
+        self,
+        reader: str,
+        reason: str,
+        sql: Callable[[], T],
+        error: Optional[BaseException] = None,
+    ) -> T:
+        """
+        Read through SQL what the API couldn't give in full: a listing at the row limit
+        (it may have left rows out), a model snowflake.core or tundra can't read, an API
+        error, or a transport failure, after which the rest of the run reads through SQL.
+        """
+        if self.api_strict:
+            raise ApiFallbackError(reader, reason) from error
+        detail = f": {error}" if error is not None else ""
+        if reason in STICKY_REASONS and not self._api_failed:
+            self._api_failed = True
+            logger.warning(
+                f"{reader} through snowflake.core failed ({FALLBACK_REASONS[reason]}),"
+                f" so the rest of the run reads through SQL{detail}"
+            )
+        else:
+            logger.info(
+                f"{reader} reads through SQL ({FALLBACK_REASONS[reason]}){detail}"
+            )
+        self.read_stats.fell_back(reader, reason)
+        self.read_stats.listed(reader, SQL)
+        return sql()
+
+    @staticmethod
+    def _api_granted_on(securable_type: str) -> str:
+        """The grants_to_role key of a snowflake.core Grant's securable_type."""
+        return SnowflakeConnector.normalise_granted_on(securable_type.replace(" ", "_"))
+
+    @staticmethod
+    def _api_granted(
+        securable_type: str, grant: Any, future: bool = False
+    ) -> Optional[ObjectName]:
+        """The name a snowflake.core Grant is on, or None for a kind tundra doesn't read."""
+        if grant.securable is None:
+            raise InvalidNameError(f"A {securable_type} grant has no securable")
+        return api_granted_name(securable_type, grant.securable, future=future)
+
     @staticmethod
     def _granted(granted_on: str, name: str) -> Optional[ObjectName]:
         """The name of a SHOW GRANTS row, or None for a kind tundra doesn't read."""
@@ -238,11 +559,25 @@ class SnowflakeConnector:
 
         return [ObjectName.from_canonical(result["name"]) for result in results]
 
+    @staticmethod
+    def _api_names(models: Sequence[Any]) -> List[ObjectName]:
+        return [ObjectName.from_api(model.name) for model in models]
+
     def show_databases(self) -> List[ObjectName]:
-        return self.show_query("DATABASES")
+        return self._read(
+            "show_databases",
+            lambda api: api.databases(),
+            self._api_names,
+            lambda: self.show_query("DATABASES"),
+        )
 
     def show_warehouses(self) -> List[ObjectName]:
-        return self.show_query("WAREHOUSES")
+        return self._read(
+            "show_warehouses",
+            lambda api: api.warehouses(),
+            self._api_names,
+            lambda: self.show_query("WAREHOUSES"),
+        )
 
     def show_integrations(self) -> List[ObjectName]:
         return self.show_query("INTEGRATIONS")
@@ -308,14 +643,29 @@ class SnowflakeConnector:
         return self.show_table_objects(TASK, database=database, schema=schema)
 
     def show_users(self) -> List[ObjectName]:
-        return self.show_query("USERS")
+        return self._read(
+            "show_users",
+            lambda api: api.users(),
+            self._api_names,
+            lambda: self.show_query("USERS"),
+        )
 
     def show_schemas(self, database: Optional[NameLike] = None) -> List[ObjectName]:
-        if database:
-            query = f"SHOW TERSE SCHEMAS IN DATABASE {ObjectName.single(database)}"
-        else:
-            query = "SHOW TERSE SCHEMAS IN ACCOUNT"
+        # REST lists schemas a database at a time, so the account's stay one SHOW
+        if not database:
+            return self._sql_schemas("SHOW TERSE SCHEMAS IN ACCOUNT")
 
+        container = ObjectName.single(database)
+        return self._read(
+            "show_schemas",
+            lambda api: api.schemas(container.api_name),
+            lambda models: [
+                container.child(canonical_from_api(model.name)) for model in models
+            ],
+            lambda: self._sql_schemas(f"SHOW TERSE SCHEMAS IN DATABASE {container}"),
+        )
+
+    def _sql_schemas(self, query: str) -> List[ObjectName]:
         results = self.run_query(query).fetchall()
 
         return [
@@ -355,12 +705,99 @@ class SnowflakeConnector:
 
         return future_grants
 
-    def show_grants_to_role(self, role) -> Dict[str, Dict[str, Set[ObjectName]]]:
-        grants: Dict[str, Any] = {}
-        if role in ["*", '"*"']:
-            return grants
+    def show_future_grants_to_role(
+        self, role: NameLike
+    ) -> Dict[str, Dict[str, Set[ObjectName]]]:
+        """
+        The future grants held by <role>, in every database, keyed like
+        show_grants_to_role: privilege, then grant_on (table, iceberg_table, schema...),
+        then the future-grant scopes. A role that doesn't exist holds none.
+        """
+        name = ObjectName.single(role)
+        try:
+            return self._read(
+                "show_future_grants_to_role",
+                lambda api: api.future_grants_to_role(name.api_name),
+                self._api_future_grants,
+                lambda: self._sql_future_grants_to_role(name),
+            )
+        except Exception as error:
+            if _is_missing(error) or MISSING_ROLE_PATTERN.search(str(error)):
+                logger.info(f"Role {name} doesn't exist, so it holds no future grants")
+                return {}
+            raise
 
-        query = f"SHOW GRANTS TO ROLE {ObjectName.single(role)}"
+    def _api_future_grants(
+        self, models: Sequence[Any]
+    ) -> Dict[str, Dict[str, Set[ObjectName]]]:
+        grants: Dict[str, Any] = {}
+        for grant in models:
+            name = self._api_granted(grant.securable_type, grant, future=True)
+            if name is None:
+                continue
+            granted_on = self._api_granted_on(grant.securable_type)
+            for privilege in grant.privileges or ():
+                grants.setdefault(privilege.lower(), {}).setdefault(
+                    granted_on, set()
+                ).add(name)
+        return grants
+
+    def _sql_future_grants_to_role(
+        self, role: ObjectName
+    ) -> Dict[str, Dict[str, Set[ObjectName]]]:
+        grants: Dict[str, Any] = {}
+        query = f"SHOW FUTURE GRANTS TO ROLE {role}"
+
+        for result in self.run_query(query).fetchall():
+            name = self._granted(result["grant_on"], result["name"])
+            if name is None:
+                continue
+            grants.setdefault(result["privilege"].lower(), {}).setdefault(
+                result["grant_on"].lower(), set()
+            ).add(name)
+
+        return grants
+
+    def show_grants_to_role(self, role) -> Dict[str, Dict[str, Set[ObjectName]]]:
+        if role in ["*", '"*"']:
+            return {}
+
+        name = ObjectName.single(role)
+        return self._read(
+            "show_grants_to_role",
+            lambda api: api.grants_to_role(name.api_name),
+            self._api_grants_to_role,
+            lambda: self._sql_grants_to_role(name),
+        )
+
+    def _api_grants_to_role(
+        self, models: Sequence[Any]
+    ) -> Dict[str, Dict[str, Set[ObjectName]]]:
+        grants: Dict[str, Any] = {}
+        for grant in models:
+            name = self._api_granted(grant.securable_type, grant)
+            if name is None:
+                continue
+            granted_on = self._api_granted_on(grant.securable_type)
+
+            # As in SQL, the application's own grants aren't recorded
+            if granted_on == APPLICATION_ROLE_GRANT_TYPE and (
+                not grant.granted_by
+                or ObjectName.from_api(grant.granted_by) == name.database
+            ):
+                continue
+
+            for privilege in grant.privileges or ():
+                grants.setdefault(privilege.lower(), {}).setdefault(
+                    granted_on, set()
+                ).add(name)
+        return grants
+
+    def _sql_grants_to_role(
+        self, role: ObjectName
+    ) -> Dict[str, Dict[str, Set[ObjectName]]]:
+        grants: Dict[str, Any] = {}
+        query = f"SHOW GRANTS TO ROLE {role}"
 
         results = self.run_query(query).fetchall()
 
@@ -390,9 +827,32 @@ class SnowflakeConnector:
         each one. Snowflake's own privileges on its system-defined roles report an
         empty grantor, which is how the generator knows never to revoke them.
         """
+        name = ObjectName.single(role)
+        return self._read(
+            "show_account_grants_to_role",
+            lambda api: api.grants_to_role(name.api_name),
+            self._api_account_grants,
+            lambda: self._sql_account_grants_to_role(name),
+        )
+
+    @staticmethod
+    def _api_account_grants(models: Sequence[Any]) -> Dict[str, Union[ObjectName, str]]:
+        grants: Dict[str, Union[ObjectName, str]] = {}
+        for grant in models:
+            if grant.securable_type.lower() != "account":
+                continue
+            for privilege in grant.privileges or ():
+                grants[privilege.lower()] = (
+                    ObjectName.from_api(grant.granted_by) if grant.granted_by else ""
+                )
+        return grants
+
+    def _sql_account_grants_to_role(
+        self, role: ObjectName
+    ) -> Dict[str, Union[ObjectName, str]]:
         grants: Dict[str, Union[ObjectName, str]] = {}
 
-        query = f"SHOW GRANTS TO ROLE {ObjectName.single(role)}"
+        query = f"SHOW GRANTS TO ROLE {role}"
 
         for result in self.run_query(query).fetchall():
             if result["granted_on"].lower() != "account":
@@ -405,9 +865,41 @@ class SnowflakeConnector:
         return grants
 
     def show_grants_to_role_with_grant_option(self, role) -> Dict[str, Any]:
+        name = ObjectName.single(role)
+        return self._read(
+            "show_grants_to_role_with_grant_option",
+            lambda api: api.grants_to_role(name.api_name),
+            self._api_grants_with_grant_option,
+            lambda: self._sql_grants_to_role_with_grant_option(name),
+        )
+
+    def _api_grants_with_grant_option(self, models: Sequence[Any]) -> Dict[str, Any]:
+        grants: Dict[str, Any] = {}
+        for grant in models:
+            # Keyed by granted_on as SHOW GRANTS spells it, lowercased: external_volume
+            granted_on = grant.securable_type.replace(" ", "_").lower()
+            name: Optional[ObjectName]
+            if granted_on == "account":
+                if grant.securable is None:
+                    raise InvalidNameError("An account grant has no securable")
+                name = ObjectName.from_api(grant.securable.name)
+            else:
+                name = self._api_granted(grant.securable_type, grant)
+                if name is None:
+                    continue
+
+            for privilege in grant.privileges or ():
+                grants.setdefault(privilege.lower(), {}).setdefault(
+                    granted_on, {}
+                ).setdefault(name, {}).update(
+                    {"grant_option": bool(grant.grant_option)}
+                )
+        return grants
+
+    def _sql_grants_to_role_with_grant_option(self, role: ObjectName) -> Dict[str, Any]:
         grants: Dict[str, Any] = {}
 
-        query = f"SHOW GRANTS TO ROLE {ObjectName.single(role)}"
+        query = f"SHOW GRANTS TO ROLE {role}"
         results = self.run_query(query).fetchall()
 
         for result in results:
@@ -431,7 +923,25 @@ class SnowflakeConnector:
         return grants
 
     def show_roles_granted_to_user(self, user) -> Set[ObjectName]:
-        query = f"SHOW GRANTS TO USER {ObjectName.single(user)}"
+        name = ObjectName.single(user)
+        return self._read(
+            "show_roles_granted_to_user",
+            lambda api: api.grants_to_user(name.api_name),
+            self._api_user_roles,
+            lambda: self._sql_roles_granted_to_user(name),
+        )
+
+    def _api_user_roles(self, models: Sequence[Any]) -> Set[ObjectName]:
+        roles = set()
+        for grant in models:
+            if grant.securable_type.lower() == "role":
+                role = self._api_granted(grant.securable_type, grant)
+                if role is not None:
+                    roles.add(role)
+        return roles
+
+    def _sql_roles_granted_to_user(self, user: ObjectName) -> Set[ObjectName]:
+        query = f"SHOW GRANTS TO USER {user}"
         results = self.run_query(query).fetchall()
 
         return {
@@ -492,7 +1002,17 @@ class SnowflakeConnector:
 
     def show_database_roles(self, database: NameLike) -> List[ObjectName]:
         """List the database roles in a database as db.role names."""
-        database = ObjectName.single(database)
+        container = ObjectName.single(database)
+        return self._read(
+            "show_database_roles",
+            lambda api: api.database_roles(container.api_name),
+            lambda models: [
+                container.child(canonical_from_api(model.name)) for model in models
+            ],
+            lambda: self._sql_database_roles(container),
+        )
+
+    def _sql_database_roles(self, database: ObjectName) -> List[ObjectName]:
         query = f"SHOW DATABASE ROLES IN DATABASE {database}"
         results = self.run_query(query).fetchall()
 
@@ -555,9 +1075,11 @@ class SnowflakeConnector:
 
     def object_exists(self, kind: str, name: str) -> bool:
         """
-        Look an object up with the same SHOW that discovered it at plan time. A parent
-        that is gone too means the object is gone. A lookup that fails for any other
-        reason reports the object as present, since its absence can't be confirmed.
+        Look an object up with the same listing that discovered it at plan time. A
+        parent that is gone too (in SQL's words or as snowflake.core's 404) means the
+        object is gone. A lookup that fails for any other reason reports the object as
+        present, since its absence can't be confirmed. That includes strict mode's
+        ApiFallbackError, so a lookup during apply can't stop a run halfway.
         """
         try:
             if kind == "database":
@@ -578,7 +1100,11 @@ class SnowflakeConnector:
                     )
                 )
         except Exception as exc:
-            return not (self.missing_object(exc) or MISSING_CONTAINER_ERROR in str(exc))
+            return not (
+                self.missing_object(exc)
+                or MISSING_CONTAINER_ERROR in str(exc)
+                or _is_missing(exc)
+            )
         return identifier in found
 
     def full_schema_list(

@@ -3,13 +3,19 @@
 State is declared with the names Snowflake stores (canonical names), written as
 identifier spellings for readability: `raw.public` and `RAW.PUBLIC` declare the same
 schema, `raw."Mixed-Case"` declares a case-sensitive one. The fake then answers in the
-two forms Snowflake uses:
+three forms Snowflake uses:
 
 - SHOW <objects> (databases, schemas, tables, roles, users...) report canonical names,
   unquoted and case-sensitive: `Mixed-Case`, `AGGREGATE`.
 - SHOW GRANTS and SHOW FUTURE GRANTS report identifier spellings, quoting any part that
   isn't a plain uppercase identifier and any keyword Snowflake quotes:
   `RAW."Mixed-Case"`, `LAB_RESULTS."AGGREGATE".<TABLE>`.
+- The REST API, through FakeApi, answers with snowflake.core's own models, each part
+  bare when it's a plain uppercase identifier, keywords included, and quoted otherwise:
+  `AGGREGATE`, `"Mixed-Case"`, `"<TABLE>"`. That's the rule all of the dev probe's
+  REST rows fit. The models' validators would also take a bare `lower_case`, and the
+  probe met no name stored in lowercase, so `rest_bare_mixed_case` sends every
+  identifier-shaped part bare instead.
 
 Identifiers tundra sends are resolved with Snowflake's rules, so a query naming
 `"group"` finds nothing when the stored object is `GROUP`, and an unquoted reserved word
@@ -17,10 +23,30 @@ fails the way it would in Snowflake. A query the fake can't answer fails the tes
 every query a scenario makes is accounted for.
 """
 
+import json
 import re
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
+import urllib3
+from snowflake.core.database import Database
+from snowflake.core.database_role import DatabaseRole
+from snowflake.core.exceptions import (
+    APIError,
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+    ServerError,
+    UnauthorizedError,
+)
+from snowflake.core.rest import RESTResponse
+from snowflake.core.role import Grant as RestGrant
+from snowflake.core.schema import Schema
+from snowflake.core.user import Grant as RestUserGrant
+from snowflake.core.user import User
+from snowflake.core.warehouse import Warehouse
+
+from tundra.snowflake_api import LIST_LIMIT
 from tundra.snowflake_connector import SnowflakeConnector, _BufferedResult
 
 Name = Tuple[str, ...]
@@ -69,6 +95,46 @@ def spell(name: Iterable[str]) -> str:
         else:
             rendered.append('"' + part.replace('"', '""') + '"')
     return ".".join(rendered)
+
+
+_REST_FIELDS = {
+    1: ("name",),
+    2: ("database", "name"),
+    3: ("database", "schema", "name"),
+}
+
+
+def rest_part(canonical_part: str, *, mixed_case: bool = False) -> str:
+    """Spell one canonical part the way REST models carry it."""
+    bare = _UNQUOTED if mixed_case else _PLAIN_UPPER
+    if bare.fullmatch(canonical_part):
+        return canonical_part
+    return '"' + canonical_part.replace('"', '""') + '"'
+
+
+def api_error(
+    status: int, message: str = "", error_code: str = "002003", body: Any = None
+) -> APIError:
+    """
+    The error snowflake.core raises for an HTTP response, built offline. A `body` that
+    isn't JSON raises JSONDecodeError here, as it does inside snowflake.core.
+    """
+    if body is None:
+        body = json.dumps(
+            {"message": message, "error_code": error_code, "request_id": "fake"}
+        ).encode()
+    response = RESTResponse(
+        urllib3.HTTPResponse(
+            body=body, status=status, headers={"Content-Type": "application/json"}
+        )
+    )
+    error_class = {
+        401: UnauthorizedError,
+        403: ForbiddenError,
+        404: NotFoundError,
+        409: ConflictError,
+    }.get(status, ServerError if status >= 500 else APIError)
+    return error_class(root=None, http_resp=response)
 
 
 @dataclass(frozen=True)
@@ -122,19 +188,36 @@ class FakeAccount:
     user_roles: Dict[str, List[str]] = field(default_factory=dict)
     user_tags: Dict[str, Dict[str, str]] = field(default_factory=dict)
 
+    # The most rows a REST listing returns, and whether a mixed-case part goes bare
+    rest_list_cap: int = LIST_LIMIT
+    rest_bare_mixed_case: bool = False
+
     queries: List[str] = field(default_factory=list)
+    api_calls: List[Tuple[str, ...]] = field(default_factory=list)
 
     def install(self, mocker) -> None:
-        """Route every SnowflakeConnector, including ones tundra creates itself, here."""
+        """
+        Route every SnowflakeConnector, including ones tundra creates itself, here: its
+        SQL to run_query and its REST reads to FakeApi.
+        """
         account = self
-        mocker.patch.object(
-            SnowflakeConnector, "__init__", lambda self, config=None: None
-        )
+
+        def init(self, config=None, sql_only=False):
+            self._sql_only = sql_only
+
+        mocker.patch.object(SnowflakeConnector, "__init__", init)
         mocker.patch.object(
             SnowflakeConnector,
             "run_query",
             lambda self, query: account.run_query(query),
         )
+        mocker.patch.object(
+            SnowflakeConnector, "api", property(lambda self: account.api)
+        )
+
+    @property
+    def api(self) -> "FakeApi":
+        return FakeApi(self)
 
     # Lookups on canonical names
 
@@ -198,6 +281,7 @@ class FakeAccount:
                 self._show_objects,
             ),
             (r"SHOW FUTURE GRANTS IN (DATABASE|SCHEMA) (.+)", self._show_future_grants),
+            (r"SHOW FUTURE GRANTS TO ROLE (.+)", self._show_future_grants_to_role),
             (r"SHOW GRANTS TO ROLE (.+)", self._show_grants_to_role),
             (r"SHOW GRANTS TO USER (.+)", self._show_grants_to_user),
             (r"SHOW ROLES", self._show_roles),
@@ -248,6 +332,21 @@ class FakeAccount:
             }
             for g in self.future_grants
             if canonical(g.container) == container
+        ]
+
+    def _show_future_grants_to_role(self, spelling: str):
+        role = self._role(spelling)
+        return [
+            {
+                "privilege": g.privilege,
+                "grant_on": g.on,
+                "name": spell(canonical(g.container) + (f"<{g.on}>",)),
+                "grant_to": "ROLE",
+                "grantee_name": role,
+                "grant_option": "false",
+            }
+            for g in self.future_grants
+            if self._key(g.to) == role
         ]
 
     def _grant_rows(self, grantee: str, grants: Iterable[Grant]):
@@ -313,6 +412,140 @@ class FakeAccount:
                 }
             )
         return rows
+
+
+class FakeApi:
+    """
+    The account's answers to tundra.snowflake_api.SnowflakeApi, as snowflake.core's own
+    models, so their validators check every spelling the fake sends. Each call is
+    recorded in api_calls, and a listing stops at rest_list_cap rows, in the order SHOW
+    lists them. A name in a path resolves like an identifier: quoted exactly, bare in
+    uppercase. A role that doesn't exist is a 404, as Snowflake answers it.
+    """
+
+    def __init__(self, account: FakeAccount) -> None:
+        self.account = account
+
+    @property
+    def list_limit(self) -> int:
+        return self.account.rest_list_cap
+
+    def grants_to_role(self, role: str) -> List[RestGrant]:
+        self._called("grants_to_role", role)
+        name = self._role(role)
+        return self._capped(
+            [
+                RestGrant.from_dict(
+                    {
+                        "securable": (
+                            {"name": self._part(self.account.locator)}
+                            if g.on == "ACCOUNT"
+                            else self._securable(canonical(g.name))
+                        ),
+                        "securable_type": g.on.replace("_", " "),
+                        "grant_option": g.grant_option,
+                        "privileges": [g.privilege],
+                        "granted_by": self._part(g.granted_by) if g.granted_by else "",
+                    }
+                )
+                for g in self.account.grants
+                if self.account._key(g.to) == name
+            ]
+        )
+
+    def future_grants_to_role(self, role: str) -> List[RestGrant]:
+        self._called("future_grants_to_role", role)
+        name = self._role(role)
+        return self._capped(
+            [
+                RestGrant.from_dict(
+                    {
+                        # The placeholder keeps its underscore, the type has a space
+                        "securable": self._securable(
+                            canonical(g.container) + (f"<{g.on}>",)
+                        ),
+                        "securable_type": g.on.replace("_", " "),
+                        "grant_option": False,
+                        "privileges": [g.privilege],
+                    }
+                )
+                for g in self.account.future_grants
+                if self.account._key(g.to) == name
+            ]
+        )
+
+    def grants_to_user(self, user: str) -> List[RestUserGrant]:
+        self._called("grants_to_user", user)
+        name = self._path(user)
+        roles = {self.account._key(k): v for k, v in self.account.user_roles.items()}
+        return self._capped(
+            [
+                RestUserGrant.from_dict(
+                    {
+                        "securable": {"name": self._part(self.account._key(role))},
+                        "securable_type": "ROLE",
+                    }
+                )
+                for role in roles.get(name, [])
+            ]
+        )
+
+    def databases(self) -> List[Database]:
+        self._called("databases")
+        return self._named(Database, self.account._account_objects("DATABASES"))
+
+    def warehouses(self) -> List[Warehouse]:
+        self._called("warehouses")
+        return self._named(Warehouse, self.account._account_objects("WAREHOUSES"))
+
+    def users(self) -> List[User]:
+        self._called("users")
+        return self._named(User, self.account._account_objects("USERS"))
+
+    def schemas(self, database: str) -> List[Schema]:
+        self._called("schemas", database)
+        db = self._path(database)
+        return self._named(
+            Schema, [s[1] for s in self.account._schemas() if s[0] == db]
+        )
+
+    def database_roles(self, database: str) -> List[DatabaseRole]:
+        self._called("database_roles", database)
+        db = self._path(database)
+        roles = {canonical(k)[0]: v for k, v in self.account.database_roles.items()}
+        return self._named(DatabaseRole, [canonical(r)[0] for r in roles.get(db, [])])
+
+    def _called(self, call: str, *args: str) -> None:
+        self.account.api_calls.append((call, *args))
+
+    def _capped(self, models: List[Any]) -> List[Any]:
+        return models[: self.list_limit]
+
+    def _named(self, model: Any, names: Iterable[str]) -> List[Any]:
+        return self._capped([model.from_dict({"name": self._part(n)}) for n in names])
+
+    def _part(self, canonical_part: str) -> str:
+        return rest_part(canonical_part, mixed_case=self.account.rest_bare_mixed_case)
+
+    def _securable(self, parts: Name) -> Dict[str, str]:
+        return dict(zip(_REST_FIELDS[len(parts)], map(self._part, parts)))
+
+    @staticmethod
+    def _path(spelling: str) -> str:
+        if spelling.startswith('"'):
+            (name,) = canonical(spelling)
+            return name
+        if not _UNQUOTED.fullmatch(spelling):
+            raise api_error(400, f"invalid identifier '{spelling}'", "002025")
+        return spelling.upper()
+
+    def _role(self, spelling: str) -> str:
+        role = self._path(spelling)
+        if role not in {self.account._key(r) for r in self.account.roles}:
+            raise api_error(
+                404, f"Role '{role.lower()}' does not exist or not authorized."
+            )
+        return role
 
 
 def _is_canonical(name: str) -> bool:
