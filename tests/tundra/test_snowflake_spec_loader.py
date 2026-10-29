@@ -8,7 +8,6 @@ from tundra.snowflake_grants import SnowflakeGrantsGenerator
 from tundra_test_utils.snowflake_schema_builder import SnowflakeSchemaBuilder
 from tundra_test_utils.snowflake_connector import MockSnowflakeConnector
 
-
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 SPEC_FILE_DIR = os.path.join(THIS_DIR, "specs")
 SCHEMA_FILE_DIR = os.path.join(THIS_DIR, "schemas")
@@ -327,6 +326,25 @@ class TestSnowflakeSpecLoader:
 
         return [spec_file_data, method, return_value, expected_error]
 
+    # test_check_entities_on_snowflake_server_errors_if_role_owner_does_not_match
+    def require_owner_error_handling_case_five():
+        """
+        An owner in the spec that isn't a valid role name isn't the role's owner
+        """
+        spec_file_data = (
+            SnowflakeSchemaBuilder()
+            .add_role(owner='sys"admin', member_of=["testrole"])
+            .build()
+        )
+        method = "show_roles"
+        return_value = {"testrole": "securityadmin"}
+        expected_error = (
+            "Role testrole has owner securityadmin on snowflake, but has owner"
+            ' sys"admin defined in the spec file'
+        )
+
+        return [spec_file_data, method, return_value, expected_error]
+
     @pytest.mark.parametrize(
         "config",
         [
@@ -334,6 +352,7 @@ class TestSnowflakeSpecLoader:
             require_owner_error_handling_case_two,
             require_owner_error_handling_case_three,
             require_owner_error_handling_case_four,
+            require_owner_error_handling_case_five,
         ],
     )
     def test_check_entities_on_snowflake_server_errors_if_role_owner_does_not_match(
@@ -582,6 +601,33 @@ class TestSnowflakeSpecLoader:
         }
         spec_loader.filter_to_database_refs(grant_on=grant_on, filter_set=filter_set)
 
+    @pytest.mark.parametrize(
+        "grant_on,expected",
+        [("table", ["raw.public.events"]), ("function", [])],
+    )
+    def test_filter_to_database_refs_keeps_names_it_reads(
+        self, mocker, grant_on, expected
+    ):
+        mocker.patch.object(SnowflakeSpecLoader, "__init__", lambda *args: None)
+        spec_loader = SnowflakeSpecLoader("", None)
+        spec_loader.entities = {
+            "database_refs": {"raw"},
+            "warehouse_refs": set(),
+            "integration_refs": set(),
+        }
+
+        names = spec_loader.filter_to_database_refs(
+            grant_on=grant_on,
+            filter_set=[
+                "",
+                "RAW.PUBLIC.EVENTS",
+                'RAW."unterminated',
+                "OTHER.PUBLIC.EVENTS",
+            ],
+        )
+
+        assert names == expected
+
     # edge case for PascalCase table entities
     def load_spec_file_case_one():
         """
@@ -591,7 +637,7 @@ class TestSnowflakeSpecLoader:
             SnowflakeSchemaBuilder()
             .add_db(name="database_1")
             .add_role(
-                tables=["database_1.schema_1.TableOne"],
+                tables=['database_1.schema_1."TableOne"'],
                 permission_set=["read", "write"],
                 member_of=["testrole"],
             )
@@ -599,7 +645,9 @@ class TestSnowflakeSpecLoader:
         )
         method = "show_tables"
         return_value = ["database_1.schema_1.tableone"]
-        expected_error = "Missing Entity Error: Table/View database_1.schema_1.TableOne"
+        expected_error = (
+            'Missing Entity Error: Table/View database_1.schema_1."TableOne"'
+        )
         return [spec_file_data, method, return_value, expected_error]
 
     # edge case for table entities that do not exist
@@ -662,6 +710,42 @@ class TestSnowflakeSpecLoader:
 
         assert expected_error in str(context.value)
 
+    def test_unquoted_pascal_case_table_resolves_to_uppercase(
+        self, mocker, mock_connector
+    ):
+        """
+        An unquoted TableOne is TABLEONE, the table SHOW TABLES lists
+        """
+        spec_file_data = (
+            SnowflakeSchemaBuilder()
+            .add_db(name="database_1")
+            .add_role(
+                tables=["database_1.schema_1.TableOne"],
+                permission_set=["read", "write"],
+                member_of=["testrole"],
+            )
+            .build()
+        )
+        mocker.patch("builtins.open", mocker.mock_open(read_data=spec_file_data))
+        mocker.patch.object(
+            mock_connector, "show_databases", return_value=["database_1"]
+        )
+        mocker.patch.object(
+            mock_connector, "show_schemas", return_value=["database_1.schema_1"]
+        )
+        mocker.patch.object(
+            mock_connector, "show_roles", return_value={"testrole": "securityadmin"}
+        )
+        mocker.patch.object(
+            mock_connector,
+            "show_tables",
+            return_value=["database_1.schema_1.tableone"],
+        )
+
+        loader = SnowflakeSpecLoader("", mock_connector)
+
+        assert loader.missing_entities["tables"] == set()
+
     def test_check_database_role_entities_passes_when_role_exists(
         self, mocker, mock_connector
     ):
@@ -680,7 +764,9 @@ class TestSnowflakeSpecLoader:
 
         SnowflakeSpecLoader("", mock_connector)
 
-        mock_connector.show_database_roles.assert_called_once_with(database="snowflake")
+        mock_connector.show_database_roles.assert_called_once_with(
+            database='"SNOWFLAKE"'
+        )
 
     def test_check_database_role_entities_errors_when_role_missing(
         self, mocker, mock_connector
@@ -700,6 +786,33 @@ class TestSnowflakeSpecLoader:
         assert (
             "Missing Entity Error: Database role mydb.db_role_1 was not found"
             in str(context.value)
+        )
+
+    def test_dotted_database_role_tail_is_reported_missing(
+        self, mocker, mock_connector
+    ):
+        """
+        Only the first unquoted dot splits a member_of entry, so the rest is one role
+        name, and Snowflake has no database or application role by that name.
+        """
+        spec_file_data = (
+            SnowflakeSchemaBuilder()
+            .add_role(member_of=["mydb.myschema.db_role_1"])
+            .build()
+        )
+        mocker.patch("builtins.open", mocker.mock_open(read_data=spec_file_data))
+        mocker.patch.object(mock_connector, "show_roles", return_value=["testrole"])
+        mocker.patch.object(
+            mock_connector, "show_database_roles", return_value=["mydb.db_role_1"]
+        )
+
+        with pytest.raises(SpecLoadingError) as context:
+            SnowflakeSpecLoader("", mock_connector)
+
+        assert str(context.value) == (
+            'Missing Entity Error: Database role mydb."myschema.db_role_1" was not'
+            " found on Snowflake Server, as a database role or an application role."
+            " Please create it before continuing."
         )
 
     def test_check_database_role_entities_skipped_when_none_referenced(
@@ -1986,12 +2099,12 @@ class TestApplicationRoleEntities:
         loader = SnowflakeSpecLoader("", mock_connector)
 
         mock_connector.show_application_roles.assert_called_once_with(
-            application="snowflake"
+            application='"SNOWFLAKE"'
         )
         assert loader.entities["application_role_refs"] == {
-            "snowflake.cortex_analyst_requests_viewer"
+            '"SNOWFLAKE".cortex_analyst_requests_viewer'
         }
-        assert loader.entities["database_role_refs"] == {"snowflake.usage_viewer"}
+        assert loader.entities["database_role_refs"] == {'"SNOWFLAKE".usage_viewer'}
 
     def test_application_role_membership_generates_grant_application_role(
         self, mocker, mock_connector

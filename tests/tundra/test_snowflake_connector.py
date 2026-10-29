@@ -26,72 +26,6 @@ def snowflake_connector_env():
 
 
 class TestSnowflakeConnector:
-    def test_snowflaky(self):
-        db1 = "analytics.schema.table"
-        db2 = "1234raw.schema.table"
-        db3 = '"123-with-quotes".schema.table'
-        db4 = "1_db-9-RANDOM.schema.table"
-        db5 = "DATABASE_1.SCHEMA_1.TABLE_1"
-        db6 = "DATABASE_1.SCHEMA_1.TABLE$A"
-        db7 = 'DATABASE_1.SCHEMA_1."GROUP"'
-        db8 = "DATABASE_1.SCHEMA_1.1_LEADING_DIGIT"
-        db9 = 'DATABASE_1.SCHEMA_1."1_LEADING_DIGIT_IN_QUOTES"'
-        db10 = 'DATABASE_1.SCHEMA_1."QUOTED!TABLE%WITH^SPECIAL*CHARACTERS"'
-        db11 = "DATABASE_1.SCHEMA_1.TABLE%WITH^SPECIAL*CHARACTERS"
-        db12 = "DATABASE_1.SCHEMA_1.Case_Sensitive_Table_Name"
-        db13 = "DATABASE_1.SCHEMA_1.<TABLE>"
-        db14 = "DATABASE_1.1_LEADING_DIGIT.<TABLE>"
-        db15 = "DATABASE_1.1_LEADING_DIGIT.<table>"
-        db16 = "DATABASE_1.SCHEMA_1.TABLE_1.AMBIGUOUS_IDENTIFIER"
-        db17 = 'DATABASE_1.SCHEMA_1."TABLE_1.AMBIGUOUS_IDENTIFIER"'
-        db18 = "DATABASE_1.SCHEMA_1.GROUP"
-        db19 = None
-
-        assert SnowflakeConnector.snowflaky(db1) == 'analytics."SCHEMA"."TABLE"'
-        assert SnowflakeConnector.snowflaky(db2) == '"1234raw"."SCHEMA"."TABLE"'
-        assert SnowflakeConnector.snowflaky(db3) == '"123-with-quotes"."SCHEMA"."TABLE"'
-        assert SnowflakeConnector.snowflaky(db4) == '"1_db-9-RANDOM"."SCHEMA"."TABLE"'
-        assert SnowflakeConnector.snowflaky(db5) == "database_1.schema_1.table_1"
-        assert SnowflakeConnector.snowflaky(db6) == "database_1.schema_1.table$a"
-        assert SnowflakeConnector.snowflaky(db7) == 'database_1.schema_1."GROUP"'
-        assert (
-            SnowflakeConnector.snowflaky(db8) == 'database_1.schema_1."1_LEADING_DIGIT"'
-        )
-        assert (
-            SnowflakeConnector.snowflaky(db9)
-            == 'database_1.schema_1."1_LEADING_DIGIT_IN_QUOTES"'
-        )
-        assert (
-            SnowflakeConnector.snowflaky(db10)
-            == 'database_1.schema_1."QUOTED!TABLE%WITH^SPECIAL*CHARACTERS"'
-        )
-        assert (
-            SnowflakeConnector.snowflaky(db11)
-            == 'database_1.schema_1."TABLE%WITH^SPECIAL*CHARACTERS"'
-        )
-        assert (
-            SnowflakeConnector.snowflaky(db12)
-            == 'database_1.schema_1."Case_Sensitive_Table_Name"'
-        )
-
-        assert SnowflakeConnector.snowflaky(db13) == "database_1.schema_1.<table>"
-
-        assert (
-            SnowflakeConnector.snowflaky(db14) == 'database_1."1_LEADING_DIGIT".<table>'
-        )
-
-        assert (
-            SnowflakeConnector.snowflaky(db15) == 'database_1."1_LEADING_DIGIT".<table>'
-        )
-
-        with pytest.warns(SyntaxWarning):
-            SnowflakeConnector.snowflaky(db16)
-            SnowflakeConnector.snowflaky(db17)
-
-        assert SnowflakeConnector.snowflaky(db18) == 'database_1.schema_1."GROUP"'
-
-        assert SnowflakeConnector.snowflaky(db19) == ""
-
     def test_uses_oauth_if_available(self, mocker, snowflake_connector_env):
         mocker.patch("sqlalchemy.create_engine")
         os.environ["PERMISSION_BOT_OAUTH_TOKEN"] = "TEST"
@@ -178,8 +112,6 @@ class TestSnowflakeConnector:
         )
 
     def test_run_query_executes_desired_query(self, mocker):
-        from sqlalchemy import text
-
         mocker.patch("sqlalchemy.create_engine")
         config = {
             "user": "test",
@@ -380,8 +312,8 @@ class TestSnowflakeConnector:
         assert future_grants == {
             "role_1": {
                 "select": {
-                    "table": ["database_1.schema_1.<table>"],
-                    "view": ["database_1.schema_1.<view>"],
+                    "table": {"database_1.schema_1.<table>"},
+                    "view": {"database_1.schema_1.<view>"},
                 }
             }
         }
@@ -425,8 +357,8 @@ class TestSnowflakeConnector:
         assert future_grants == {
             "role_1": {
                 "select": {
-                    "table": ['database_1."CaseSensitiveSchema".<table>'],
-                    "view": ['database_1."CaseSensitiveSchema".<view>'],
+                    "table": {'database_1."CaseSensitiveSchema".<table>'},
+                    "view": {'database_1."CaseSensitiveSchema".<view>'},
                 }
             }
         }
@@ -455,7 +387,7 @@ class TestSnowflakeConnector:
         future_grants = conn.show_future_grants(schema="lab_results.aggregate")
 
         assert future_grants == {
-            "loader": {"select": {"table": ["lab_results.aggregate.<table>"]}}
+            "loader": {"select": {"table": {"lab_results.aggregate.<table>"}}}
         }
 
     def test_show_future_grants_in_database(self, mocker):
@@ -491,8 +423,8 @@ class TestSnowflakeConnector:
         assert future_grants == {
             "role_1": {
                 "select": {
-                    "table": ["database_1.<table>"],
-                    "view": ["database_1.<view>"],
+                    "table": {"database_1.<table>"},
+                    "view": {"database_1.<view>"},
                 }
             }
         }
@@ -546,12 +478,12 @@ class TestSnowflakeConnector:
 
         roles_granted_to_user = conn.show_roles_granted_to_user("test_user")
 
-        expected_roles_granted_to_user = [
+        expected_roles_granted_to_user = {
             "test_role",
             "superadmin",
             '"ROLE WITH SPACES"',
             '"lowercase role with spaces"',
-        ]
+        }
 
         conn.run_query.assert_has_calls([mocker.call("SHOW GRANTS TO USER test_user")])
         assert roles_granted_to_user == expected_roles_granted_to_user
@@ -582,8 +514,32 @@ class TestSnowflakeConnector:
         conn.run_query.assert_has_calls([mocker.call("SHOW GRANTS TO ROLE test_role")])
         assert grants == {
             "select": {
-                "table": ["database_1.schema_1.table_1", "database_1.schema_1.table_2"]
+                "table": {"database_1.schema_1.table_1", "database_1.schema_1.table_2"}
             }
+        }
+
+    @pytest.mark.parametrize("granted_on", ["EXTERNAL_VOLUME", "EXTERNAL VOLUME"])
+    def test_show_grants_to_role_external_volumes(self, mocker, granted_on):
+        mocker.patch("sqlalchemy.create_engine")
+        conn = SnowflakeConnector()
+        conn.run_query = mocker.MagicMock()
+        mocker.patch.object(
+            conn.run_query(),
+            "fetchall",
+            return_value=[
+                {"privilege": "USAGE", "granted_on": granted_on, "name": "OLD_VOLUME"},
+                {
+                    "privilege": "USAGE",
+                    "granted_on": granted_on,
+                    "name": "ICEBERG_VOLUME",
+                },
+            ],
+        )
+
+        grants = conn.show_grants_to_role("test_role")
+
+        assert grants == {
+            "usage": {"external volume": {"old_volume", "iceberg_volume"}}
         }
 
     def test_show_database_roles(self, mocker):
@@ -655,10 +611,10 @@ class TestSnowflakeConnector:
 
         assert grants == {
             "usage": {
-                "database role": [
+                "database role": {
                     "mydb.db_role_1",
                     '"SNOWFLAKE".organization_billing_viewer',
-                ]
+                }
             }
         }
 
@@ -698,136 +654,14 @@ class TestSnowflakeConnector:
         conn.run_query.assert_has_calls([mocker.call("SHOW GRANTS TO ROLE test_role")])
         assert grants == {
             "select": {
-                "table": [
+                "table": {
                     'database_1.schema_1."GROUP"',
                     'database_1.schema_1."INTERSECT"',
                     'database_1.schema_1."Capitalized_Name"',
                     'database_1.schema_1."123_TABLE"',
-                ]
+                }
             }
         }
-
-
-class TestSnowflakyFuturePlaceholders:
-    # The inputs here are the literal `name` values `SHOW FUTURE GRANTS` returns, so
-    # they are underscore-separated: DB.SCHEMA.<ICEBERG_TABLE>, never <ICEBERG TABLE>.
-    # Anything that fails to match the placeholder pattern gets double-quoted instead
-    # of lowercased, and then never compares equal to a generated placeholder.
-    def test_future_placeholders_lowercased_not_quoted(self):
-        assert (
-            SnowflakeConnector.snowflaky("db_1.<ICEBERG_TABLE>")
-            == "db_1.<iceberg_table>"
-        )
-        assert (
-            SnowflakeConnector.snowflaky("db_1.schema_1.<DYNAMIC_TABLE>")
-            == "db_1.schema_1.<dynamic_table>"
-        )
-        assert (
-            SnowflakeConnector.snowflaky("db_1.schema_1.<STREAMLIT>")
-            == "db_1.schema_1.<streamlit>"
-        )
-        assert (
-            SnowflakeConnector.snowflaky("db_1.schema_1.<SEMANTIC_VIEW>")
-            == "db_1.schema_1.<semantic_view>"
-        )
-        assert SnowflakeConnector.snowflaky("db_1.<TABLE>") == "db_1.<table>"
-        assert SnowflakeConnector.snowflaky("db_1.<VIEW>") == "db_1.<view>"
-        assert SnowflakeConnector.snowflaky("db_1.<SCHEMA>") == "db_1.<schema>"
-
-    def test_multi_word_placeholders_match_show_future_grants_output(self):
-        # Regression: the placeholder tundra generates has to equal the one it reads
-        # back out of Snowflake, or every ALL/FUTURE grant on a multi-word type is
-        # re-issued on every run and is never revoked.
-        for object_type in (ICEBERG_TABLE, DYNAMIC_TABLE):
-            reported = f"DB_1.SCHEMA_1.<{object_type.name.upper().replace(' ', '_')}>"
-            assert (
-                SnowflakeConnector.snowflaky(reported)
-                == f"db_1.schema_1.{object_type.future_placeholder}"
-            )
-
-
-class TestSnowflakyQuotedIdentifiers:
-    # SHOW GRANTS and SHOW FUTURE GRANTS quote any name part Snowflake treats as a
-    # keyword, reserved or not, while the spec spells the same object unquoted. A quoted
-    # part that is a plain uppercase identifier names the same object as its unquoted
-    # spelling, so both have to canonicalise to one string.
-    @pytest.mark.parametrize(
-        "quoted,unquoted,expected",
-        [
-            (
-                'LAB_RESULTS."AGGREGATE".<TABLE>',
-                "lab_results.aggregate.<table>",
-                "lab_results.aggregate.<table>",
-            ),
-            (
-                'LAB_RESULTS."AGGREGATE"',
-                "LAB_RESULTS.AGGREGATE",
-                "lab_results.aggregate",
-            ),
-            (
-                'DATABASE_1.SCHEMA_1."TABLE$A"',
-                "database_1.schema_1.table$a",
-                "database_1.schema_1.table$a",
-            ),
-            # Reserved words still need quoting, uppercased to match the stored form.
-            (
-                'DATABASE_1."GROUP".<TABLE>',
-                "database_1.group.<table>",
-                'database_1."GROUP".<table>',
-            ),
-            (
-                'DATABASE_1.SCHEMA_1."WINDOW"',
-                "database_1.schema_1.window",
-                'database_1.schema_1."WINDOW"',
-            ),
-        ],
-    )
-    def test_quoted_and_unquoted_spellings_agree(self, quoted, unquoted, expected):
-        assert SnowflakeConnector.snowflaky(quoted) == expected
-        assert SnowflakeConnector.snowflaky(unquoted) == expected
-
-    @pytest.mark.parametrize(
-        "name",
-        [
-            'database_1."aggregate"',
-            'database_1."Aggregate"',
-            'database_1."1_LEADING_DIGIT"',
-            'database_1."QUOTED!TABLE"',
-        ],
-    )
-    def test_case_sensitive_quoted_parts_pass_through(self, name):
-        # No unquoted spelling reaches these objects, so the quotes stay as written.
-        assert SnowflakeConnector.snowflaky(name) == name
-
-    @pytest.mark.parametrize(
-        "name",
-        [
-            'LAB_RESULTS."AGGREGATE".<TABLE>',
-            "analytics.schema.table",
-            'DATABASE_1."GROUP"',
-            'database_1."Aggregate"',
-            "1_db-9-RANDOM.schema.table",
-        ],
-    )
-    def test_is_idempotent(self, name):
-        # Fetched state is snowflaky'd on the way in and again by every comparison.
-        once = SnowflakeConnector.snowflaky(name)
-        assert SnowflakeConnector.snowflaky(once) == once
-
-    @pytest.mark.parametrize(
-        "quoted,unquoted,expected",
-        [
-            ('DATABASE_1."AGGREGATE"', "database_1.aggregate", "database_1.aggregate"),
-            (
-                '"SNOWFLAKE".USAGE_VIEWER',
-                "snowflake.usage_viewer",
-                '"SNOWFLAKE".usage_viewer',
-            ),
-        ],
-    )
-    def test_database_role_spellings_agree(self, quoted, unquoted, expected):
-        assert SnowflakeConnector.snowflaky_database_role(quoted) == expected
-        assert SnowflakeConnector.snowflaky_database_role(unquoted) == expected
 
 
 class TestShowTableObjects:
@@ -854,7 +688,7 @@ class TestShowTableObjects:
         conn.show_table_objects(TABLE)
         run_query.assert_called_with("SHOW TERSE TABLES IN ACCOUNT")
 
-    def test_show_table_objects_returns_snowflaky_identifiers(self, mocker):
+    def test_show_table_objects_returns_canonical_names(self, mocker):
         conn = MockSnowflakeConnector()
         mocker.patch.object(
             MockSnowflakeConnector,
@@ -972,34 +806,12 @@ class TestApplicationRoles:
 
         assert grants == {
             "usage": {
-                "application role": [
+                "application role": {
                     '"SNOWFLAKE".cortex_analyst_requests_viewer',
                     '"SNOWFLAKE"."CORTEX-MODEL-ROLE-GEMINI-2.5-FLASH"',
-                ]
+                }
             }
         }
-
-    @pytest.mark.parametrize(
-        "name,expected",
-        [
-            (
-                "snowflake.cortex_analyst_requests_viewer",
-                '"SNOWFLAKE".cortex_analyst_requests_viewer',
-            ),
-            (
-                "SNOWFLAKE.CORTEX_ANALYST_REQUESTS_VIEWER",
-                '"SNOWFLAKE".cortex_analyst_requests_viewer',
-            ),
-            (
-                'SNOWFLAKE."CORTEX-MODEL-ROLE-GEMINI-2.5-FLASH"',
-                '"SNOWFLAKE"."CORTEX-MODEL-ROLE-GEMINI-2.5-FLASH"',
-            ),
-            ("myapp.my_role", "myapp.my_role"),
-            ("snowflake", '"SNOWFLAKE"'),
-        ],
-    )
-    def test_snowflaky_application_role(self, name, expected):
-        assert SnowflakeConnector.snowflaky_application_role(name) == expected
 
     @pytest.mark.parametrize(
         "granted_on,expected",
@@ -1007,7 +819,10 @@ class TestApplicationRoles:
             ("APPLICATION_ROLE", "application role"),
             ("APPLICATION ROLE", "application role"),
             ("DATABASE_ROLE", "database role"),
+            ("EXTERNAL_VOLUME", "external volume"),
+            ("EXTERNAL VOLUME", "external volume"),
             ("TABLE", "table"),
+            ("ICEBERG_TABLE", "iceberg_table"),
         ],
     )
     def test_normalise_granted_on_application_role(self, granted_on, expected):

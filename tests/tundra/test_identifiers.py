@@ -31,8 +31,7 @@ from tundra_test_utils.fake_account import canonical, spell
 
 
 def rows(table):
-    """The values of a parametrize table, with any xfail marks dropped: the xfail rows
-    hold the correct behaviour, which this module has to produce."""
+    """The values of a parametrize table, whether its rows are tuples or pytest.param."""
     return [getattr(row, "values", row) for row in table]
 
 
@@ -468,6 +467,28 @@ class TestRoleReference:
         with pytest.raises(InvalidNameError):
             ObjectName.role_reference(ObjectName("a.b.c"))
 
+    @pytest.mark.parametrize(
+        "quoted,unquoted,rendered",
+        [
+            ('DATABASE_1."AGGREGATE"', "database_1.aggregate", "database_1.aggregate"),
+            (
+                '"SNOWFLAKE".USAGE_VIEWER',
+                "snowflake.usage_viewer",
+                '"SNOWFLAKE".usage_viewer',
+            ),
+        ],
+    )
+    def test_quoted_and_unquoted_database_role_spellings_agree(
+        self, quoted, unquoted, rendered
+    ):
+        # SHOW GRANTS quotes keyword parts of the database roles it lists
+        held = granted_name("DATABASE_ROLE", quoted)
+
+        assert held == ObjectName.role_reference(quoted)
+        assert held == ObjectName.role_reference(unquoted)
+        assert held == member_or_pattern(unquoted)
+        assert str(held) == rendered
+
 
 class TestCanonical:
     @pytest.mark.parametrize(
@@ -747,8 +768,8 @@ class TestGoldenScenarios:
         )
 
 
-class TestSnowflakyCases:
-    """The cases snowflaky's own tests in test_snowflake_connector.py pin."""
+class TestRenderingCases:
+    """Keyword, digit-led, special-character, quoted-dot and placeholder spellings."""
 
     @pytest.mark.parametrize(
         "spelling,rendered",
@@ -799,7 +820,7 @@ class TestSnowflakyCases:
             ),
         ],
     )
-    def test_snowflaky_cases(self, spelling, rendered):
+    def test_renders(self, spelling, rendered):
         assert str(ObjectName(spelling)) == rendered
 
     def test_an_unquoted_star_is_a_pattern(self):

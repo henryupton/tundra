@@ -6,7 +6,6 @@ from tundra.entities import EntityGenerator
 from tundra.error import SpecLoadingError
 from tundra.spec_file_loader import load_spec
 
-
 SPEC_DIR = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "specs", "snowflake_spec_directory"
 )
@@ -57,6 +56,21 @@ class TestLoadSpecDirectory:
             SpecLoadingError, match=r'users "jane" .* a\.yml and b/c\.yml'
         ):
             load_spec(str(tmp_path))
+
+    def test_one_role_spelt_differently_across_files_is_a_duplicate(self, tmp_path):
+        write(tmp_path, "a.yml", "roles:\n  - loader:\n      warehouses: [wh_a]\n")
+        write(tmp_path, "b.yml", "roles:\n  - LOADER:\n      warehouses: [wh_b]\n")
+        write(
+            tmp_path,
+            "w.yml",
+            "warehouses:\n  - wh_a:\n      size: x-small\n"
+            "  - wh_b:\n      size: x-small\n",
+        )
+        with pytest.raises(SpecLoadingError) as context:
+            EntityGenerator(load_spec(str(tmp_path))).inspect_entities()
+        assert str(context.value) == (
+            "Spec error: role LOADER is defined more than once (first as loader)"
+        )
 
     def test_same_name_in_different_sections_is_fine(self, tmp_path):
         write(tmp_path, "roles.yml", "roles:\n  - demo:\n      warehouses: []\n")

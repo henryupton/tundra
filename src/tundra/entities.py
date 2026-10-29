@@ -1,37 +1,83 @@
-from typing import Any, Dict, Iterable, List, Set, Tuple, TypedDict
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Optional,
+    Set,
+    Tuple,
+    TypedDict,
+    Union,
+)
 
 from tundra.account_privileges import (
     ACCOUNTADMIN_ONLY_PRIVILEGES,
     normalise_account_privilege,
 )
 from tundra.error import SpecLoadingError
+from tundra.identifiers import (
+    InvalidNameError,
+    NamePattern,
+    ObjectName,
+    member_or_pattern,
+    name_or_pattern,
+)
 from tundra.logger import GLOBAL_LOGGER as logger
 from tundra.table_object_types import PRIVILEGE_FAMILIES
 from tundra.types import TundraSpecSchema
 
+SpecEntry = Union[ObjectName, NamePattern]
+
 
 class EntitySchema(TypedDict):
-    databases: Set[str]
-    database_refs: Set[str]
-    shared_databases: Set[str]
-    schema_refs: Set[str]
-    table_refs: Set[str]
-    tables_by_database: Dict
-    task_refs: Set[str]
-    tasks_by_database: Dict
-    account_privilege_roles: Set[str]
-    roles: Set[str]
-    role_refs: Set[str]
-    database_role_refs: Set[str]
-    application_role_refs: Set[str]
-    users: Set[str]
-    warehouses: Set[str]
-    warehouse_refs: Set[str]
-    integrations: Set[str]
-    integration_refs: Set[str]
-    external_volumes: Set[str]
-    external_volume_refs: Set[str]
+    databases: Set[ObjectName]
+    database_refs: Set[ObjectName]
+    shared_databases: Set[ObjectName]
+    schema_refs: Set[SpecEntry]
+    table_refs: Set[SpecEntry]
+    tables_by_database: Dict[ObjectName, Set[SpecEntry]]
+    task_refs: Set[SpecEntry]
+    tasks_by_database: Dict[ObjectName, Set[SpecEntry]]
+    account_privilege_roles: Set[ObjectName]
+    roles: Set[SpecEntry]
+    role_refs: Set[SpecEntry]
+    database_role_refs: Set[ObjectName]
+    application_role_refs: Set[ObjectName]
+    users: Set[ObjectName]
+    warehouses: Set[ObjectName]
+    warehouse_refs: Set[ObjectName]
+    integrations: Set[ObjectName]
+    integration_refs: Set[ObjectName]
+    external_volumes: Set[ObjectName]
+    external_volume_refs: Set[ObjectName]
     require_owner: bool
+
+
+def _database_names(spellings: Iterable[str]) -> Set[ObjectName]:
+    names = set()
+    for spelling in spellings:
+        try:
+            names.add(ObjectName.single(spelling))
+        except InvalidNameError:
+            continue
+    return names
+
+
+def _has_no_database(entry: SpecEntry) -> bool:
+    return isinstance(entry, NamePattern) and entry.prefix is None
+
+
+def _namespace(spelling: str) -> ObjectName:
+    """A DEFAULT_NAMESPACE, which names a database or schema, never future grants."""
+    name = ObjectName(spelling)
+    if name.is_future:
+        raise InvalidNameError(f"{spelling!r} is a future-grant scope, not a namespace")
+    return name
+
+
+def _tag(spelling: str) -> ObjectName:
+    return ObjectName(spelling, arity=3)
 
 
 class EntityGenerator:
@@ -61,6 +107,61 @@ class EntityGenerator:
             "require_owner": False,
         }
         self.error_messages: List[str] = []
+        self._name_errors: List[str] = []
+        self._definitions: Dict[Tuple[str, ObjectName], str] = {}
+
+    def _name(
+        self, construct: Callable[[str], Any], spelling: str, message: str
+    ) -> Optional[Any]:
+        """<spelling> read with <construct>, or None once <message> is recorded."""
+        try:
+            return construct(spelling)
+        except InvalidNameError:
+            self._name_errors.append(message)
+            return None
+
+    def _single(self, spelling: str, noun: str) -> Optional[ObjectName]:
+        return self._name(
+            ObjectName.single,
+            spelling,
+            f"Name error: Not a valid {noun} name: {spelling}",
+        )
+
+    def _define(self, spelling: str, noun: str) -> Optional[ObjectName]:
+        """
+        The <noun> a spec section defines as <spelling>. Every spelling of one name is
+        the same object, so a later entry for it is an error: planned on its own, it
+        would revoke what the earlier entry grants.
+        """
+        name = self._single(spelling, noun)
+        if name is None:
+            return None
+        first = self._definitions.get((noun, name))
+        if first is None:
+            self._definitions[(noun, name)] = spelling
+            return name
+        message = f"Spec error: {noun} {spelling} is defined more than once"
+        if first != spelling:
+            message += f" (first as {first})"
+        if message not in self.error_messages:
+            self.error_messages.append(message)
+        return name
+
+    def _schema_entry(self, spelling: str) -> Optional[SpecEntry]:
+        return self._name(
+            lambda s: name_or_pattern(s, arity=2),
+            spelling,
+            f"Name error: Not a valid schema name: {spelling}"
+            " (Proper definition: DB.[SCHEMA | *])",
+        )
+
+    def _object_entry(self, spelling: str, noun: str) -> Optional[SpecEntry]:
+        return self._name(
+            lambda s: name_or_pattern(s, arity=3),
+            spelling,
+            f"Name error: Not a valid {noun} name: {spelling}"
+            f" (Proper definition: DB.[SCHEMA | *].[{noun.upper()} | *])",
+        )
 
     def inspect_entities(self) -> EntitySchema:
         """
@@ -112,10 +213,13 @@ class EntityGenerator:
         )
 
     @staticmethod
-    def _group_refs_by_database(refs: Iterable[str]) -> Dict[str, Set[str]]:
-        by_database: Dict[str, Set[str]] = {}
+    def _group_refs_by_database(
+        refs: Iterable[SpecEntry],
+    ) -> Dict[ObjectName, Set[SpecEntry]]:
+        by_database: Dict[ObjectName, Set[SpecEntry]] = {}
         for ref in refs:
-            by_database.setdefault(ref.split(".")[0], set()).add(ref)
+            if not _has_no_database(ref):
+                by_database.setdefault(ref.database, set()).add(ref)
         return by_database
 
     @staticmethod
@@ -199,19 +303,19 @@ class EntityGenerator:
     def generate_implicit_refs_from_schemas(self):
         """Adds implicit database refs from schemas"""
         for schema in self.entities["schema_refs"]:
-            name_parts = schema.split(".")
-            if name_parts[0] != "*":
-                self.entities["database_refs"].add(name_parts[0])
+            if not _has_no_database(schema):
+                self.entities["database_refs"].add(schema.database)
 
     def generate_implicit_refs_from_tables(self):
         """Adds implicit db/schema refs from tables and tasks"""
         for table in self.entities["table_refs"] | self.entities["task_refs"]:
-            name_parts = table.split(".")
-            if name_parts[0] != "*":
-                self.entities["database_refs"].add(name_parts[0])
+            if _has_no_database(table):
+                continue
+            self.entities["database_refs"].add(table.database)
 
-            if name_parts[1] != "*":
-                self.entities["schema_refs"].add(f"{name_parts[0]}.{name_parts[1]}")
+            schema = table.parent
+            if not (isinstance(schema, NamePattern) and schema.globs == ("*",)):
+                self.entities["schema_refs"].add(schema)
 
     def ensure_valid_entity_names(self, entities: EntitySchema) -> List[str]:
         """
@@ -219,15 +323,7 @@ class EntityGenerator:
 
         Returns a list with all the errors found.
         """
-        error_messages = []
-
-        for db in entities["databases"].union(entities["database_refs"]):
-            name_parts = db.split(".")
-            if not len(name_parts) == 1:
-                error_messages.append(
-                    f"Name error: Not a valid database name: {db}"
-                    " (Proper definition: DB)"
-                )
+        error_messages = list(dict.fromkeys(self._name_errors))
 
         # A period in a role name is what marks it as a database role reference,
         # so roles defined in the spec must not contain one.
@@ -240,33 +336,28 @@ class EntityGenerator:
                         " referencing database roles as DB.ROLE in member_of)"
                     )
 
-        for database_role in entities["database_role_refs"]:
-            name_parts = database_role.split(".")
-            if (not len(name_parts) == 2) or not all(name_parts):
+        for schema in sorted(entities["schema_refs"]):
+            if _has_no_database(schema):
                 error_messages.append(
-                    f"Name error: Not a valid database role name: {database_role}"
-                    " (Proper definition: DB.ROLE)"
-                )
-
-        for schema in entities["schema_refs"]:
-            name_parts = schema.split(".")
-            if (not len(name_parts) == 2) or (name_parts[0] == "*"):
-                error_messages.append(
-                    f"Name error: Not a valid schema name: {schema}"
+                    f"Name error: Not a valid schema name: {schema!s}"
                     " (Proper definition: DB.[SCHEMA | *])"
                 )
 
         for noun, refs_key in (("table", "table_refs"), ("task", "task_refs")):
-            for table in entities[refs_key]:  # type: ignore
-                name_parts = table.split(".")
-                if (not len(name_parts) == 3) or (name_parts[0] == "*"):
+            for table in sorted(entities[refs_key]):  # type: ignore
+                if _has_no_database(table):
                     error_messages.append(
-                        f"Name error: Not a valid {noun} name: {table}"
+                        f"Name error: Not a valid {noun} name: {table!s}"
                         f" (Proper definition: DB.[SCHEMA | *].[{noun.upper()} | *])"
                     )
-                elif name_parts[1] == "*" and name_parts[2] != "*":
+                elif (
+                    isinstance(table, NamePattern)
+                    and len(table.globs) == 2
+                    and table.globs[0] == "*"
+                    and table.globs[1] != "*"
+                ):
                     error_messages.append(
-                        f"Name error: Not a valid {noun} name: {table}"
+                        f"Name error: Not a valid {noun} name: {table!s}"
                         f" (Can't have a {noun.capitalize()} name after selecting all"
                         f" schemas with *: DB.SCHEMA.[{noun.upper()} | *])"
                     )
@@ -286,35 +377,35 @@ class EntityGenerator:
         for database in entities["database_refs"]:
             if database not in entities["databases"]:
                 error_messages.append(
-                    f"Reference error: Database {database} is referenced "
+                    f"Reference error: Database {database!s} is referenced "
                     "in the spec but not defined"
                 )
 
         for role in entities["role_refs"]:
             if role not in entities["roles"] and role != "*":
                 error_messages.append(
-                    f"Reference error: Role {role} is referenced in the "
+                    f"Reference error: Role {role!s} is referenced in the "
                     "spec but not defined"
                 )
 
         for warehouse in entities["warehouse_refs"]:
             if warehouse not in entities["warehouses"]:
                 error_messages.append(
-                    f"Reference error: Warehouse {warehouse} is referenced "
+                    f"Reference error: Warehouse {warehouse!s} is referenced "
                     "in the spec but not defined"
                 )
 
         for integration in entities["integration_refs"]:
             if integration not in entities["integrations"]:
                 error_messages.append(
-                    f"Reference error: Integration {integration} is referenced "
+                    f"Reference error: Integration {integration!s} is referenced "
                     "in the spec but not defined"
                 )
 
         for external_volume in entities["external_volume_refs"]:
             if external_volume not in entities["external_volumes"]:
                 error_messages.append(
-                    f"Reference error: External Volume {external_volume} is referenced "
+                    f"Reference error: External Volume {external_volume!s} is referenced "
                     "in the spec but not defined"
                 )
 
@@ -364,28 +455,37 @@ class EntityGenerator:
     def generate_warehouses(self, warehouse_list: List[Dict[str, Dict]]) -> None:
         for warehouse_entry in warehouse_list:
             for warehouse_name, _ in warehouse_entry.items():
-                self.entities["warehouses"].add(warehouse_name)
+                warehouse = self._define(warehouse_name, "warehouse")
+                if warehouse is not None:
+                    self.entities["warehouses"].add(warehouse)
 
     def generate_integrations(self, integration_list: List[Dict[str, Dict]]) -> None:
         for integration_entry in integration_list:
             for integration_name, _ in integration_entry.items():
-                self.entities["integrations"].add(integration_name)
+                integration = self._define(integration_name, "integration")
+                if integration is not None:
+                    self.entities["integrations"].add(integration)
 
     def generate_external_volumes(
         self, external_volume_list: List[Dict[str, Dict]]
     ) -> None:
         for external_volume_entry in external_volume_list:
             for external_volume_name, _ in external_volume_entry.items():
-                self.entities["external_volumes"].add(external_volume_name)
+                external_volume = self._define(external_volume_name, "external volume")
+                if external_volume is not None:
+                    self.entities["external_volumes"].add(external_volume)
 
     def generate_databases(self, db_list: List[Dict[str, Dict]]) -> None:
         for db_entry in db_list:
             for db_name, config in db_entry.items():
-                self.entities["databases"].add(db_name)
+                database = self._define(db_name, "database")
+                if database is None:
+                    continue
+                self.entities["databases"].add(database)
                 if "shared" in config:
-                    if type(config["shared"]) == bool:
+                    if isinstance(config["shared"], bool):
                         if config["shared"]:
-                            self.entities["shared_databases"].add(db_name)
+                            self.entities["shared_databases"].add(database)
                     else:
                         logger.debug(
                             "`shared` for database {} must be boolean, skipping Role Reference generation.".format(
@@ -393,29 +493,53 @@ class EntityGenerator:
                             )
                         )
 
-    def add_member_of_ref(self, member_role):
+    def _member_entry(self, member_role: str, alone: bool) -> Optional[SpecEntry]:
         """
-        Route a member_of entry to the right reference set. Anything containing a
-        period is a database role FQN (db.role), everything else is an account role.
-        The spec loader later moves the DB.ROLE refs that Snowflake reports as
-        application roles into application_role_refs; the spec spells both the same.
+        A member_of entry, or None once its error is recorded. The only pattern
+        member_of takes is a * on its own, standing for every role in the spec.
         """
-        if "." in member_role:
-            self.entities["database_role_refs"].add(member_role)
+        member = self._name(
+            member_or_pattern,
+            member_role,
+            f"Name error: Not a valid role name: {member_role}",
+        )
+        if isinstance(member, NamePattern) and not (alone and member == "*"):
+            self._name_errors.append(
+                f"Name error: Not a valid role name: {member_role}"
+                " (A * in member_of has to be the only role included)"
+            )
+            return None
+        return member
+
+    def add_member_of_ref(self, member_role, alone: bool = True):
+        """
+        Route a member_of entry to the right reference set. A DB.ROLE name is a
+        database role reference, everything else is an account role. The spec loader
+        later moves the DB.ROLE refs that Snowflake reports as application roles into
+        application_role_refs; the spec spells both the same.
+        """
+        member = self._member_entry(member_role, alone)
+        if member is None:
+            return
+        if isinstance(member, ObjectName) and len(member.parts) == 2:
+            self.entities["database_role_refs"].add(member)
         else:
-            self.entities["roles"].add(member_role)
+            self.entities["roles"].add(member)
 
     def generate_member_of_roles(self, config, role_name):
         try:
             if isinstance(config["member_of"], dict):
-                for member_role in config["member_of"].get("include", []):
-                    self.add_member_of_ref(member_role)
+                include = config["member_of"].get("include", [])
+                for member_role in include:
+                    self.add_member_of_ref(member_role, alone=len(include) == 1)
                 for member_role in config["member_of"].get("exclude", []):
-                    self.add_member_of_ref(member_role)
+                    self.add_member_of_ref(member_role, alone=False)
 
             if isinstance(config["member_of"], list):
                 for member_role in config["member_of"]:
-                    self.add_member_of_ref(member_role)
+                    self.add_member_of_ref(
+                        member_role, alone=len(config["member_of"]) == 1
+                    )
         except KeyError:
             logger.debug(
                 "`member_of` not found for role {}, skipping Role Reference generation.".format(
@@ -425,8 +549,10 @@ class EntityGenerator:
 
     def generate_warehouse_roles(self, config, role_name):
         try:
-            for warehouse in config["warehouses"]:
-                self.entities["warehouse_refs"].add(warehouse)
+            for warehouse_name in config["warehouses"]:
+                warehouse = self._single(warehouse_name, "warehouse")
+                if warehouse is not None:
+                    self.entities["warehouse_refs"].add(warehouse)
         except KeyError:
             logger.debug(
                 "`warehouses` not found for role {}, skipping Warehouse Reference generation.".format(
@@ -436,8 +562,10 @@ class EntityGenerator:
 
     def generate_integration_roles(self, config, role_name):
         try:
-            for integration in config["integrations"]:
-                self.entities["integration_refs"].add(integration)
+            for integration_name in config["integrations"]:
+                integration = self._single(integration_name, "integration")
+                if integration is not None:
+                    self.entities["integration_refs"].add(integration)
         except KeyError:
             logger.debug(
                 "`Integration` not found for role {}, skipping Integration Reference generation.".format(
@@ -447,8 +575,10 @@ class EntityGenerator:
 
     def generate_external_volume_roles(self, config, role_name):
         try:
-            for external_volume in config["external_volumes"]:
-                self.entities["external_volume_refs"].add(external_volume)
+            for external_volume_name in config["external_volumes"]:
+                external_volume = self._single(external_volume_name, "external volume")
+                if external_volume is not None:
+                    self.entities["external_volume_refs"].add(external_volume)
         except KeyError:
             logger.debug(
                 "`external_volumes` not found for role {}, skipping External Volume Reference generation.".format(
@@ -456,10 +586,15 @@ class EntityGenerator:
                 )
             )
 
+    def _add_database_refs(self, spellings: Iterable[str]) -> None:
+        for spelling in spellings:
+            database = self._single(spelling, "database")
+            if database is not None:
+                self.entities["database_refs"].add(database)
+
     def generate_database_roles(self, config, role_name):
         try:
-            for schema in config["privileges"]["databases"]["read"]:
-                self.entities["database_refs"].add(schema)
+            self._add_database_refs(config["privileges"]["databases"]["read"])
         except KeyError:
             logger.debug(
                 "`privileges.databases.read` not found for role {}, skipping Database Reference generation.".format(
@@ -467,8 +602,7 @@ class EntityGenerator:
                 )
             )
         try:
-            for schema in config["privileges"]["databases"]["write"]:
-                self.entities["database_refs"].add(schema)
+            self._add_database_refs(config["privileges"]["databases"]["write"])
         except KeyError:
             logger.debug(
                 "`privileges.databases.write` not found for role {}, skipping Database Reference generation.".format(
@@ -477,15 +611,14 @@ class EntityGenerator:
             )
 
     @staticmethod
-    def generate_read_write_database_names(config):
-        read_databases = (
-            config.get("privileges", {}).get("databases", {}).get("read", [])
+    def generate_read_write_database_names(
+        config,
+    ) -> Tuple[Set[ObjectName], Set[ObjectName]]:
+        databases = config.get("privileges", {}).get("databases", {})
+        return (
+            _database_names(databases.get("read", [])),
+            _database_names(databases.get("write", [])),
         )
-
-        write_databases = (
-            config.get("privileges", {}).get("databases", {}).get("write", [])
-        )
-        return read_databases, write_databases
 
     def generate_schema_roles(self, config, role_name):
         read_databases, write_databases = self.generate_read_write_database_names(
@@ -493,12 +626,16 @@ class EntityGenerator:
         )
 
         try:
-            for schema in config["privileges"]["schemas"]["read"]:
+            for spelling in config["privileges"]["schemas"]["read"]:
+                schema = self._schema_entry(spelling)
+                if schema is None:
+                    continue
                 self.entities["schema_refs"].add(schema)
-                schema_db = schema.split(".")[0]
-                if schema_db not in read_databases:
+                if not _has_no_database(schema) and (
+                    schema.database not in read_databases
+                ):
                     self.error_messages.append(
-                        f"Privilege Error: Database {schema_db} referenced in "
+                        f"Privilege Error: Database {schema.database} referenced in "
                         "schema read privileges but not in database privileges "
                         f"for role {role_name}"
                     )
@@ -510,12 +647,16 @@ class EntityGenerator:
             )
 
         try:
-            for schema in config["privileges"]["schemas"]["write"]:
+            for spelling in config["privileges"]["schemas"]["write"]:
+                schema = self._schema_entry(spelling)
+                if schema is None:
+                    continue
                 self.entities["schema_refs"].add(schema)
-                schema_db = schema.split(".")[0]
-                if schema_db not in write_databases + read_databases:
+                if not _has_no_database(schema) and (
+                    schema.database not in write_databases | read_databases
+                ):
                     self.error_messages.append(
-                        f"Privilege Error: Database {schema_db} referenced in "
+                        f"Privilege Error: Database {schema.database} referenced in "
                         "schema write privileges but not in database privileges "
                         f"for role {role_name}"
                     )
@@ -543,15 +684,19 @@ class EntityGenerator:
 
         for access, allowed_databases in (
             ("read", read_databases),
-            ("write", write_databases + read_databases),
+            ("write", write_databases | read_databases),
         ):
             try:
-                for ref in config["privileges"][family][access]:
+                for spelling in config["privileges"][family][access]:
+                    ref = self._object_entry(spelling, noun)
+                    if ref is None:
+                        continue
                     self.entities[refs_key].add(ref)  # type: ignore
-                    ref_db = ref.split(".")[0]
-                    if ref_db not in allowed_databases:
+                    if not _has_no_database(ref) and (
+                        ref.database not in allowed_databases
+                    ):
                         self.error_messages.append(
-                            f"Privilege Error: Database {ref_db} referenced in "
+                            f"Privilege Error: Database {ref.database} referenced in "
                             f"{noun} {access} privileges but not in database privileges "
                             f"for role {role_name}"
                         )
@@ -579,7 +724,9 @@ class EntityGenerator:
             return
 
         # Declaring the key, even as an empty list, opts the role into reconciliation.
-        self.entities["account_privilege_roles"].add(role_name)
+        role = self._single(role_name, "role")
+        if role is not None:
+            self.entities["account_privilege_roles"].add(role)
 
         for privilege in account_privileges:
             normalised = normalise_account_privilege(privilege)
@@ -596,8 +743,7 @@ class EntityGenerator:
 
     def generate_ownership_roles(self, config, role_name):
         try:
-            for schema in config["owns"]["databases"]:
-                self.entities["database_refs"].add(schema)
+            self._add_database_refs(config["owns"]["databases"])
         except KeyError:
             logger.debug(
                 "`owns.databases` not found for role {}, skipping Database Reference generation.".format(
@@ -606,8 +752,10 @@ class EntityGenerator:
             )
 
         try:
-            for schema in config["owns"]["schemas"]:
-                self.entities["schema_refs"].add(schema)
+            for spelling in config["owns"]["schemas"]:
+                schema = self._schema_entry(spelling)
+                if schema is not None:
+                    self.entities["schema_refs"].add(schema)
         except KeyError:
             logger.debug(
                 "`owns.schemas` not found for role {}, skipping Schema Reference generation.".format(
@@ -616,8 +764,10 @@ class EntityGenerator:
             )
 
         try:
-            for table in config["owns"]["tables"]:
-                self.entities["table_refs"].add(table)
+            for spelling in config["owns"]["tables"]:
+                table = self._object_entry(spelling, "table")
+                if table is not None:
+                    self.entities["table_refs"].add(table)
         except KeyError:
             logger.debug(
                 "`owns.tables` not found for role {}, skipping Table Reference generation.".format(
@@ -634,7 +784,9 @@ class EntityGenerator:
 
         for role_entry in role_list:
             for role_name, config in role_entry.items():
-                self.entities["roles"].add(role_name)
+                role = self._define(role_name, "role")
+                if role is not None:
+                    self.entities["roles"].add(role)
                 self.generate_member_of_roles(config, role_name)
                 self.generate_warehouse_roles(config, role_name)
                 self.generate_integration_roles(config, role_name)
@@ -649,7 +801,14 @@ class EntityGenerator:
     def generate_user_fn(self, config, key, ref, user_name):
         if key in config:
             for item in config[key]:
-                self.entities[ref].add(item)
+                if ref == "schema_refs":
+                    entry = self._schema_entry(item)
+                elif ref == "table_refs":
+                    entry = self._object_entry(item, "table")
+                else:
+                    entry = self._single(item, "database")
+                if entry is not None:
+                    self.entities[ref].add(entry)
         else:
             logger.debug(
                 "`{}` not found for user {}, skipping Role Reference generation.".format(
@@ -667,14 +826,44 @@ class EntityGenerator:
             return
 
         for member_role in config["member_of"]:
+            member = self._member_entry(
+                member_role, alone=len(config["member_of"]) == 1
+            )
+            if member is None:
+                continue
             # Snowflake only allows database roles to be granted to other roles
-            if "." in member_role:
+            if isinstance(member, ObjectName) and len(member.parts) == 2:
                 self.error_messages.append(
                     f"Reference error: Database role {member_role} is granted to user "
                     f"{user_name}, but database roles can only be granted to roles"
                 )
             else:
-                self.entities["role_refs"].add(member_role)
+                self.entities["role_refs"].add(member)
+
+    def generate_user_properties(self, config):
+        """
+        Parse the names in a user's properties and tags. They aren't references, but a
+        malformed one is a Name error here rather than a failure while planning.
+        """
+        for key, noun in (("default_role", "role"), ("default_warehouse", "warehouse")):
+            if key in config:
+                self._single(config[key], noun)
+
+        if "default_namespace" in config:
+            namespace = config["default_namespace"]
+            self._name(
+                _namespace,
+                namespace,
+                f"Name error: Not a valid namespace name: {namespace}",
+            )
+
+        for tag in config.get("tags", {}):
+            self._name(
+                _tag,
+                tag,
+                f"Name error: Not a valid tag name: {tag}"
+                " (Proper definition: DB.SCHEMA.TAG)",
+            )
 
     def generate_users(self, user_list):
         """
@@ -684,8 +873,11 @@ class EntityGenerator:
 
         for user_entry in user_list:
             for user_name, config in user_entry.items():
-                self.entities["users"].add(user_name)
+                user = self._define(user_name, "user")
+                if user is not None:
+                    self.entities["users"].add(user)
                 self.generate_user_member_of(config, user_name)
+                self.generate_user_properties(config)
                 self.generate_user_fn(
                     config.get("owns", {}), "database", "database_refs", user_name
                 )

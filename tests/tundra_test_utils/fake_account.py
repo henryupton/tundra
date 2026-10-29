@@ -73,7 +73,7 @@ def spell(name: Iterable[str]) -> str:
 
 @dataclass(frozen=True)
 class Grant:
-    """A privilege held by a role (or database role), as SHOW GRANTS TO ROLE lists it.
+    """A privilege held by a role, as SHOW GRANTS TO ROLE lists it.
 
     `on` is the granted_on column: DATABASE, SCHEMA, TABLE, VIEW, WAREHOUSE,
     INTEGRATION, EXTERNAL_VOLUME, ACCOUNT, ROLE, DATABASE_ROLE, APPLICATION_ROLE.
@@ -199,7 +199,6 @@ class FakeAccount:
             ),
             (r"SHOW FUTURE GRANTS IN (DATABASE|SCHEMA) (.+)", self._show_future_grants),
             (r"SHOW GRANTS TO ROLE (.+)", self._show_grants_to_role),
-            (r"SHOW GRANTS TO DATABASE ROLE (.+)", self._show_grants_to_database_role),
             (r"SHOW GRANTS TO USER (.+)", self._show_grants_to_user),
             (r"SHOW ROLES", self._show_roles),
             (r"SHOW DATABASE ROLES IN DATABASE (.+)", self._show_database_roles),
@@ -269,12 +268,6 @@ class FakeAccount:
         role = self._role(spelling)
         return self._grant_rows(
             role, (g for g in self.grants if self._key(g.to) == role)
-        )
-
-    def _show_grants_to_database_role(self, spelling: str):
-        name = canonical(spelling, strict=True)
-        return self._grant_rows(
-            ".".join(name), (g for g in self.grants if canonical(g.to) == name)
         )
 
     def _show_grants_to_user(self, spelling: str):

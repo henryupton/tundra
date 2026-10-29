@@ -164,8 +164,8 @@ _QUOTED = re.compile(r'"((?:[^"]|"")+)"')
 _FRAGMENT = re.compile(r'"((?:[^"]|"")*)"|[^"]+')
 _BARE_RUN = re.compile(r"([A-Z0-9_$]+)|[^A-Z0-9_$]+")
 
-# The kinds a future-grant placeholder can name, as FUTURE_PLACEHOLDER_PATTERN has
-# them. Any other <...> is a name, the way snowflaky quoted it: raw.public."<tables>".
+# The kinds a future-grant placeholder can name: schema and each object type's grant
+# key. Any other <...> is a name, as in raw.public."<tables>".
 _FUTURE_KINDS: Final = frozenset({t.grant_key for t in ALL_OBJECT_TYPES} | {"schema"})
 
 _CACHE_SIZE: Final = 1 << 16

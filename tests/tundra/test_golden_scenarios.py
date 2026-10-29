@@ -6,18 +6,16 @@
 # plan is a `.expected` file next to the spec, in the same `[PENDING]` / `[SKIPPED]` form
 # the dry-run prints.
 #
-# These pin tundra's current output so the snowflake.core rewrite can be checked against
-# it. Scenarios marked xfail describe the correct behaviour where current tundra is wrong,
-# and are strict, so they fail loudly once the rewrite fixes them and the mark should go.
+# These pin tundra's output, so any change to what a spec plans shows up as a diff
+# against its expected file.
 #
 # To rewrite an expected file after an intended change, run with TUNDRA_UPDATE_GOLDEN=1
 # and review the diff.
 
 
 import os
+from dataclasses import replace
 from pathlib import Path
-
-import pytest
 
 from tundra.snowflake_connector import SnowflakeConnector
 from tundra.snowflake_spec_loader import SnowflakeSpecLoader
@@ -170,6 +168,15 @@ def test_wildcards_shares_and_ownership(mocker):
     assert_plan("wildcards", wildcards_account(), mocker)
 
 
+def test_external_volume_grant_reported_with_an_underscore_is_the_same_grant(mocker):
+    account = wildcards_account()
+    account.grants = [
+        replace(grant, on="EXTERNAL_VOLUME") if grant.on == "EXTERNAL VOLUME" else grant
+        for grant in account.grants
+    ]
+    assert_plan("wildcards", account, mocker)
+
+
 def test_missing_objects_are_left_out_when_ignored(mocker):
     account = FakeAccount(
         warehouses=["REPORTING_WH"],
@@ -200,10 +207,6 @@ def test_keyword_named_schema_is_left_alone_when_already_granted(mocker):
     assert_plan("keyword_schema", account, mocker)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason='the spec loader compares spellings and reports raw.group missing when raw."GROUP" exists',
-)
 def test_reserved_word_schema_resolves_to_the_stored_object(mocker):
     account = FakeAccount(
         databases=["RAW"],
@@ -217,10 +220,6 @@ def test_reserved_word_schema_resolves_to_the_stored_object(mocker):
     assert_plan("reserved_schema", account, mocker)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="unquoted mixed case is read as case-sensitive; Snowflake resolves it to uppercase",
-)
 def test_unquoted_mixed_case_schema_resolves_to_uppercase(mocker):
     account = FakeAccount(
         databases=["RAW"],
