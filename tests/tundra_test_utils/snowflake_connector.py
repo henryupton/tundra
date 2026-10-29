@@ -94,6 +94,3 @@ class MockSnowflakeConnector(SnowflakeConnector):
 
     def is_role_in_session(self, role: str) -> bool:
         return False
-
-    def full_schema_list(self, schema: str) -> List[str]:
-        return []

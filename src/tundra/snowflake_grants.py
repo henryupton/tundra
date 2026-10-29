@@ -301,12 +301,11 @@ class SnowflakeGrantsGenerator:
 
         Returns: a list of all roles to include for the entity
         """
-        conn = SnowflakeConnector()
         entity_name = ObjectName.single(entity)
         wanted = _single_names(all_entities)
         return [
             role
-            for role in map(ObjectName.single, conn.show_roles())
+            for role in map(ObjectName.single, self.conn.show_roles())
             if role in wanted and role != entity_name
         ]
 
@@ -1121,8 +1120,7 @@ class SnowflakeGrantsGenerator:
             if database in shared_dbs:
                 continue
 
-            conn = SnowflakeConnector()
-            fetched_schemas = [ObjectName(s) for s in conn.full_schema_list(entry)]
+            fetched_schemas = [ObjectName(s) for s in self.conn.full_schema_list(entry)]
             read_grant_schemas.extend(fetched_schemas)
 
             if isinstance(entry, NamePattern) and entry.globs == ("*",):
@@ -1191,8 +1189,7 @@ class SnowflakeGrantsGenerator:
             if database in shared_dbs:
                 continue
 
-            conn = SnowflakeConnector()
-            fetched_schemas = [ObjectName(s) for s in conn.full_schema_list(entry)]
+            fetched_schemas = [ObjectName(s) for s in self.conn.full_schema_list(entry)]
             write_grant_schemas.extend(fetched_schemas)
 
             if isinstance(entry, NamePattern) and entry.globs == ("*",):
@@ -1772,15 +1769,13 @@ class SnowflakeGrantsGenerator:
         if object_types is None:
             object_types = TABLE_OBJECT_TYPES
 
-        conn = SnowflakeConnector()
-
         read_commands, read_grants_by_type = self._generate_table_read_grants(
-            conn, tables.get("read", []), shared_dbs, role, object_types
+            self.conn, tables.get("read", []), shared_dbs, role, object_types
         )
         sql_commands.extend(read_commands)
 
         write_commands, write_grants_by_type = self._generate_table_write_grants(
-            conn, tables.get("write", []), shared_dbs, role, object_types
+            self.conn, tables.get("write", []), shared_dbs, role, object_types
         )
         sql_commands.extend(write_commands)
 

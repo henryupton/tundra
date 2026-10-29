@@ -110,7 +110,7 @@ class SnowflakeSpecLoader:
         # Connect to Snowflake to make sure that the current user has correct
         # permissions
         click.secho("Checking permissions on current snowflake connection", fg="green")
-        self.check_permissions_on_snowflake_server(conn)
+        self.check_permissions_on_snowflake_server(self.conn)
 
         # Connect to Snowflake to make sure that all entities defined in the
         # spec file are also defined in Snowflake (no missing databases, etc)
@@ -132,7 +132,9 @@ class SnowflakeSpecLoader:
                 "Checking that all entities in the spec file are defined in Snowflake",
                 fg="green",
             )
-            self.check_entities_on_snowflake_server(conn, bool(ignore_missing_objects))
+            self.check_entities_on_snowflake_server(
+                self.conn, bool(ignore_missing_objects)
+            )
         else:
             click.secho(
                 "Skipping entity validation checks (--skip-validation flag set)",
@@ -153,7 +155,7 @@ class SnowflakeSpecLoader:
         if not spec_test:
             click.secho("Fetching granted privileges from Snowflake", fg="green")
             self.get_privileges_from_snowflake_server(
-                conn,
+                self.conn,
                 roles=roles,
                 users=users,
                 run_list=run_list,
@@ -431,7 +433,7 @@ class SnowflakeSpecLoader:
         error_messages = []
 
         if conn is None:
-            conn = SnowflakeConnector()
+            conn = self.conn
 
         error_messages.extend(self.check_warehouse_entities(conn))
         error_messages.extend(self.check_integration_entities(conn))
@@ -606,7 +608,7 @@ class SnowflakeSpecLoader:
         """
         run_list = run_list or ["users", "roles"]
         if conn is None:
-            conn = SnowflakeConnector()
+            conn = self.conn
 
         if "users" in run_list and not ignore_memberships:
             logger.info("Fetching user privileges from Snowflake")
