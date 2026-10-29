@@ -1,5 +1,6 @@
 import os
 
+import pytest
 from click.testing import CliRunner
 
 import tundra
@@ -47,3 +48,26 @@ def test_run_sets_max_workers_env(mocker, monkeypatch):
 
     assert result.exit_code == 0
     assert captured["workers"] == "12"
+
+
+@pytest.mark.parametrize("flag", ["--role", "--user"])
+@pytest.mark.parametrize(
+    "command",
+    [["run", "spec.yml", "--dry"], ["spec-test", "spec.yml"]],
+)
+def test_malformed_filter_is_a_name_error(mocker, command, flag):
+    connector = mocker.patch(
+        "tundra.snowflake_spec_loader.SnowflakeConnector",
+        side_effect=AssertionError("connected"),
+    )
+
+    result = CliRunner().invoke(cli, [*command, flag, '"loader'])
+
+    noun = flag.lstrip("-")
+    assert result.exit_code == 1
+    assert f"Name error: Not a valid {noun} name for {flag}: '\"loader'" in (
+        result.output
+    )
+    assert "Traceback" not in result.output
+    assert isinstance(result.exception, SystemExit)
+    connector.assert_not_called()

@@ -26,9 +26,35 @@ from tundra.table_object_types import PRIVILEGE_FAMILIES
 VALIDATION_ERR_MSG = 'Spec error: {} "{}", field "{}": {}'
 
 
-def _single_names(names) -> Optional[Set[ObjectName]]:
-    """A --roles or --users filter as names, or None when it isn't given."""
-    return {ObjectName.single(name) for name in names} if names else None
+def _filter_error(name: Any, noun: str) -> Optional[str]:
+    try:
+        ObjectName.single(name)
+    except InvalidNameError as error:
+        return f"Name error: Not a valid {noun} name for --{noun}: {error}"
+    return None
+
+
+def _check_filters(
+    roles: Optional[Iterable[Any]] = None, users: Optional[Iterable[Any]] = None
+) -> None:
+    """Raise a SpecLoadingError for every --role and --user value that isn't a name."""
+    errors = [
+        error
+        for noun, names in (("role", roles), ("user", users))
+        for name in dict.fromkeys(names or ())
+        if (error := _filter_error(name, noun))
+    ]
+    if errors:
+        raise SpecLoadingError("\n".join(errors))
+
+
+def _single_names(names, noun: str) -> Optional[Set[ObjectName]]:
+    """A --role or --user filter as names, or None when it isn't given."""
+    if not names:
+        return None
+    names = list(names)
+    _check_filters(**{f"{noun}s": names})
+    return set(map(ObjectName.single, names))
 
 
 def _same_role(owner_on_snowflake: Any, owner_in_spec: Any) -> bool:
@@ -59,6 +85,11 @@ class SnowflakeSpecLoader:
         max_workers: Optional[int] = None,
     ) -> None:
         run_list = run_list or ["users", "roles"]
+        # The filters are read again when grants are fetched, so an iterator is
+        # copied before the check uses it up.
+        roles = None if roles is None else list(roles)
+        users = None if users is None else list(users)
+        _check_filters(roles, users)
         self.conn = conn or SnowflakeConnector()
         self.max_workers = (
             max_workers
@@ -449,7 +480,7 @@ class SnowflakeSpecLoader:
     ) -> None:
         future_grants: Dict[ObjectName, Any] = {}
         databases = self.entities["database_refs"]
-        wanted = _single_names(roles)
+        wanted = _single_names(roles, "role")
 
         # --- Fetch phase (parallel) ---
         schemas_by_db = dict(
@@ -535,7 +566,7 @@ class SnowflakeSpecLoader:
     def get_user_privileges_from_snowflake_server(
         self, conn: SnowflakeConnector, users: Optional[List[str]] = None
     ) -> None:
-        wanted = _single_names(users)
+        wanted = _single_names(users, "user")
         user_entities = [
             user
             for user in self.entities["users"]
@@ -703,8 +734,8 @@ class SnowflakeSpecLoader:
         """
         run_list = run_list or ["users", "roles"]
         sql_commands: List[Dict] = []
-        role_filter = _single_names(roles)
-        user_filter = _single_names(users)
+        role_filter = _single_names(roles, "role")
+        user_filter = _single_names(users, "user")
 
         generator = SnowflakeGrantsGenerator(
             self.grants_to_role,
