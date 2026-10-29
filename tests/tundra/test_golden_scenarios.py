@@ -17,6 +17,10 @@ import os
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
+from click.testing import CliRunner
+
+from tundra.cli import cli
 from tundra.snowflake_connector import SnowflakeConnector
 from tundra.snowflake_spec_loader import SnowflakeSpecLoader
 from tundra_test_utils.fake_account import FakeAccount, FutureGrant, Grant
@@ -231,3 +235,71 @@ def test_unquoted_mixed_case_schema_resolves_to_uppercase(mocker):
         ],
     )
     assert_plan("mixed_case_schema", account, mocker)
+
+
+# A run builds one connector, and every phase shares its pool. Between them, these two
+# scenarios reach every place that used to build a connector of its own: the loader's
+# checks and fetches, member_of "*", schema expansion for schema grants, object listing
+# for table and task grants, and apply.
+ONE_CONNECTOR_SCENARIOS = [("roles", roles_account), ("wildcards", wildcards_account)]
+
+
+def connectors_built(account: FakeAccount, mocker) -> list:
+    """Install the account, and list every SnowflakeConnector built from then on."""
+    account.install(mocker)
+    built = []
+    mocker.patch.object(
+        SnowflakeConnector, "__init__", lambda self, config=None: built.append(self)
+    )
+    return built
+
+
+@pytest.mark.parametrize("name,account", ONE_CONNECTOR_SCENARIOS)
+def test_planning_builds_one_connector(mocker, name, account):
+    built = connectors_built(account(), mocker)
+
+    loader = SnowflakeSpecLoader(str(GOLDEN / f"{name}.yml"), max_workers=1)
+    loader.generate_permission_queries()
+
+    assert built == [loader.conn]
+
+
+def test_loader_checks_called_without_a_connector_use_the_loaders(mocker):
+    built = connectors_built(roles_account(), mocker)
+    loader = SnowflakeSpecLoader(str(GOLDEN / "roles.yml"), max_workers=1)
+
+    loader.check_entities_on_snowflake_server()
+    loader.get_privileges_from_snowflake_server()
+
+    assert built == [loader.conn]
+
+
+@pytest.mark.parametrize("name,account", ONE_CONNECTOR_SCENARIOS)
+def test_cli_run_plans_and_applies_on_one_connector(mocker, monkeypatch, name, account):
+    fake = account()
+    built = connectors_built(fake, mocker)
+    ran_on = set()
+    applied = []
+
+    def run_query(conn, query):
+        ran_on.add(id(conn))
+        if query.startswith(("GRANT ", "REVOKE ", "ALTER ")):
+            applied.append(query)
+            return None
+        return fake.run_query(query)
+
+    mocker.patch.object(SnowflakeConnector, "run_query", run_query)
+    monkeypatch.setenv("PERMISSION_BOT_MAX_WORKERS", "1")
+
+    result = CliRunner().invoke(cli, ["run", str(GOLDEN / f"{name}.yml")])
+
+    assert result.exit_code == 0, result.output
+    assert "[ERROR]" not in result.output
+    pending = [
+        line.removeprefix("[PENDING] ")
+        for line in (GOLDEN / f"{name}.expected").read_text().splitlines()
+        if line.startswith("[PENDING] ")
+    ]
+    assert sorted(applied) == sorted(pending)
+    assert len(built) == 1
+    assert ran_on == {id(built[0])}

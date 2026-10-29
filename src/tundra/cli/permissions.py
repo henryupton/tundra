@@ -280,11 +280,10 @@ def tundra_grants(
         click.secho("SQL Commands generated for given spec file:")
     click.secho()
 
-    conn = SnowflakeConnector()
     for query in sql_grant_queries:
         if not dry:
             if not query.get("already_granted"):
-                apply_query(conn, query)
+                apply_query(spec_loader.conn, query)
                 print_command(query, diff)
             # If already granted, print command
             elif print_skipped:
