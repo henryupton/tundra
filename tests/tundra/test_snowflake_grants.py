@@ -4,6 +4,7 @@ import pytest
 from tundra.snowflake_connector import SnowflakeConnector
 
 from tundra.grant_coverage import GrantCoverage
+from tundra.identifiers import granted_name
 from tundra.snowflake_grants import SnowflakeGrantsGenerator
 from tundra.table_object_types import (
     DYNAMIC_TABLE,
@@ -152,9 +153,9 @@ def test_grants_to_role():
             "create schema": {"database": ["database_1", "database_2"]},
             # Object-type keys and future-grant placeholders here are the underscore
             # forms Snowflake actually reports (granted_on = ICEBERG_TABLE, name =
-            # DATABASE_1.SCHEMA_1.<ICEBERG_TABLE>), post-snowflaky. Writing these in
-            # tundra's SQL-keyword form instead is what let the multi-word types go
-            # unmatched in production while the suite stayed green.
+            # DATABASE_1.SCHEMA_1.<ICEBERG_TABLE>), as tundra renders them. Writing
+            # these in tundra's SQL-keyword form instead is what let the multi-word
+            # types go unmatched in production while the suite stayed green.
             "select": {
                 "table": ["database_1.schema_1.<table>"],
                 "view": ["database_1.schema_1.<view>"],
@@ -474,8 +475,8 @@ class TestGenerateRoleGrants:
 
     def generate_database_role_grant_special_chars():
         """
-        Generate GRANT DATABASE ROLE where identifiers require quoting — special chars
-        are uppercased before quoting to match Snowflake's stored form.
+        Generate GRANT DATABASE ROLE where identifiers require quoting. A part that
+        isn't a valid identifier is the exact stored name, so its case is kept.
         """
         entity_type = "roles"
         entity = "role_1"
@@ -484,7 +485,7 @@ class TestGenerateRoleGrants:
         }
         test_roles_granted_to_user = {}
         ignore_membership = False
-        expected = ['GRANT DATABASE ROLE "MY-DB"."DB-ROLE-1" TO ROLE role_1']
+        expected = ['GRANT DATABASE ROLE "my-db"."db-role-1" TO ROLE role_1']
         return [
             entity_type,
             entity,
@@ -573,7 +574,7 @@ class TestGenerateRoleGrants:
                 "snowflake.organization_billing_viewer",
                 '"SNOWFLAKE".organization_billing_viewer',
             ),
-            ("my-db.db-role-1", '"MY-DB"."DB-ROLE-1"'),
+            ("my-db.db-role-1", '"my-db"."db-role-1"'),
         ],
     )
     def test_database_role_membership_marked_already_granted(
@@ -2010,17 +2011,17 @@ class TestGenerateSchemaGrants:
         mocker.patch.object(
             MockSnowflakeConnector,
             "show_schemas",
-            # show_schemas called by read before write function call
+            # show_schemas called for each database by read, then again by write
             side_effect=[
                 [
                     "database_1.schema_1",
                     "database_1.schema_2",
                 ],
+                ["database_2.schema_3"],
                 [
                     "database_1.schema_1",
                     "database_1.schema_2",
                 ],
-                ["database_2.schema_3"],
                 ["database_2.schema_3"],
             ],
         )
@@ -2033,12 +2034,12 @@ class TestGenerateSchemaGrants:
             "GRANT usage ON FUTURE schemas IN database database_1 TO ROLE functional_role",
             "GRANT usage ON FUTURE schemas IN database database_2 TO ROLE functional_role",
             "GRANT usage ON schema database_1.schema_1 TO ROLE functional_role",
-            "GRANT usage ON schema database_1.schema_1 TO ROLE functional_role",
             "GRANT usage ON schema database_1.schema_2 TO ROLE functional_role",
-            "GRANT usage ON schema database_1.schema_2 TO ROLE functional_role",
+            "GRANT usage ON schema database_2.schema_3 TO ROLE functional_role",
             "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create semantic view, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server ON FUTURE schemas IN database database_1 TO ROLE functional_role",
             "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create semantic view, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server ON FUTURE schemas IN database database_2 TO ROLE functional_role",
-            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create semantic view, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server ON schema database_2.schema_3 TO ROLE functional_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create semantic view, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server ON schema database_1.schema_1 TO ROLE functional_role",
+            "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create semantic view, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server ON schema database_1.schema_2 TO ROLE functional_role",
             "GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create semantic view, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server ON schema database_2.schema_3 TO ROLE functional_role",
         ]
         return [MockSnowflakeConnector, config, expected]
@@ -3536,7 +3537,7 @@ class TestWireFormGrantMatching:
         grants_to_role = {
             "some_role": {
                 object_type.read_privileges: {
-                    granted_on: [SnowflakeConnector.snowflaky(reported_name)]
+                    granted_on: [granted_name(granted_on, reported_name)]
                 }
             }
         }
@@ -3560,7 +3561,7 @@ class TestWireFormGrantMatching:
         grants_to_role = {
             "some_role": {
                 object_type.read_privileges: {
-                    granted_on: [SnowflakeConnector.snowflaky(reported_name)]
+                    granted_on: [granted_name(granted_on, reported_name)]
                 }
             }
         }
@@ -3589,7 +3590,7 @@ class TestWireFormGrantMatching:
     def test_held_future_grant_is_not_revoked(
         self, object_type, granted_on, reported_name
     ):
-        granted = SnowflakeConnector.snowflaky(reported_name)
+        granted = granted_name(granted_on, reported_name)
         grants_to_role = {
             "some_role": {object_type.read_privileges: {granted_on: [granted]}}
         }
@@ -3632,7 +3633,7 @@ class TestKeywordNamedSchema:
         return SnowflakeGrantsGenerator({"loader": grants}, {})
 
     def test_held_future_grants_are_neither_regranted_nor_revoked(self, mocker):
-        reported = SnowflakeConnector.snowflaky('LAB_RESULTS."AGGREGATE".<TABLE>')
+        reported = granted_name("table", 'LAB_RESULTS."AGGREGATE".<TABLE>')
         generator = self._generator(mocker, {"select": {"table": [reported]}})
 
         commands = generator.generate_table_and_view_grants(
@@ -3656,7 +3657,7 @@ class TestKeywordNamedSchema:
         assert all(c["already_granted"] for c in schema_table_grants)
 
     def test_held_schema_usage_is_not_regranted(self, mocker):
-        reported = SnowflakeConnector.snowflaky('LAB_RESULTS."AGGREGATE"')
+        reported = granted_name("schema", 'LAB_RESULTS."AGGREGATE"')
         generator = self._generator(mocker, {"usage": {"schema": [reported]}})
 
         commands = generator.generate_schema_grants(
@@ -3791,3 +3792,50 @@ class TestApplicationRoleGrants:
                 True,
             )
         ]
+
+
+class TestHeldGrantNames:
+    @staticmethod
+    def _generator(mocker, grants):
+        mocker.patch.object(SnowflakeConnector, "__init__", lambda x: None)
+        mocker.patch.object(
+            SnowflakeConnector, "full_schema_list", return_value=["raw.public"]
+        )
+        return SnowflakeGrantsGenerator({"loader": grants}, {})
+
+    def test_held_names_that_dont_parse_for_their_kind_are_ignored(self, mocker):
+        generator = self._generator(
+            mocker, {"usage": {"schema": ['raw."unterminated', "RAW.PUBLIC"]}}
+        )
+
+        commands = generator.generate_schema_grants(
+            "loader", {"read": ["raw.public"], "write": []}, set(), {"raw"}
+        )
+
+        assert commands == [
+            {
+                "already_granted": True,
+                "sql": "GRANT usage ON schema raw.public TO ROLE loader",
+            }
+        ]
+
+    def test_a_name_that_doesnt_parse_is_never_granted(self, mocker):
+        generator = self._generator(mocker, {"usage": {"schema": ["raw.public"]}})
+
+        assert not generator.is_granted_privilege(
+            "loader", "usage", "schema", 'raw."unterminated'
+        )
+
+    @pytest.mark.parametrize("privilege", ["usage", "create table"])
+    def test_a_future_scope_of_another_kind_is_never_revoked_on_schemas(
+        self, mocker, privilege
+    ):
+        generator = self._generator(
+            mocker, {privilege: {"schema": ["raw.public.<table>"]}}
+        )
+
+        commands = generator.generate_schema_grants(
+            "loader", {"read": [], "write": []}, set(), {"raw"}
+        )
+
+        assert commands == []

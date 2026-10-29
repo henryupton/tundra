@@ -1,5 +1,6 @@
 import pytest
 
+from tundra.snowflake_connector import SnowflakeConnector
 from tundra.snowflake_permission import SnowflakePermission
 from tundra.snowflake_role_grant_checker import (
     SnowflakeRoleGrantChecker,
@@ -69,6 +70,13 @@ class TestSnowflakeRoleGrantChecker:
             (SnowflakePermission("table 1", "table", ["select"], False), True),
             (SnowflakePermission("*", "account", ["ownership"], False), False),
             (SnowflakePermission("*", "account", ["manage grants"], False), True),
+            # The role's own account permissions are named "*"
+            (
+                SnowflakePermission(
+                    "Account_Name", "account", ["manage grants"], False
+                ),
+                False,
+            ),
         ],
     )
     def test_has_permissions(self, grant_checker, permission, expected):
@@ -100,3 +108,56 @@ class TestSnowflakeRoleGrantChecker:
     def test_can_grant_permission_no_role(self, grant_checker):
         permission = SnowflakePermission("*", "account", ["ownership"], True)
         assert grant_checker.can_grant_permission(None, permission) is True
+
+
+class TestGrantsReadFromSnowflake:
+    @pytest.fixture
+    def checker(self, mocker):
+        rows = [
+            ("MANAGE GRANTS", "ACCOUNT", "AB12345", "false"),
+            ("USAGE", "SCHEMA", 'RAW."Mixed-Case"', "true"),
+            ("USAGE", "FUNCTION", 'RAW.PUBLIC."F(A VARCHAR):VARCHAR"', "true"),
+        ]
+        # The connector's own reader, not the mock's
+        mocker.patch.object(
+            MockSnowflakeConnector,
+            "show_grants_to_role_with_grant_option",
+            SnowflakeConnector.show_grants_to_role_with_grant_option,
+        )
+        mocker.patch.object(
+            MockSnowflakeConnector,
+            "run_query",
+            return_value=mocker.Mock(
+                fetchall=lambda: [
+                    {
+                        "privilege": privilege,
+                        "granted_on": granted_on,
+                        "name": name,
+                        "grant_option": grant_option,
+                    }
+                    for privilege, granted_on, name, grant_option in rows
+                ]
+            ),
+        )
+        return SnowflakeRoleGrantChecker(MockSnowflakeConnector())
+
+    @pytest.mark.parametrize(
+        "permission,expected",
+        [
+            (SnowflakePermission("*", "account", ["manage grants"], False), True),
+            (
+                SnowflakePermission("AB12345", "account", ["manage grants"], False),
+                False,
+            ),
+            (SnowflakePermission('raw."Mixed-Case"', "schema", ["usage"], False), True),
+            # Tundra doesn't read the names of function grants, so none is held
+            (
+                SnowflakePermission(
+                    'RAW.PUBLIC."F(A VARCHAR):VARCHAR"', "function", ["usage"], False
+                ),
+                False,
+            ),
+        ],
+    )
+    def test_has_permission(self, checker, permission, expected):
+        assert checker.has_permission("my_role", permission) is expected

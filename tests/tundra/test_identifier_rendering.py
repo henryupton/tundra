@@ -1,8 +1,7 @@
 # How names come out in generated SQL, whether they arrive from the spec, from SHOW
 # GRANTS (identifier spellings) or from SHOW SCHEMAS (canonical names). Every case goes
-# through the generator, the connector or the grant checker rather than snowflaky, so
-# the tables hold across the snowflake.core rewrite. xfail rows are the correct
-# behaviour where tundra is wrong today; they're strict, so the rewrite has to flip them.
+# through the generator, the connector or the grant checker rather than the name
+# parsing itself, so the tables pin what reaches Snowflake.
 
 import re
 
@@ -14,10 +13,6 @@ from tundra.snowflake_permission import SnowflakePermission
 from tundra.snowflake_role_grant_checker import SnowflakeRoleGrantChecker
 from tundra.snowflake_connector import SnowflakeConnector
 from tundra_test_utils.fake_account import FakeAccount, Grant
-
-
-def wrong_today(reason):
-    return pytest.mark.xfail(strict=True, reason=reason)
 
 
 def schema_in(sql: str) -> str:
@@ -43,16 +38,8 @@ SPEC_SCHEMAS = [
     ('raw."PUBLIC"', "raw.public"),
     ("raw.group", 'raw."GROUP"'),
     ("raw.window", 'raw."WINDOW"'),
-    pytest.param(
-        "raw.MixedCase",
-        "raw.mixedcase",
-        marks=wrong_today("unquoted mixed case is read as case-sensitive"),
-    ),
-    pytest.param(
-        'raw."dot.inside"',
-        'raw."dot.inside"',
-        marks=wrong_today("names are split on every dot, quoted or not"),
-    ),
+    ("raw.MixedCase", "raw.mixedcase"),
+    ('raw."dot.inside"', 'raw."dot.inside"'),
 ]
 
 
@@ -75,11 +62,7 @@ GRANTED_SCHEMAS = [
     ("GROUP", 'raw."GROUP"'),
     ('has"quote', 'raw."has""quote"'),
     ("AGGREGATE", "raw.aggregate"),
-    pytest.param(
-        "dot.inside",
-        'raw."dot.inside"',
-        marks=wrong_today("names are split on every dot, quoted or not"),
-    ),
+    ("dot.inside", 'raw."dot.inside"'),
 ]
 
 
@@ -108,23 +91,9 @@ LISTED_SCHEMAS = [
     ("Mixed-Case", 'raw."Mixed-Case"'),
     ("CamelCase", 'raw."CamelCase"'),
     ("GROUP", 'raw."GROUP"'),
-    pytest.param(
-        "lower_case",
-        'raw."lower_case"',
-        marks=wrong_today(
-            "a lowercase canonical name is lowercased unquoted, so it resolves to LOWER_CASE"
-        ),
-    ),
-    pytest.param(
-        'has"quote',
-        'raw."has""quote"',
-        marks=wrong_today("an embedded quote isn't escaped"),
-    ),
-    pytest.param(
-        "dot.inside",
-        'raw."dot.inside"',
-        marks=wrong_today("canonical names are joined and split on dots"),
-    ),
+    ("lower_case", 'raw."lower_case"'),
+    ('has"quote', 'raw."has""quote"'),
+    ("dot.inside", 'raw."dot.inside"'),
 ]
 
 

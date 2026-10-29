@@ -2,7 +2,6 @@ import logging
 import os
 import re
 import subprocess
-import warnings
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 from urllib.parse import quote_plus
 
@@ -14,6 +13,15 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 from snowflake.sqlalchemy import URL
 
+from tundra.identifiers import (
+    RESERVED_KEYWORDS,
+    InvalidNameError,
+    NameLike,
+    NamePattern,
+    ObjectName,
+    granted_name,
+    name_or_pattern,
+)
 from tundra.logger import GLOBAL_LOGGER as logger
 from tundra.table_object_types import (
     ALL_OBJECT_TYPES,
@@ -25,10 +33,6 @@ from tundra.table_object_types import (
     TASK,
     VIEW,
     TableObjectType,
-)
-
-FUTURE_PLACEHOLDER_PATTERN = "^<({})>$".format(
-    "|".join([t.grant_key for t in ALL_OBJECT_TYPES] + ["schema"])
 )
 
 # The key database role grants are stored under in grants_to_role. Snowflake reports
@@ -43,6 +47,10 @@ DATABASE_ROLE_GRANT_TYPE = "database role"
 # its telemetry viewers (CORTEX_ANALYST_REQUESTS_VIEWER, AI_OBSERVABILITY_READER, ...)
 # as application roles, which GRANT DATABASE ROLE cannot reach.
 APPLICATION_ROLE_GRANT_TYPE = "application role"
+
+# External volume grants are keyed under this whether the row reports EXTERNAL_VOLUME or
+# EXTERNAL VOLUME, like the two role kinds above.
+EXTERNAL_VOLUME_GRANT_TYPE = "external volume"
 
 # Snowflake's wording for a statement whose target is gone, e.g. `Schema 'DB.SCHEMA' does
 # not exist or not authorized.` A missing parent is reported as the parent, so a grant on a
@@ -216,148 +224,143 @@ class SnowflakeConnector:
             encryption_algorithm=serialization.NoEncryption(),
         )
 
-    def show_query(self, entity) -> List[str]:
-        names = []
+    @staticmethod
+    def _granted(granted_on: str, name: str) -> Optional[ObjectName]:
+        """The name of a SHOW GRANTS row, or None for a kind tundra doesn't read."""
+        try:
+            return granted_name(granted_on, name)
+        except InvalidNameError:
+            return None
 
+    def show_query(self, entity) -> List[ObjectName]:
         query = f"SHOW {entity}"
         results = self.run_query(query).fetchall()
 
-        for result in results:
-            # lowercase the entity if alphanumeric plus _ else leave as is
-            names.append(
-                result["name"].lower()
-                if bool(re.match("^[a-zA-Z0-9_]*$", result["name"]))
-                else result["name"]
-            )
+        return [ObjectName.from_canonical(result["name"]) for result in results]
 
-        return names
-
-    def show_databases(self) -> List[str]:
+    def show_databases(self) -> List[ObjectName]:
         return self.show_query("DATABASES")
 
-    def show_warehouses(self) -> List[str]:
+    def show_warehouses(self) -> List[ObjectName]:
         return self.show_query("WAREHOUSES")
 
-    def show_integrations(self) -> List[str]:
+    def show_integrations(self) -> List[ObjectName]:
         return self.show_query("INTEGRATIONS")
-
-    def show_external_volumes(self) -> List[str]:
-        return self.show_query("EXTERNAL VOLUMES")
 
     def show_table_objects(
         self,
         object_type: TableObjectType,
-        database: Optional[str] = None,
-        schema: Optional[str] = None,
-    ) -> List[str]:
-        names = []
-
+        database: Optional[NameLike] = None,
+        schema: Optional[NameLike] = None,
+    ) -> List[ObjectName]:
         if schema:
-            query = f"SHOW {object_type.show_command} IN SCHEMA {schema}"
+            query = f"SHOW {object_type.show_command} IN SCHEMA {ObjectName(schema)}"
         elif database:
-            query = f"SHOW {object_type.show_command} IN DATABASE {database}"
+            query = (
+                f"SHOW {object_type.show_command} IN DATABASE "
+                f"{ObjectName.single(database)}"
+            )
         else:
             query = f"SHOW {object_type.show_command} IN ACCOUNT"
 
         results = self.run_query(query).fetchall()
 
-        for result in results:
-            identifier = (
-                f"{result['database_name']}.{result['schema_name']}.{result['name']}"
+        return [
+            ObjectName.from_canonical(
+                result["database_name"], result["schema_name"], result["name"]
             )
-            names.append(SnowflakeConnector.snowflaky(identifier))
-
-        return names
+            for result in results
+        ]
 
     def show_tables(
-        self, database: Optional[str] = None, schema: Optional[str] = None
-    ) -> List[str]:
+        self, database: Optional[NameLike] = None, schema: Optional[NameLike] = None
+    ) -> List[ObjectName]:
         return self.show_table_objects(TABLE, database=database, schema=schema)
 
     def show_views(
-        self, database: Optional[str] = None, schema: Optional[str] = None
-    ) -> List[str]:
+        self, database: Optional[NameLike] = None, schema: Optional[NameLike] = None
+    ) -> List[ObjectName]:
         return self.show_table_objects(VIEW, database=database, schema=schema)
 
     def show_dynamic_tables(
-        self, database: Optional[str] = None, schema: Optional[str] = None
-    ) -> List[str]:
+        self, database: Optional[NameLike] = None, schema: Optional[NameLike] = None
+    ) -> List[ObjectName]:
         return self.show_table_objects(DYNAMIC_TABLE, database=database, schema=schema)
 
     def show_streamlits(
-        self, database: Optional[str] = None, schema: Optional[str] = None
-    ) -> List[str]:
+        self, database: Optional[NameLike] = None, schema: Optional[NameLike] = None
+    ) -> List[ObjectName]:
         return self.show_table_objects(STREAMLIT, database=database, schema=schema)
 
     def show_semantic_views(
-        self, database: Optional[str] = None, schema: Optional[str] = None
-    ) -> List[str]:
+        self, database: Optional[NameLike] = None, schema: Optional[NameLike] = None
+    ) -> List[ObjectName]:
         return self.show_table_objects(SEMANTIC_VIEW, database=database, schema=schema)
 
     def show_iceberg_tables(
-        self, database: Optional[str] = None, schema: Optional[str] = None
-    ) -> List[str]:
+        self, database: Optional[NameLike] = None, schema: Optional[NameLike] = None
+    ) -> List[ObjectName]:
         return self.show_table_objects(ICEBERG_TABLE, database=database, schema=schema)
 
     def show_tasks(
-        self, database: Optional[str] = None, schema: Optional[str] = None
-    ) -> List[str]:
+        self, database: Optional[NameLike] = None, schema: Optional[NameLike] = None
+    ) -> List[ObjectName]:
         return self.show_table_objects(TASK, database=database, schema=schema)
 
-    def show_users(self) -> List[str]:
+    def show_users(self) -> List[ObjectName]:
         return self.show_query("USERS")
 
-    def show_schemas(self, database: Optional[str] = None) -> List[str]:
-        names = []
-
+    def show_schemas(self, database: Optional[NameLike] = None) -> List[ObjectName]:
         if database:
-            query = f"SHOW TERSE SCHEMAS IN DATABASE {database}"
+            query = f"SHOW TERSE SCHEMAS IN DATABASE {ObjectName.single(database)}"
         else:
             query = "SHOW TERSE SCHEMAS IN ACCOUNT"
 
         results = self.run_query(query).fetchall()
 
-        for result in results:
-            schema_identifier = f"{result['database_name']}.{result['name']}"
-            names.append(SnowflakeConnector.snowflaky(schema_identifier))
-
-        return names
+        return [
+            ObjectName.from_canonical(result["database_name"], result["name"])
+            for result in results
+        ]
 
     def show_future_grants(
-        self, database: Optional[str] = None, schema: Optional[str] = None
-    ) -> Dict[str, Dict[str, Dict[str, List[str]]]]:
-        future_grants: Dict[str, Any] = {}
+        self, database: Optional[NameLike] = None, schema: Optional[NameLike] = None
+    ) -> Dict[ObjectName, Dict[str, Dict[str, Set[ObjectName]]]]:
+        future_grants: Dict[ObjectName, Any] = {}
 
         if schema:
-            query = f"SHOW FUTURE GRANTS IN SCHEMA {schema}"
+            query = f"SHOW FUTURE GRANTS IN SCHEMA {ObjectName(schema)}"
         elif database:
-            query = f"SHOW FUTURE GRANTS IN DATABASE {database}"
+            query = f"SHOW FUTURE GRANTS IN DATABASE {ObjectName.single(database)}"
         else:
-            pass
+            raise ValueError("show_future_grants needs a database or a schema")
 
         results = self.run_query(query).fetchall()
 
         for result in results:
-            if result["grant_to"] == "ROLE":
-                role = result["grantee_name"].lower()
-                privilege = result["privilege"].lower()
-                granted_on = result["grant_on"].lower()
-
-                future_grants.setdefault(role, {}).setdefault(privilege, {}).setdefault(
-                    granted_on, []
-                ).append(SnowflakeConnector.snowflaky(result["name"]))
-
-            else:
+            if result["grant_to"] != "ROLE":
                 continue
+
+            name = self._granted(result["grant_on"], result["name"])
+            if name is None:
+                continue
+
+            role = ObjectName.from_canonical(result["grantee_name"])
+            privilege = result["privilege"].lower()
+            granted_on = result["grant_on"].lower()
+
+            future_grants.setdefault(role, {}).setdefault(privilege, {}).setdefault(
+                granted_on, set()
+            ).add(name)
 
         return future_grants
 
-    def show_grants_to_role(self, role) -> Dict[str, Any]:
+    def show_grants_to_role(self, role) -> Dict[str, Dict[str, Set[ObjectName]]]:
         grants: Dict[str, Any] = {}
         if role in ["*", '"*"']:
             return grants
 
-        query = f"SHOW GRANTS TO ROLE {SnowflakeConnector.snowflaky_user_role(role)}"
+        query = f"SHOW GRANTS TO ROLE {ObjectName.single(role)}"
 
         results = self.run_query(query).fetchall()
 
@@ -365,70 +368,38 @@ class SnowflakeConnector:
             privilege = result["privilege"].lower()
             granted_on = SnowflakeConnector.normalise_granted_on(result["granted_on"])
 
-            # Database roles are FQNs (db.role) and must be normalised the same way
-            # as the spec side, so already granted memberships are recognised.
-            if granted_on == DATABASE_ROLE_GRANT_TYPE:
-                grants.setdefault(privilege, {}).setdefault(granted_on, []).append(
-                    SnowflakeConnector.snowflaky_database_role(result["name"])
-                )
+            name = self._granted(granted_on, result["name"])
+            if name is None:
                 continue
 
-            # Application roles are FQNs (app.role) too. Grants the application made
-            # itself are system-managed: SECURITYADMIN cannot revoke them and no spec
-            # should try, so they are not recorded at all.
-            if granted_on == APPLICATION_ROLE_GRANT_TYPE:
-                if SnowflakeConnector.is_system_application_role_grant(result):
-                    continue
-                grants.setdefault(privilege, {}).setdefault(granted_on, []).append(
-                    SnowflakeConnector.snowflaky_application_role(result["name"])
-                )
+            # Grants the application made itself are system-managed: SECURITYADMIN
+            # cannot revoke them and no spec should try, so they are not recorded at all.
+            if (
+                granted_on == APPLICATION_ROLE_GRANT_TYPE
+                and SnowflakeConnector.is_system_application_role_grant(result)
+            ):
                 continue
 
-            if bool(re.match("^[a-zA-Z0-9_]*$", result["name"])):
-                clean_name = result["name"].lower()
-            else:
-                clean_name = result["name"]
-
-            grants.setdefault(privilege, {}).setdefault(granted_on, []).append(
-                SnowflakeConnector.snowflaky(clean_name)
-            )
+            grants.setdefault(privilege, {}).setdefault(granted_on, set()).add(name)
 
         return grants
 
-    def show_account_grants_to_role(self, role) -> Dict[str, str]:
+    def show_account_grants_to_role(self, role) -> Dict[str, Union[ObjectName, str]]:
         """
         The account-level privileges held by <role>, mapped to the role that granted
         each one. Snowflake's own privileges on its system-defined roles report an
         empty grantor, which is how the generator knows never to revoke them.
         """
-        grants: Dict[str, str] = {}
+        grants: Dict[str, Union[ObjectName, str]] = {}
 
-        query = f"SHOW GRANTS TO ROLE {SnowflakeConnector.snowflaky_user_role(role)}"
+        query = f"SHOW GRANTS TO ROLE {ObjectName.single(role)}"
 
         for result in self.run_query(query).fetchall():
             if result["granted_on"].lower() != "account":
                 continue
-            grants[result["privilege"].lower()] = (result["granted_by"] or "").lower()
-
-        return grants
-
-    def show_grants_to_database_role(self, db_role: str) -> Dict[str, Any]:
-        grants: Dict[str, Any] = {}
-
-        query = f"SHOW GRANTS TO DATABASE ROLE {SnowflakeConnector.snowflaky_database_role(db_role)}"
-        results = self.run_query(query).fetchall()
-
-        for result in results:
-            privilege = result["privilege"].lower()
-            granted_on = result["granted_on"].lower()
-
-            if bool(re.match("^[a-zA-Z0-9_]*$", result["name"])):
-                clean_name = result["name"].lower()
-            else:
-                clean_name = result["name"]
-
-            grants.setdefault(privilege, {}).setdefault(granted_on, []).append(
-                SnowflakeConnector.snowflaky(clean_name)
+            granted_by = result["granted_by"]
+            grants[result["privilege"].lower()] = (
+                ObjectName.from_canonical(granted_by) if granted_by else ""
             )
 
         return grants
@@ -436,7 +407,7 @@ class SnowflakeConnector:
     def show_grants_to_role_with_grant_option(self, role) -> Dict[str, Any]:
         grants: Dict[str, Any] = {}
 
-        query = f"SHOW GRANTS TO ROLE {SnowflakeConnector.snowflaky(role)}"
+        query = f"SHOW GRANTS TO ROLE {ObjectName.single(role)}"
         results = self.run_query(query).fetchall()
 
         for result in results:
@@ -444,146 +415,100 @@ class SnowflakeConnector:
             granted_on = result["granted_on"].lower()
             grant_option = result["grant_option"].lower() == "true"
 
-            if bool(re.match("^[a-zA-Z0-9_]*$", result["name"])):
-                clean_name = SnowflakeConnector.snowflaky(result["name"].lower())
+            # An account grant's name column is the account, which is canonical
+            name: Optional[ObjectName]
+            if granted_on == "account":
+                name = ObjectName.from_canonical(result["name"])
             else:
-                clean_name = SnowflakeConnector.snowflaky(result["name"])
+                name = self._granted(granted_on, result["name"])
+                if name is None:
+                    continue
 
             grants.setdefault(privilege, {}).setdefault(granted_on, {}).setdefault(
-                clean_name, {}
+                name, {}
             ).update({"grant_option": grant_option})
 
         return grants
 
-    def show_roles_granted_to_user(self, user) -> List[str]:
-        roles = []
-
-        query = f"SHOW GRANTS TO USER {SnowflakeConnector.snowflaky_user_role(user)}"
+    def show_roles_granted_to_user(self, user) -> Set[ObjectName]:
+        query = f"SHOW GRANTS TO USER {ObjectName.single(user)}"
         results = self.run_query(query).fetchall()
 
-        for result in results:
-            if result["role"] is None:
-                continue
-            if bool(re.match("^[a-zA-Z0-9_]*$", result["role"])):
-                clean_role = SnowflakeConnector.snowflaky(result["role"].lower())
-            else:
-                clean_role = SnowflakeConnector.snowflaky(result["role"])
-            roles.append(clean_role)
+        return {
+            ObjectName.from_canonical(result["role"])
+            for result in results
+            if result["role"]
+        }
 
-        return roles
-
-    def show_tags_on_user(self, user: str) -> Dict[str, str]:
+    def show_tags_on_user(self, user: NameLike) -> Dict[ObjectName, str]:
         """
-        The tags set directly on <user>, keyed by tag FQN as snowflaky_tag() renders it.
-        Inherited tags (level differs from domain) are left out: they belong to the
-        parent object, not the user. The SNOWFLAKE database is queried because it
-        exists in every account and tundra runs with no session database.
+        The tags set directly on <user>, keyed by tag name. Inherited tags (level
+        differs from domain) are left out: they belong to the parent object, not the
+        user. The SNOWFLAKE database is queried because it exists in every account and
+        tundra runs with no session database.
         """
-        identifier = SnowflakeConnector.snowflaky_user_role(user).replace("'", "''")
+        user = ObjectName.single(user)
         query = (
             "SELECT tag_database, tag_schema, tag_name, tag_value FROM TABLE("
-            f"SNOWFLAKE.INFORMATION_SCHEMA.TAG_REFERENCES('{identifier}', 'USER')"
+            f"SNOWFLAKE.INFORMATION_SCHEMA.TAG_REFERENCES({user.string_literal}, 'USER')"
             ") WHERE level = domain"
         )
         results = self.run_query(query).fetchall()
 
         return {
-            ".".join(
-                SnowflakeConnector._stored_identifier_part(result[part])
-                for part in ("tag_database", "tag_schema", "tag_name")
+            ObjectName.from_canonical(
+                result["tag_database"], result["tag_schema"], result["tag_name"]
             ): result["tag_value"]
             for result in results
         }
 
-    @staticmethod
-    def snowflaky_tag(name: str) -> str:
-        """
-        Convert a tag FQN (db.schema.tag) to a properly quoted Snowflake identifier,
-        with the same casing rules as snowflaky_database_role().
-
-        e.g. cost_management.tags.team --> cost_management.tags.team
-             snowflake.core.privacy_category --> "SNOWFLAKE".core.privacy_category
-        """
-        return ".".join(
-            SnowflakeConnector._snowflaky_fqn_part(part) for part in name.split(".")
-        )
-
-    @staticmethod
-    def _stored_identifier_part(part: str) -> str:
-        """
-        Render an identifier as Snowflake stores it (metadata views report the
-        resolved name) the way snowflaky_tag() renders the spec's spelling of it.
-        """
-        if (
-            re.match("^[A-Z_][0-9A-Z_$]*$", part) is not None
-            and part.lower() not in SnowflakeConnector.reserved_keywords()
-        ):
-            return part.lower()
-        return f'"{part}"'
-
-    def get_current_user(self) -> str:
+    def get_current_user(self) -> ObjectName:
         query = "SELECT CURRENT_USER() AS USER"
         result = self.run_query(query).fetchone()
-        return result["user"].lower()
+        return ObjectName.from_canonical(result["user"])
 
-    def get_current_role(self) -> str:
+    def get_current_role(self) -> ObjectName:
         query = "SELECT CURRENT_ROLE() AS ROLE"
         result = self.run_query(query).fetchone()
-        return result["role"].lower()
+        return ObjectName.from_canonical(result["role"])
 
-    def is_role_in_session(self, role: str) -> bool:
+    def is_role_in_session(self, role: NameLike) -> bool:
         """True when <role> is the current role or one the current role inherits."""
-        query = f"SELECT IS_ROLE_IN_SESSION('{role.upper()}') AS IN_SESSION"
+        name = ObjectName.single(role).name.replace("\\", "\\\\").replace("'", "''")
+        query = f"SELECT IS_ROLE_IN_SESSION('{name}') AS IN_SESSION"
         result = self.run_query(query).fetchone()
         return bool(result["in_session"])
 
-    def show_roles(self) -> Dict[str, str]:
-        roles = {}
-
+    def show_roles(self) -> Dict[ObjectName, Union[ObjectName, str]]:
         query = "SHOW ROLES"
         results = self.run_query(query).fetchall()
 
-        for result in results:
-            roles[
-                SnowflakeConnector.snowflaky(result["name"])
-            ] = SnowflakeConnector.snowflaky(result["owner"])
-        return roles
+        return {
+            ObjectName.from_canonical(result["name"]): (
+                ObjectName.from_canonical(result["owner"]) if result["owner"] else ""
+            )
+            for result in results
+        }
 
-    def show_database_roles(self, database: str) -> List[str]:
-        """
-        List the database roles in a database as db.role FQNs.
-
-        The database is quoted the same way a database role FQN is, so reserved
-        names like SNOWFLAKE resolve to the system database rather than a
-        lowercase object of the same name.
-        """
-        database_roles = []
-
-        database_identifier = SnowflakeConnector.snowflaky_database_role(database)
-        query = f"SHOW DATABASE ROLES IN DATABASE {database_identifier}"
+    def show_database_roles(self, database: NameLike) -> List[ObjectName]:
+        """List the database roles in a database as db.role names."""
+        database = ObjectName.single(database)
+        query = f"SHOW DATABASE ROLES IN DATABASE {database}"
         results = self.run_query(query).fetchall()
 
-        for result in results:
-            # SHOW DATABASE ROLES reports the role name on its own
-            name = result["name"]
-            if "." not in name:
-                name = f"{database}.{name}"
-            database_roles.append(SnowflakeConnector.snowflaky_database_role(name))
+        # SHOW DATABASE ROLES reports the role name on its own
+        return [database.child(result["name"]) for result in results]
 
-        return database_roles
-
-    def show_application_roles(self, application: str) -> List[str]:
+    def show_application_roles(self, application: NameLike) -> List[ObjectName]:
         """
-        List the application roles of an installed application as app.role FQNs.
+        List the application roles of an installed application as app.role names.
 
         Returns an empty list when <application> is not an installed application,
         so a DB.ROLE reference that turns out not to be a database role can fall
         through to this without failing the whole spec.
         """
-        application_identifier = SnowflakeConnector.snowflaky_application_role(
-            application
-        )
-        query = f"SHOW APPLICATION ROLES IN APPLICATION {application_identifier}"
+        application = ObjectName.single(application)
+        query = f"SHOW APPLICATION ROLES IN APPLICATION {application}"
         try:
             results = self.run_query(query).fetchall()
         except Exception as error:
@@ -592,18 +517,9 @@ class SnowflakeConnector:
             )
             return []
 
-        application_roles = []
-        for result in results:
-            # SHOW APPLICATION ROLES reports the bare role name, which may itself
-            # contain periods (CORTEX-MODEL-ROLE-GEMINI-2.5-FLASH), so prefix it
-            # unconditionally rather than sniffing for one.
-            application_roles.append(
-                SnowflakeConnector.snowflaky_application_role(
-                    f"{application}.{result['name']}"
-                )
-            )
-
-        return application_roles
+        # SHOW APPLICATION ROLES reports the bare role name, which may itself contain
+        # periods (CORTEX-MODEL-ROLE-GEMINI-2.5-FLASH)
+        return [application.child(result["name"]) for result in results]
 
     @staticmethod
     def is_system_application_role_grant(result: Dict[str, Any]) -> bool:
@@ -612,9 +528,9 @@ class SnowflakeConnector:
         application itself (granted_by is empty or names the application), as the
         SNOWFLAKE application does for ACCOUNTADMIN. Those grants are not ours to manage.
         """
-        application = result["name"].partition(".")[0].strip('"').lower()
-        granted_by = (result.get("granted_by") or "").strip('"').lower()
-        return granted_by in ("", application)
+        application = granted_name(result["granted_on"], result["name"]).database
+        granted_by = result.get("granted_by")
+        return not granted_by or ObjectName.from_canonical(granted_by) == application
 
     def run_query(self, query: str) -> "_BufferedResult":
         from sqlalchemy import text
@@ -643,142 +559,56 @@ class SnowflakeConnector:
         that is gone too means the object is gone. A lookup that fails for any other
         reason reports the object as present, since its absence can't be confirmed.
         """
-        identifier = SnowflakeConnector.snowflaky(name)
-        parent = identifier.rsplit(".", 1)[0]
         try:
             if kind == "database":
-                found = [SnowflakeConnector.snowflaky(d) for d in self.show_databases()]
+                identifier = ObjectName.single(name)
+                found = set(map(ObjectName.single, self.show_databases()))
             elif kind == "schema":
-                found = self.show_schemas(database=parent)
+                identifier = ObjectName(name)
+                found = set(
+                    map(ObjectName, self.show_schemas(database=identifier.parent))
+                )
             else:
+                identifier = ObjectName(name)
                 object_type = next(t for t in ALL_OBJECT_TYPES if t.name == kind)
-                found = self.show_table_objects(object_type, schema=parent)
+                found = set(
+                    map(
+                        ObjectName,
+                        self.show_table_objects(object_type, schema=identifier.parent),
+                    )
+                )
         except Exception as exc:
             return not (self.missing_object(exc) or MISSING_CONTAINER_ERROR in str(exc))
         return identifier in found
 
-    def full_schema_list(self, schema: str) -> List[str]:
+    def full_schema_list(
+        self, schema: Union[str, ObjectName, NamePattern]
+    ) -> List[ObjectName]:
         """
-        For a given schema name, get all schemas it may be referencing.
+        For a given schema entry, get all schemas it may be referencing.
 
         For example, if <db>.* is given then all schemas in the database
         will be returned. If <db>.<schema_partial>_* is given, then all
         schemas that match the schema partial pattern will be returned.
         If a full schema name is given, it will return that single schema
-        as a list.
-
-        This function can be enhanced in the future to handle more
-        complicated schema names if necessary.
+        as a list. INFORMATION_SCHEMA never matches a pattern.
 
         Returns a list of schema names.
         """
-        # Generate the information_schema identifier for that database
-        # in order to be able to filter it out
-        name_parts = schema.split(".")
+        entry = (
+            schema
+            if isinstance(schema, (ObjectName, NamePattern))
+            else name_or_pattern(schema, arity=2)
+        )
 
-        info_schema = f"{name_parts[0]}.information_schema"
+        if isinstance(entry, ObjectName):
+            return [entry]
 
-        fetched_schemas = []
-
-        # All Schemas
-        if name_parts[1] == "*":
-            db_schemas = self.show_schemas(name_parts[0])
-            for db_schema in db_schemas:
-                if db_schema != info_schema:
-                    fetched_schemas.append(db_schema)
-
-        # Prefix and suffix schema matches
-        elif "*" in name_parts[1]:
-            db_schemas = self.show_schemas(name_parts[0])
-            for db_schema in db_schemas:
-                schema_name = db_schema.split(".", 1)[1].lower()
-                if name_parts[1].endswith("*") and schema_name.startswith(
-                    name_parts[1].split("*", 1)[0]
-                ):
-                    if db_schema != info_schema:
-                        fetched_schemas.append(db_schema)
-                elif name_parts[1].startswith("*") and schema_name.endswith(
-                    name_parts[1].split("*", 1)[1]
-                ):
-                    if db_schema != info_schema:
-                        fetched_schemas.append(db_schema)
-
-        # TODO: Handle more complicated matches
-
-        else:
-            # If no * in name, then return provided schema name
-            fetched_schemas = [schema]
-
-        return fetched_schemas
-
-    @staticmethod
-    def snowflaky(name: str) -> str:
-        """
-        Convert an entity name to an object identifier that will most probably be
-        the proper name for Snowflake.
-
-        e.g. gitlab-ci --> "gitlab-ci"
-             527-INVESTIGATE$ISSUES.ANALYTICS.COUNTRY_CODES -->
-             --> "527-INVESTIGATE$ISSUES".ANALYTICS.COUNTRY_CODES;
-             DEPARTMENT - DATA --> "DEPARTMENT - DATA"
-             LAB_RESULTS."AGGREGATE" --> lab_results.aggregate
-             analytics.group --> analytics."GROUP"
-
-        Every spelling of the same object comes out as the same string, because fetched
-        grant state and spec entries are compared on it. SHOW GRANTS quotes keywords
-        that aren't reserved (AGGREGATE), and the spec doesn't.
-
-        Pronounced /snəʊfleɪkɪ/ like saying very fast snowflak[e and clarif]y
-        Permission granted to use snowflaky as a verb.
-        """
-        if name is not None:
-            name_parts = name.split(".")
-        else:
-            name_parts = []
-
-        # We do not currently support identifiers that include periods (i.e. db_1.schema_1."table.with.period")
-        if len(name_parts) > 3:
-            warnings.warn(
-                f"Unsupported object identifier: {name} contains additional periods within identifier.",
-                SyntaxWarning,
-            )
-
-        if len(name_parts) == 0:
-            warnings.warn(
-                "Object identifier is Null",
-                SyntaxWarning,
-            )
-
-        new_name_parts = []
-
-        for part in name_parts:
-            part = SnowflakeConnector._unquote_plain_identifier(part)
-
-            # Still quoted, so case-sensitive or not a valid unquoted identifier: as-is
-            if re.match('^".*"$', part) is not None:
-                new_name_parts.append(part)
-
-            # If a future object, return in lower case - no need to quote
-            elif re.match(FUTURE_PLACEHOLDER_PATTERN, part, re.IGNORECASE) is not None:
-                new_name_parts.append(part.lower())
-
-            # If does not meet requirements for unquoted object identifiers, add double-quotes. See
-            # https://docs.snowflake.com/en/sql-reference/identifiers-syntax.html for what those requirements are
-            elif (
-                re.match("^[a-z_][0-9a-z_$]*$", part) is None
-                and re.match("^[A-Z_][0-9A-Z_$]*$", part) is None
-            ):
-                new_name_parts.append(f'"{part}"')
-
-            # Reserved keywords must be quoted, and uppercased to match the stored form. See
-            # https://docs.snowflake.com/en/sql-reference/reserved-keywords
-            elif part.lower() in SnowflakeConnector.reserved_keywords():
-                new_name_parts.append(f'"{part.upper()}"')
-
-            else:
-                new_name_parts.append(part.lower())
-
-        return ".".join(new_name_parts)
+        return [
+            db_schema
+            for db_schema in map(ObjectName, self.show_schemas(entry.database))
+            if entry.matches(db_schema)
+        ]
 
     @staticmethod
     def normalise_granted_on(granted_on: str) -> str:
@@ -794,214 +624,11 @@ class SnowflakeConnector:
         if normalised in ("application_role", APPLICATION_ROLE_GRANT_TYPE):
             return APPLICATION_ROLE_GRANT_TYPE
 
+        if normalised in ("external_volume", EXTERNAL_VOLUME_GRANT_TYPE):
+            return EXTERNAL_VOLUME_GRANT_TYPE
+
         return normalised
 
     @staticmethod
-    def snowflaky_database_role(name: str) -> str:
-        """
-        Convert a database role FQN (db.role) to a properly quoted Snowflake identifier.
-
-        Unlike snowflaky(), components that require quoting are uppercased first, since
-        Snowflake stores unquoted identifiers as uppercase and reserved keywords like
-        'snowflake' must be referenced as "SNOWFLAKE" to match the stored form.
-
-        e.g. snowflake.organization_billing_viewer --> "SNOWFLAKE".organization_billing_viewer
-             my-db.my-role                         --> "MY-DB"."MY-ROLE"
-        """
-        return ".".join(
-            SnowflakeConnector._snowflaky_fqn_part(part) for part in name.split(".")
-        )
-
-    @staticmethod
-    def snowflaky_application_role(name: str) -> str:
-        """
-        Convert an application role FQN (app.role) to a properly quoted Snowflake
-        identifier, with the same casing rules as snowflaky_database_role().
-
-        Only the first period separates application from role, so a quoted role name
-        that itself contains periods (SNOWFLAKE."CORTEX-MODEL-ROLE-GEMINI-2.5-FLASH")
-        survives intact. A bare application name is quoted on its own.
-
-        e.g. snowflake.cortex_analyst_requests_viewer --> "SNOWFLAKE".cortex_analyst_requests_viewer
-        """
-        application, separator, role = name.partition(".")
-        parts = [application, role] if separator else [application]
-        return ".".join(SnowflakeConnector._snowflaky_fqn_part(part) for part in parts)
-
-    @staticmethod
-    def _unquote_plain_identifier(part: str) -> str:
-        """
-        Strip the quotes from a part that is a plain uppercase identifier, since
-        "AGGREGATE" and AGGREGATE name the same object. Anything else that's quoted is
-        case-sensitive or needs the quotes, so it's returned untouched.
-        """
-        match = re.match(r'^"([A-Z_][0-9A-Z_$]*)"$', part)
-        return match.group(1) if match else part
-
-    @staticmethod
-    def _snowflaky_fqn_part(part: str) -> str:
-        part = SnowflakeConnector._unquote_plain_identifier(part)
-        if re.match('^".*"$', part) is not None:
-            return part
-        if (
-            re.match("^[a-z_][0-9a-z_$]*$", part) is None
-            and re.match("^[A-Z_][0-9A-Z_$]*$", part) is None
-        ) or part.lower() in SnowflakeConnector.reserved_keywords():
-            return f'"{part.upper()}"'
-        return part.lower()
-
-    @staticmethod
-    def snowflaky_user_property(name: str) -> str:
-        """
-        Convert a user property value (DEFAULT_ROLE, DEFAULT_WAREHOUSE,
-        DEFAULT_NAMESPACE) to an identifier that round-trips through Snowflake.
-
-        Unlike snowflaky(), every component is uppercased and quoted rather than
-        lowercased. ALTER USER stores these properties as text instead of resolving
-        them to an object, so whatever we send is what comes back out of
-        SHOW/DESCRIBE USER -- and it has to match the uppercase form Snowflake
-        stored the object under, or the property silently resolves to nothing.
-
-        Most values survive being sent unquoted because Snowflake normalises them to
-        uppercase on the way in. Values that collide with a keyword do not: MONITOR
-        is a privilege, so `DEFAULT_ROLE = monitor` is kept verbatim as `monitor`,
-        never matches the role `MONITOR`, and the user falls back to PUBLIC on every
-        login. Quoting the uppercased form is unambiguous for every value, keyword
-        or not.
-
-        e.g. monitor     --> "MONITOR"
-             raw.public  --> "RAW"."PUBLIC"
-             "mixedCase" --> "mixedCase"   (already quoted, passed through)
-        """
-        if not name:
-            return name
-
-        new_name_parts = []
-
-        for part in name.split("."):
-            # Already quoted: the spec author has been explicit about the exact
-            # stored form, so don't second-guess the casing.
-            if re.match('^".*"$', part) is not None:
-                new_name_parts.append(part)
-            else:
-                new_name_parts.append(f'"{part.upper()}"')
-
-        return ".".join(new_name_parts)
-
-    @staticmethod
-    def snowflaky_user_role(name: str) -> str:
-        """
-        Convert users/roles to an object identifier that will most probably be
-        the proper name for Snowflake.
-
-        e.g. gitlab-ci --> "gitlab-ci"
-             blake.enyart@gmail.com --> "blake.enyart@gmail.com"
-
-        Pronounced /snəʊfleɪkɪ/ like saying very fast snowflak[e and clarif]y
-        Permission granted to use snowflaky as a verb.
-        """
-        if (
-            re.match("^[0-9a-zA-Z_]*$", name) is None  # Proper formatting
-            and re.match('^".*"$', name) is None  # Already quoted
-        ):
-            name = f'"{name}"'
-
-        return name
-
-    @staticmethod
     def reserved_keywords() -> Set[str]:
-        return {
-            "account",
-            "all",
-            "alter",
-            "and",
-            "any",
-            "as",
-            "between",
-            "by",
-            "case",
-            "cast",
-            "check",
-            "column",
-            "connect",
-            "connection",
-            "constraint",
-            "create",
-            "cross",
-            "current",
-            "current_date",
-            "current_time",
-            "current_timestamp",
-            "current_user",
-            "database",
-            "delete",
-            "distinct",
-            "drop",
-            "else",
-            "exists",
-            "false",
-            "following",
-            "for",
-            "from",
-            "full",
-            "grant",
-            "group",
-            "gscluster",
-            "having",
-            "ilike",
-            "in",
-            "increment",
-            "inner",
-            "insert",
-            "intersect",
-            "into",
-            "is",
-            "issue",
-            "join",
-            "lateral",
-            "left",
-            "like",
-            "localtime",
-            "localtimestamp",
-            "minus",
-            "natural",
-            "not",
-            "null",
-            "of",
-            "on",
-            "or",
-            "order",
-            "organization",
-            "qualify",
-            "regexp",
-            "revoke",
-            "right",
-            "rlike",
-            "row",
-            "rows",
-            "sample",
-            "schema",
-            "select",
-            "set",
-            "snowflake",
-            "some",
-            "start",
-            "table",
-            "tablesample",
-            "then",
-            "to",
-            "trigger",
-            "true",
-            "try_cast",
-            "union",
-            "unique",
-            "update",
-            "using",
-            "values",
-            "view",
-            "when",
-            "whenever",
-            "where",
-            "window",
-            "with",
-        }
+        return set(RESERVED_KEYWORDS)

@@ -1,11 +1,18 @@
 import os
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Dict, Iterable, List, Optional, Set, cast
 
 import click
 
 from tundra.concurrency import parallel_map
 from tundra.entities import EntityGenerator
 from tundra.error import SpecLoadingError
+from tundra.identifiers import (
+    InvalidNameError,
+    NamePattern,
+    ObjectName,
+    granted_name,
+    name_or_pattern,
+)
 from tundra.logger import GLOBAL_LOGGER as logger
 from tundra.snowflake_connector import (
     APPLICATION_ROLE_GRANT_TYPE,
@@ -17,6 +24,24 @@ from tundra.spec_file_loader import load_spec
 from tundra.table_object_types import PRIVILEGE_FAMILIES
 
 VALIDATION_ERR_MSG = 'Spec error: {} "{}", field "{}": {}'
+
+
+def _single_names(names) -> Optional[Set[ObjectName]]:
+    """A --roles or --users filter as names, or None when it isn't given."""
+    return {ObjectName.single(name) for name in names} if names else None
+
+
+def _same_role(owner_on_snowflake: Any, owner_in_spec: Any) -> bool:
+    """
+    Whether the spec names the role's owner on Snowflake. A spelling that isn't a role
+    name names no role.
+    """
+    if not owner_on_snowflake:
+        return False
+    try:
+        return ObjectName.single(owner_on_snowflake) == ObjectName.single(owner_in_spec)
+    except InvalidNameError:
+        return False
 
 
 class SnowflakeSpecLoader:
@@ -76,7 +101,7 @@ class SnowflakeSpecLoader:
                 "Checking that all entities in the spec file are defined in Snowflake",
                 fg="green",
             )
-            self.check_entities_on_snowflake_server(conn, ignore_missing_objects)
+            self.check_entities_on_snowflake_server(conn, bool(ignore_missing_objects))
         else:
             click.secho(
                 "Skipping entity validation checks (--skip-validation flag set)",
@@ -89,10 +114,10 @@ class SnowflakeSpecLoader:
         # Get the privileges granted to users and roles in the Snowflake account
         # Used in order to figure out which permissions in the spec file are
         #  new ones and which already exist (and there is no need to re-grant them)
-        self.grants_to_role: Dict[str, Any] = {}
-        self.roles_granted_to_user: Dict[str, Any] = {}
-        self.tags_on_user: Dict[str, Dict[str, str]] = {}
-        self.account_grants_to_role: Dict[str, Dict[str, str]] = {}
+        self.grants_to_role: Dict[ObjectName, Any] = {}
+        self.roles_granted_to_user: Dict[ObjectName, Any] = {}
+        self.tags_on_user: Dict[ObjectName, Dict[ObjectName, str]] = {}
+        self.account_grants_to_role: Dict[ObjectName, Dict[str, Any]] = {}
 
         if not spec_test:
             click.secho("Fetching granted privileges from Snowflake", fg="green")
@@ -131,8 +156,8 @@ class SnowflakeSpecLoader:
     def check_warehouse_entities(self, conn):
         error_messages = []
         if len(self.entities["warehouses"]) > 0:
-            warehouses = conn.show_warehouses()
-            for warehouse in self.entities["warehouses"]:
+            warehouses = set(map(ObjectName.single, conn.show_warehouses()))
+            for warehouse in map(ObjectName.single, self.entities["warehouses"]):
                 if warehouse not in warehouses:
                     self.missing_entities["warehouses"].add(warehouse)
                     error_messages.append(
@@ -148,8 +173,8 @@ class SnowflakeSpecLoader:
     def check_integration_entities(self, conn):
         error_messages = []
         if len(self.entities["integrations"]) > 0:
-            integrations = conn.show_integrations()
-            for integration in self.entities["integrations"]:
+            integrations = set(map(ObjectName.single, conn.show_integrations()))
+            for integration in map(ObjectName.single, self.entities["integrations"]):
                 if integration not in integrations:
                     self.missing_entities["integrations"].add(integration)
                     error_messages.append(
@@ -165,8 +190,8 @@ class SnowflakeSpecLoader:
     def check_database_entities(self, conn):
         error_messages = []
         if len(self.entities["databases"]) > 0:
-            databases = conn.show_databases()
-            for db in self.entities["databases"]:
+            databases = set(map(ObjectName.single, conn.show_databases()))
+            for db in map(ObjectName.single, self.entities["databases"]):
                 if db not in databases:
                     self.missing_entities["databases"].add(db)
                     error_messages.append(
@@ -180,9 +205,9 @@ class SnowflakeSpecLoader:
     def check_schema_ref_entities(self, conn):
         error_messages = []
         if len(self.entities["schema_refs"]) > 0:
-            schemas = conn.show_schemas()
-            for schema in self.entities["schema_refs"]:
-                if "*" not in schema and schema not in schemas:
+            schemas = set(map(ObjectName, conn.show_schemas()))
+            for schema in map(name_or_pattern, self.entities["schema_refs"]):
+                if isinstance(schema, ObjectName) and schema not in schemas:
                     self.missing_entities["schemas"].add(schema)
                     error_messages.append(
                         f"Missing Entity Error: Schema {schema} was not found on"
@@ -196,13 +221,13 @@ class SnowflakeSpecLoader:
     def check_table_ref_entities(self, conn):
         error_messages = []
         if len(self.entities["table_refs"]) > 0:
-            views = conn.show_views()
+            views = set(map(ObjectName, conn.show_views()))
             databases = list(self.entities["tables_by_database"].keys())
             existing_by_db = dict(
                 zip(
                     databases,
                     parallel_map(
-                        lambda d: conn.show_tables(database=d),
+                        lambda d: set(map(ObjectName, conn.show_tables(database=d))),
                         databases,
                         self.max_workers,
                     ),
@@ -210,9 +235,9 @@ class SnowflakeSpecLoader:
             )
             for db, tables in self.entities["tables_by_database"].items():
                 existing_tables = existing_by_db[db]
-                for table in tables:
+                for table in map(name_or_pattern, tables):
                     if (
-                        "*" not in table
+                        isinstance(table, ObjectName)
                         and table not in existing_tables
                         and table not in views
                     ):
@@ -233,15 +258,15 @@ class SnowflakeSpecLoader:
                 zip(
                     databases,
                     parallel_map(
-                        lambda d: conn.show_tasks(database=d),
+                        lambda d: set(map(ObjectName, conn.show_tasks(database=d))),
                         databases,
                         self.max_workers,
                     ),
                 )
             )
             for db, tasks in self.entities["tasks_by_database"].items():
-                for task in tasks:
-                    if "*" not in task and task not in existing_by_db[db]:
+                for task in map(name_or_pattern, tasks):
+                    if isinstance(task, ObjectName) and task not in existing_by_db[db]:
                         self.missing_entities["tasks"].add(task)
                         error_messages.append(
                             f"Missing Entity Error: Task {task} was not found on"
@@ -255,18 +280,20 @@ class SnowflakeSpecLoader:
         error_messages = []
         if len(self.entities["roles"]) > 0:
             roles = conn.show_roles()
+            existing = {ObjectName.single(role): role for role in roles}
             for role in self.spec["roles"]:
                 for role_name, config in role.items():
-                    if role_name not in roles:
-                        self.missing_entities["roles"].add(role_name)
+                    name = ObjectName.single(role_name)
+                    if name not in existing:
+                        self.missing_entities["roles"].add(name)
                         error_messages.append(
                             f"Missing Entity Error: Role {role_name} was not found on"
                             " Snowflake Server. Please create it before continuing."
                         )
                     elif "owner" in config:
-                        owner_on_snowflake = roles[role_name]
+                        owner_on_snowflake = roles[existing[name]]
                         owner_in_spec = config["owner"]
-                        if owner_on_snowflake != owner_in_spec:
+                        if not _same_role(owner_on_snowflake, owner_in_spec):
                             error_messages.append(
                                 f"Role {role_name} has owner {owner_on_snowflake} on snowflake, "
                                 f"but has owner {owner_in_spec} defined in the spec file."
@@ -275,7 +302,7 @@ class SnowflakeSpecLoader:
             logger.debug("`roles` not found in spec, skipping SHOW ROLES call.")
         return error_messages
 
-    def resolve_application_role_refs(self, conn) -> List[str]:
+    def resolve_application_role_refs(self, conn) -> List[ObjectName]:
         """
         Sort the DB.ROLE references in member_of into database roles and application
         roles by asking Snowflake, and return the references that are neither.
@@ -287,31 +314,38 @@ class SnowflakeSpecLoader:
         entities["application_role_refs"] so the grants generator emits GRANT
         APPLICATION ROLE for them.
         """
-        unresolved: List[str] = []
-        refs_by_database: Dict[str, Any] = {}
-        for database_role in self.entities["database_role_refs"]:
-            database = database_role.split(".")[0]
-            refs_by_database.setdefault(database, set()).add(database_role)
+        unresolved: List[ObjectName] = []
+        refs_by_database: Dict[ObjectName, Set[ObjectName]] = {}
+        for database_role in map(
+            ObjectName.role_reference, self.entities["database_role_refs"]
+        ):
+            refs_by_database.setdefault(database_role.database, set()).add(
+                database_role
+            )
 
-        for database, database_roles in refs_by_database.items():
-            existing_database_roles = conn.show_database_roles(database=database)
+        for database, database_roles in sorted(refs_by_database.items()):
+            existing_database_roles = set(
+                map(
+                    ObjectName.role_reference,
+                    conn.show_database_roles(database=database),
+                )
+            )
             not_database_roles = [
                 database_role
                 for database_role in sorted(database_roles)
-                if SnowflakeConnector.snowflaky_database_role(database_role)
-                not in existing_database_roles
+                if database_role not in existing_database_roles
             ]
             if not not_database_roles:
                 continue
 
-            existing_application_roles = conn.show_application_roles(
-                application=database
+            existing_application_roles = set(
+                map(
+                    ObjectName.role_reference,
+                    conn.show_application_roles(application=database),
+                )
             )
             for ref in not_database_roles:
-                if (
-                    SnowflakeConnector.snowflaky_application_role(ref)
-                    in existing_application_roles
-                ):
+                if ref in existing_application_roles:
                     self.entities["application_role_refs"].add(ref)
                     self.entities["database_role_refs"].discard(ref)
                 else:
@@ -338,8 +372,8 @@ class SnowflakeSpecLoader:
     def check_users_entities(self, conn):
         error_messages = []
         if len(self.entities["users"]) > 0:
-            users = conn.show_users()
-            for user in self.entities["users"]:
+            users = set(map(ObjectName.single, conn.show_users()))
+            for user in map(ObjectName.single, self.entities["users"]):
                 if user not in users:
                     self.missing_entities["users"].add(user)
                     error_messages.append(
@@ -389,31 +423,23 @@ class SnowflakeSpecLoader:
             else:
                 raise SpecLoadingError("\n".join(error_messages))
 
-    def _merge_role_keyed_grants(self, target, results, roles):
+    def _merge_role_keyed_grants(self, target, results, wanted):
         for role in results:
-            if roles and role not in roles:
+            name = ObjectName.single(role)
+            if wanted and name not in wanted:
                 continue
-            for privilege in results[role]:
-                for grant_on in results[role][privilege]:
-                    target.setdefault(role, {}).setdefault(privilege, {}).setdefault(
-                        grant_on, []
-                    ).extend(
-                        self.filter_to_database_refs(
-                            grant_on=grant_on,
-                            filter_set=results[role][privilege][grant_on],
-                        )
-                    )
+            self._merge_single_role_grants(target, name, results[role])
 
     def _merge_single_role_grants(self, target, role, results):
         for privilege in results:
             for grant_on in results[privilege]:
-                target.setdefault(role, {}).setdefault(privilege, {}).setdefault(
-                    grant_on, []
-                ).extend(
-                    self.filter_to_database_refs(
-                        grant_on=grant_on, filter_set=results[privilege][grant_on]
-                    )
+                held = self.filter_to_database_refs(
+                    grant_on=grant_on, filter_set=results[privilege][grant_on]
                 )
+                if held:
+                    target.setdefault(role, {}).setdefault(privilege, {}).setdefault(
+                        grant_on, []
+                    ).extend(held)
 
     def get_role_privileges_from_snowflake_server(
         self,
@@ -421,8 +447,9 @@ class SnowflakeSpecLoader:
         roles: Optional[List[str]] = None,
         ignore_memberships: Optional[bool] = False,
     ) -> None:
-        future_grants: Dict[str, Any] = {}
+        future_grants: Dict[ObjectName, Any] = {}
         databases = self.entities["database_refs"]
+        wanted = _single_names(roles)
 
         # --- Fetch phase (parallel) ---
         schemas_by_db = dict(
@@ -455,10 +482,13 @@ class SnowflakeSpecLoader:
             )
         )
 
+        # A member_of * is in entities["roles"] as a pattern, not a role to fetch
         role_list = [
             role
             for role in self.entities["roles"]
-            if not (roles and role not in roles) and not ignore_memberships
+            if not isinstance(role, NamePattern)
+            and not (wanted and ObjectName.single(role) not in wanted)
+            and not ignore_memberships
         ]
         role_grants_by_role = dict(
             zip(
@@ -478,7 +508,7 @@ class SnowflakeSpecLoader:
         ]
         self.account_grants_to_role = dict(
             zip(
-                declaring_roles,
+                map(ObjectName.single, declaring_roles),
                 parallel_map(
                     lambda r: conn.show_account_grants_to_role(r),
                     declaring_roles,
@@ -489,15 +519,15 @@ class SnowflakeSpecLoader:
 
         # --- Merge phase (serial, deterministic, original order) ---
         for db in databases:
-            self._merge_role_keyed_grants(future_grants, db_future_by_db[db], roles)
+            self._merge_role_keyed_grants(future_grants, db_future_by_db[db], wanted)
             for schema in schemas_by_db[db]:
                 self._merge_role_keyed_grants(
-                    future_grants, schema_future_by_schema[schema], roles
+                    future_grants, schema_future_by_schema[schema], wanted
                 )
 
         for role in role_list:
             self._merge_single_role_grants(
-                future_grants, role, role_grants_by_role[role]
+                future_grants, ObjectName.single(role), role_grants_by_role[role]
             )
 
         self.grants_to_role = future_grants
@@ -505,8 +535,11 @@ class SnowflakeSpecLoader:
     def get_user_privileges_from_snowflake_server(
         self, conn: SnowflakeConnector, users: Optional[List[str]] = None
     ) -> None:
+        wanted = _single_names(users)
         user_entities = [
-            user for user in self.entities["users"] if not (users and user not in users)
+            user
+            for user in self.entities["users"]
+            if not (wanted and ObjectName.single(user) not in wanted)
         ]
         results = parallel_map(
             lambda u: conn.show_roles_granted_to_user(u),
@@ -514,7 +547,7 @@ class SnowflakeSpecLoader:
             self.max_workers,
         )
         for user, roles_granted in zip(user_entities, results):
-            self.roles_granted_to_user[user] = roles_granted
+            self.roles_granted_to_user[ObjectName.single(user)] = roles_granted
 
         # Every listed user's tags are fetched, not only those declaring `tags`: the
         # spec owns all of them, so a tag on a user with no `tags` key is unset.
@@ -523,7 +556,9 @@ class SnowflakeSpecLoader:
             user_entities,
             self.max_workers,
         )
-        self.tags_on_user = dict(zip(user_entities, tag_results))
+        self.tags_on_user = dict(
+            zip(map(ObjectName.single, user_entities), tag_results)
+        )
 
     def get_privileges_from_snowflake_server(
         self,
@@ -553,49 +588,57 @@ class SnowflakeSpecLoader:
             )
 
     def filter_to_database_refs(
-        self, grant_on: str, filter_set: List[str]
-    ) -> List[str]:
+        self, grant_on: str, filter_set: Iterable[Any]
+    ) -> List[ObjectName]:
         """
         Filter out grants to databases that are not tracked in the configuration file
-        :param grant_on: entity to be granted on. e.g. GRANT SOMETHING ON {DATABASE|ACCOUNT|WAREHOUSE|INTEGRATION|FILE FORMAT}...
-        :param filter_set: list of strings to filter
-        :return: list of strings with entities referring to non-tracked databases removed.
+        :param grant_on: entity to be granted on. e.g. GRANT SOMETHING ON {DATABASE|WAREHOUSE|INTEGRATION|SCHEMA}...
+        :param filter_set: the names granted on, as ObjectNames or as SHOW GRANTS spells them
+        :return: the names, less those of kinds tundra doesn't read and those in
+            non-tracked databases.
         """
-        database_refs = self.entities["database_refs"]
-        warehouse_refs = self.entities["warehouse_refs"]
-        integration_refs = self.entities["integration_refs"]
+        database_refs = set(map(ObjectName.single, self.entities["database_refs"]))
+        warehouse_refs = set(map(ObjectName.single, self.entities["warehouse_refs"]))
+        integration_refs = set(
+            map(ObjectName.single, self.entities["integration_refs"])
+        )
+
+        names: List[ObjectName] = []
+        for item in filter_set:
+            if not item:
+                continue
+            try:
+                names.append(
+                    item
+                    if isinstance(item, ObjectName)
+                    else granted_name(grant_on, item)
+                )
+            except InvalidNameError:
+                continue
 
         # Databases is the simple case. Just return items that are also in the database_refs list
         if grant_on == "database":
-            return [item for item in filter_set if item in database_refs]
+            return [name for name in names if name in database_refs]
         # Warehouses are also a simple case.
         elif grant_on == "warehouse":
-            return [item for item in filter_set if item in warehouse_refs]
+            return [name for name in names if name in warehouse_refs]
         # Integrations are also a simple case.
         elif grant_on == "integration":
-            return [item for item in filter_set if item in integration_refs]
-        # Account-level grants are reconciled from their own fetch (see
-        # show_account_grants_to_role), which also carries the grantor. Pass through.
-        elif grant_on == "account":
-            return filter_set
+            return [name for name in names if name in integration_refs]
         # Database and application roles are db.role / app.role FQNs, but membership
         # of them is managed the same way as account roles: the spec is the source of
         # truth regardless of whether the owning database is tracked. Pass through as-is.
         elif grant_on in (DATABASE_ROLE_GRANT_TYPE, APPLICATION_ROLE_GRANT_TYPE):
-            return filter_set
+            return names
         else:
-            # Everything else should be binary: it has a dot or it doesn't
-            # List of strings with `.`s:
-            #       i.e. database.schema.function_name
-            #       Since we are excluding all references to non-tracked databases we can simply check the first
-            #       segment of the string which represents the database. e.g. "database.item".split(".")[0]
-            # List of strings that have no `.`'s:
-            #       i.e. a role name `grant ownership on role role_name to role grantee`
-            #       If it does not have a `.` then it can just be included since it isn't referencing a database
+            # A single-part name, such as a role in `grant ownership on role
+            # role_name to role grantee`, isn't in a database, so it's kept. Anything
+            # else is in its first part's database, and kept only if that's tracked.
             return [
-                item
-                for item in filter_set
-                if item and ("." not in item or item.split(".")[0] in database_refs)
+                name
+                for name in names
+                if (len(name.parts) == 1 and not name.is_future)
+                or name.database in database_refs
             ]
 
     def filter_config_for_missing_entities(
@@ -616,7 +659,7 @@ class SnowflakeSpecLoader:
             filtered_config["warehouses"] = [
                 w
                 for w in filtered_config["warehouses"]
-                if w not in self.missing_entities["warehouses"]
+                if ObjectName.single(w) not in self.missing_entities["warehouses"]
             ]
 
         # Filter integrations
@@ -624,7 +667,7 @@ class SnowflakeSpecLoader:
             filtered_config["integrations"] = [
                 i
                 for i in filtered_config["integrations"]
-                if i not in self.missing_entities["integrations"]
+                if ObjectName.single(i) not in self.missing_entities["integrations"]
             ]
 
         # Filter privileges.<family>: the missing_entities key matches the spec key
@@ -632,12 +675,13 @@ class SnowflakeSpecLoader:
         for family in ["databases", "schemas", *PRIVILEGE_FAMILIES]:
             if family not in privileges:
                 continue
+            read = ObjectName.single if family == "databases" else name_or_pattern
             for access_type in ["read", "write"]:
                 if access_type in privileges[family]:
                     privileges[family][access_type] = [
                         ref
                         for ref in privileges[family][access_type]
-                        if ref not in self.missing_entities[family]
+                        if read(ref) not in self.missing_entities[family]
                     ]
 
         return filtered_config
@@ -659,6 +703,8 @@ class SnowflakeSpecLoader:
         """
         run_list = run_list or ["users", "roles"]
         sql_commands: List[Dict] = []
+        role_filter = _single_names(roles)
+        user_filter = _single_names(users)
 
         generator = SnowflakeGrantsGenerator(
             self.grants_to_role,
@@ -697,16 +743,21 @@ class SnowflakeSpecLoader:
                     if config
                 ]
                 for entity_name, config in entity_configs:
+                    name = (
+                        ObjectName.single(entity_name)
+                        if entity_type in ("roles", "users")
+                        else None
+                    )
                     # Skip missing roles/users
                     if (
                         entity_type == "roles"
-                        and entity_name in self.missing_entities["roles"]
+                        and name in self.missing_entities["roles"]
                     ):
                         logger.info(f"Skipping missing role: {entity_name}")
                         continue
                     if (
                         entity_type == "users"
-                        and entity_name in self.missing_entities["users"]
+                        and name in self.missing_entities["users"]
                     ):
                         logger.info(f"Skipping missing user: {entity_name}")
                         continue
@@ -717,7 +768,7 @@ class SnowflakeSpecLoader:
                     if (
                         entity_type == "roles"
                         and "roles" in run_list
-                        and (not roles or entity_name in roles)
+                        and (not role_filter or name in role_filter)
                     ):
                         sql_commands.extend(
                             self.process_roles(
@@ -731,7 +782,7 @@ class SnowflakeSpecLoader:
                     elif (
                         entity_type == "users"
                         and "users" in run_list
-                        and (not users or entity_name in users)
+                        and (not user_filter or name in user_filter)
                     ):
                         sql_commands.extend(
                             self.process_users(

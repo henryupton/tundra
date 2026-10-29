@@ -203,10 +203,3 @@ class TestShowTagsOnUser:
             TEAM: "marketing",
             '"SNOWFLAKE".core."Mixed-Case"': "x",
         }
-
-    def test_snowflaky_tag_matches_stored_form(self):
-        assert SnowflakeConnector.snowflaky_tag(TEAM) == TEAM
-        assert (
-            SnowflakeConnector.snowflaky_tag("snowflake.core.privacy_category")
-            == '"SNOWFLAKE".core.privacy_category'
-        )

@@ -1,30 +1,11 @@
 {
   "testrole": {
-    "create database": {
-      "account": [
-        "test_account"
-      ]
-    },
-    "create warehouse": {
-      "account": [
-        "test_account"
-      ]
-    },
     "ownership": {
       "database": [
         "primarydb"
       ],
-      "file_format": [
-        "primarydb.test_schema.csv"
-      ],
-      "function": [
-        "primarydb.test_schema.\"test_function(n integer):integer\""
-      ],
       "schema": [
         "primarydb.test_schema"
-      ],
-      "stage": [
-        "primarydb.test_stage"
       ],
       "table": [
         "primarydb.test_schema.test_table"
