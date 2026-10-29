@@ -71,6 +71,9 @@ class MockSnowflakeConnector(SnowflakeConnector):
     ) -> List[str]:
         return []
 
+    def show_future_grants_to_role(self, role) -> Dict[str, Any]:
+        return {}
+
     def show_grants_to_role(self, role) -> Dict[str, Any]:
         return {}
 

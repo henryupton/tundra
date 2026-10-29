@@ -17,6 +17,7 @@ from tundra.logger import GLOBAL_LOGGER as logger
 from tundra.snowflake_connector import (
     APPLICATION_ROLE_GRANT_TYPE,
     DATABASE_ROLE_GRANT_TYPE,
+    ReadStats,
     SnowflakeConnector,
 )
 from tundra.snowflake_grants import SnowflakeGrantsGenerator
@@ -83,6 +84,7 @@ class SnowflakeSpecLoader:
         skip_validation: Optional[bool] = False,
         ignore_missing_objects: Optional[bool] = False,
         max_workers: Optional[int] = None,
+        sql_only: Optional[bool] = False,
     ) -> None:
         run_list = run_list or ["users", "roles"]
         # The filters are read again when grants are fetched, so an iterator is
@@ -91,6 +93,8 @@ class SnowflakeSpecLoader:
         users = None if users is None else list(users)
         _check_filters(roles, users)
         self.conn = conn or SnowflakeConnector()
+        if sql_only:
+            self.conn.sql_only = True
         self.max_workers = (
             max_workers
             if max_workers is not None
@@ -161,6 +165,20 @@ class SnowflakeSpecLoader:
                 run_list=run_list,
                 ignore_memberships=ignore_memberships,
             )
+        else:
+            # spec-test reads nothing more. A run reports its reads at the end of
+            # generate_permission_queries, which lists the schemas of db.* entries.
+            self.report_reads()
+
+    def report_reads(self) -> None:
+        """One line on how the listings so far were read: through the API or SQL."""
+        stats = getattr(self.conn, "read_stats", None)
+        if not isinstance(stats, ReadStats) or not stats.listings:
+            return
+        click.secho(
+            stats.summary(sql_only=self.conn.sql_only),
+            fg="yellow" if stats.fallbacks else "green",
+        )
 
     @staticmethod
     def check_permissions_on_snowflake_server(
@@ -456,13 +474,6 @@ class SnowflakeSpecLoader:
             else:
                 raise SpecLoadingError("\n".join(error_messages))
 
-    def _merge_role_keyed_grants(self, target, results, wanted):
-        for role in results:
-            name = ObjectName.single(role)
-            if wanted and name not in wanted:
-                continue
-            self._merge_single_role_grants(target, name, results[role])
-
     def _merge_single_role_grants(self, target, role, results):
         for privilege in results:
             for grant_on in results[privilege]:
@@ -481,48 +492,32 @@ class SnowflakeSpecLoader:
         ignore_memberships: Optional[bool] = False,
     ) -> None:
         future_grants: Dict[ObjectName, Any] = {}
-        databases = self.entities["database_refs"]
         wanted = _single_names(roles, "role")
 
-        # --- Fetch phase (parallel) ---
-        schemas_by_db = dict(
-            zip(
-                databases,
-                parallel_map(
-                    lambda d: conn.show_schemas(database=d), databases, self.max_workers
-                ),
-            )
-        )
-        db_future_by_db = dict(
-            zip(
-                databases,
-                parallel_map(
-                    lambda d: conn.show_future_grants(database=d),
-                    databases,
-                    self.max_workers,
-                ),
-            )
-        )
-        all_schemas = [s for db in databases for s in schemas_by_db[db]]
-        schema_future_by_schema = dict(
-            zip(
-                all_schemas,
-                parallel_map(
-                    lambda s: conn.show_future_grants(schema=s),
-                    all_schemas,
-                    self.max_workers,
-                ),
-            )
-        )
-
         # A member_of * is in entities["roles"] as a pattern, not a role to fetch
-        role_list = [
+        spec_roles = [
             role
             for role in self.entities["roles"]
             if not isinstance(role, NamePattern)
             and not (wanted and ObjectName.single(role) not in wanted)
-            and not ignore_memberships
         ]
+
+        # --- Fetch phase (parallel) ---
+        # Future grants are read per role, in every database, so they're read under
+        # --ignore-memberships too. A role that's missing holds none, and the merge
+        # drops the databases the spec doesn't track.
+        future_by_role = dict(
+            zip(
+                spec_roles,
+                parallel_map(
+                    lambda r: conn.show_future_grants_to_role(r),
+                    spec_roles,
+                    self.max_workers,
+                ),
+            )
+        )
+
+        role_list = [] if ignore_memberships else spec_roles
         role_grants_by_role = dict(
             zip(
                 role_list,
@@ -551,12 +546,10 @@ class SnowflakeSpecLoader:
         )
 
         # --- Merge phase (serial, deterministic, original order) ---
-        for db in databases:
-            self._merge_role_keyed_grants(future_grants, db_future_by_db[db], wanted)
-            for schema in schemas_by_db[db]:
-                self._merge_role_keyed_grants(
-                    future_grants, schema_future_by_schema[schema], wanted
-                )
+        for role in spec_roles:
+            self._merge_single_role_grants(
+                future_grants, ObjectName.single(role), future_by_role[role]
+            )
 
         for role in role_list:
             self._merge_single_role_grants(
@@ -603,7 +596,7 @@ class SnowflakeSpecLoader:
     ) -> None:
         """
         Get the privileges granted to users and roles in the Snowflake account
-        Gets the future privileges granted in all database and schema objects
+        Gets the future privileges each spec role holds in the spec's databases
         Consolidates role and future privileges into a single object for self.grants_to_role
         """
         run_list = run_list or ["users", "roles"]
@@ -823,6 +816,7 @@ class SnowflakeSpecLoader:
                             )
                         )
 
+        self.report_reads()
         return self.remove_duplicate_queries(sql_commands)
 
     # TODO: These functions are part of a refactor of the previous module,

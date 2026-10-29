@@ -6,11 +6,12 @@ optional future-grant placeholder. lab_results.aggregate, LAB_RESULTS."AGGREGATE
 ObjectName.from_canonical("LAB_RESULTS", "AGGREGATE") are one name, and str() of it is
 the SQL tundra writes: lab_results.aggregate.
 
-Names arrive in two forms, each with its own constructors. Spellings, as a spec writes
+Names arrive in three forms, each with its own constructors. Spellings, as a spec writes
 them and SHOW GRANTS and SHOW FUTURE GRANTS print them, go through ObjectName(),
 ObjectName.single(), ObjectName.role_reference() or granted_name(). Canonical names, as
 SHOW <objects>, TAG_REFERENCES and the grantee and owner columns report them, go through
-ObjectName.from_canonical().
+ObjectName.from_canonical(). Parts of snowflake.core's REST models, quoted only where a
+part isn't a plain identifier, go through ObjectName.from_api() or api_granted_name().
 
 str() is a one-to-one encoding of identity, so a name also equals, hashes and sorts like
 the plain string of its rendering: ObjectName("RAW.PUBLIC") == "raw.public". A string in
@@ -315,6 +316,15 @@ class ObjectName(_Text):
         if len(parts) == 1 and isinstance(parts[0], ObjectName):
             return parts[0]
         return _intern(tuple(map(_canonical_argument, parts)), None)
+
+    @classmethod
+    def from_api(cls, *parts: str) -> ObjectName:
+        """
+        A name from the parts of a snowflake.core model, each read by
+        canonical_from_api(): Database(name="RAW"), Securable(database="RAW",
+        name='"Mixed-Case"').
+        """
+        return cls.from_canonical(*map(canonical_from_api, parts))
 
     @property
     def database(self) -> ObjectName:
@@ -669,6 +679,63 @@ def granted_name(granted_on: str, name: str) -> ObjectName:
     if kind in _DOTTED_KINDS:
         return ObjectName(name)
     raise InvalidNameError(f"tundra doesn't read the names of {granted_on} grants")
+
+
+def canonical_from_api(part: str) -> str:
+    """
+    The canonical name one part of a snowflake.core model holds. REST quotes a part
+    that isn't a plain identifier ("Mixed-Case", "UTIL_PARSE(VARCHAR)", "<TABLE>") and
+    sends the rest bare, keywords included, so a bare part is canonical as it stands:
+    it isn't resolved to uppercase the way a bare spelling is.
+    """
+    if part[:1] != '"':
+        return part
+    match = _QUOTED.fullmatch(part)
+    if match is None:
+        raise InvalidNameError(f"{part!r} isn't a quoted identifier")
+    return match.group(1).replace('""', '"')
+
+
+def api_granted_name(
+    securable_type: str, securable: Any, *, future: bool = False
+) -> ObjectName | None:
+    """
+    The name a snowflake.core Grant is on, or None for a kind tundra doesn't read the
+    names of (ACCOUNT, FUNCTION, STAGE...). `securable` is the Grant's Securable, whose
+    parts are read by canonical_from_api(). A future grant's name is the quoted
+    placeholder for its kind, "<ICEBERG_TABLE>", so the grant is on its container's
+    future(kind). Parts that don't fit the kind raise InvalidNameError.
+    """
+    kind = securable_type.lower().replace("_", " ")
+    if not future and kind in _SINGLE_PART_KINDS:
+        arities: tuple[int, ...] = (1,)
+    elif (not future and kind in _ROLE_REFERENCE_KINDS) or kind == "schema":
+        arities = (2,)
+    elif kind in _DOTTED_KINDS:
+        arities = (2, 3) if future else (3,)
+    else:
+        return None
+
+    given = {
+        "database": securable.database,
+        "schema": securable.var_schema,
+        "name": securable.name,
+    }
+    fields = tuple(field for field, part in given.items() if part is not None)
+    if fields not in [_SECURABLE_FIELDS[arity] for arity in arities]:
+        raise InvalidNameError(
+            f"A {securable_type} grant isn't on {', '.join(fields) or 'nothing'}"
+        )
+    parts = [given[field] for field in fields]
+    if not future:
+        return ObjectName.from_api(*parts)
+
+    *container, name = parts
+    if name != _quote(_placeholder(kind).upper()):
+        raise InvalidNameError(
+            f"{name!r} isn't the placeholder of a future {securable_type} grant"
+        )
+    return ObjectName.from_api(*container).future(kind)
 
 
 @lru_cache(maxsize=_CACHE_SIZE)

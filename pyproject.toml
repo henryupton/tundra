@@ -29,7 +29,7 @@ dependencies = [
     "click-default-group",
     "pyyaml",
     "snowflake-connector-python[secure-local-storage]",
-    "snowflake-core>=1.14.0",
+    "snowflake-core~=1.14.0",
     "snowflake-sqlalchemy",
     "sqlalchemy",
     "tzdata",

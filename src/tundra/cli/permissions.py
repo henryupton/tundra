@@ -5,10 +5,16 @@ from typing import Optional
 import click
 
 from tundra import SpecLoadingError
-from tundra.snowflake_connector import SnowflakeConnector
+from tundra.snowflake_connector import ApiFallbackError, SnowflakeConnector
 from tundra.snowflake_spec_loader import SnowflakeSpecLoader
 
 from . import cli
+
+
+def exit_with_error(error: Exception) -> None:
+    for line in str(error).splitlines():
+        click.secho(line, fg="red")
+    sys.exit(1)
 
 
 def print_command(command, diff, dry=False):
@@ -122,6 +128,14 @@ def apply_query(conn, query):
     default=None,
     help="Number of parallel Snowflake fetch workers (default 8, env PERMISSION_BOT_MAX_WORKERS).",
 )
+@click.option(
+    "--sql-only",
+    help=(
+        "Read and write through SQL only, not snowflake.core's REST API"
+        " (env PERMISSION_BOT_SQL_ONLY=true)."
+    ),
+    is_flag=True,
+)
 @click.pass_context
 def run(
     ctx,
@@ -134,11 +148,17 @@ def run(
     skip_validation,
     ignore_missing_objects,
     max_workers,
+    sql_only,
     print_skipped=False,
 ):
     """
     Grant the permissions provided in the provided specification file for specific users and roles.
     This fork includes support for Iceberg tables, dynamic tables, streamlit apps, semantic views, external volumes, and catalog integrations.
+
+    Reads go through Snowflake's REST API where snowflake.core covers them, and any
+    listing it can't give in full is read again through SQL.
+    PERMISSION_BOT_SQL_ONLY=true does what --sql-only does, and
+    PERMISSION_BOT_API_STRICT=true fails the run instead of falling back to SQL.
     """
     if role and user:
         run_list = ["roles", "users"]
@@ -163,6 +183,7 @@ def run(
         skip_validation=skip_validation,
         ignore_missing_objects=ignore_missing_objects,
         print_skipped=print_skipped,
+        sql_only=sql_only,
     )
 
 
@@ -191,10 +212,23 @@ def run(
     default=["roles", "users"],
     help="Run grants for specific users. Usage: --user testuser --user testuser2.",
 )
-def spec_test(spec, role, user, run_list, ignore_memberships):
+@click.option(
+    "--sql-only",
+    help=(
+        "Read and write through SQL only, not snowflake.core's REST API"
+        " (env PERMISSION_BOT_SQL_ONLY=true)."
+    ),
+    is_flag=True,
+)
+def spec_test(spec, role, user, run_list, ignore_memberships, sql_only):
     """
     Load SnowFlake spec based on the roles.yml provided. CLI use only for confirming specifications are valid.
     This fork includes validation for Iceberg tables, external volumes, and catalog integrations.
+
+    Reads go through Snowflake's REST API where snowflake.core covers them, and any
+    listing it can't give in full is read again through SQL.
+    PERMISSION_BOT_SQL_ONLY=true does what --sql-only does, and
+    PERMISSION_BOT_API_STRICT=true fails the run instead of falling back to SQL.
     """
     load_specs(
         spec,
@@ -203,6 +237,7 @@ def spec_test(spec, role, user, run_list, ignore_memberships):
         run_list=run_list,
         ignore_memberships=ignore_memberships,
         do_spec_test=True,
+        sql_only=sql_only,
     )
 
 
@@ -215,6 +250,7 @@ def load_specs(
     do_spec_test,
     skip_validation=False,
     ignore_missing_objects=False,
+    sql_only=False,
 ):
     """
     Load specs separately.
@@ -230,12 +266,11 @@ def load_specs(
             spec_test=do_spec_test,
             skip_validation=skip_validation,
             ignore_missing_objects=ignore_missing_objects,
+            sql_only=sql_only,
         )
         click.secho("Snowflake specs successfully loaded", fg="green")
-    except SpecLoadingError as exc:
-        for line in str(exc).splitlines():
-            click.secho(line, fg="red")
-        sys.exit(1)
+    except (SpecLoadingError, ApiFallbackError) as exc:
+        exit_with_error(exc)
 
     return spec_loader
 
@@ -251,6 +286,7 @@ def tundra_grants(
     skip_validation,
     ignore_missing_objects,
     print_skipped,
+    sql_only=False,
 ):
     """Grant the permissions provided in the provided specification file."""
     spec_loader = load_specs(
@@ -262,14 +298,18 @@ def tundra_grants(
         skip_validation=skip_validation,
         ignore_missing_objects=ignore_missing_objects,
         do_spec_test=False,
+        sql_only=sql_only,
     )
 
-    sql_grant_queries = spec_loader.generate_permission_queries(
-        roles=roles,
-        users=users,
-        run_list=run_list,
-        ignore_memberships=ignore_memberships,
-    )
+    try:
+        sql_grant_queries = spec_loader.generate_permission_queries(
+            roles=roles,
+            users=users,
+            run_list=run_list,
+            ignore_memberships=ignore_memberships,
+        )
+    except ApiFallbackError as exc:
+        exit_with_error(exc)
 
     click.secho()
     if diff:
