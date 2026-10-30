@@ -5,7 +5,7 @@ import pytest
 from click.testing import CliRunner
 
 from tundra.cli import cli
-from tundra_test_utils.fake_account import FakeAccount, Grant
+from tundra_test_utils.fake_account import FakeAccount, FakeApi, Grant
 
 USERS_SPEC = str(Path(__file__).parents[1] / "golden" / "users.yml")
 
@@ -202,5 +202,110 @@ def test_help_documents_the_transport_switches(command):
     result = invoke(command, "--help")
 
     assert result.exit_code == 0
-    for text in ("--sql-only", "PERMISSION_BOT_SQL_ONLY", "PERMISSION_BOT_API_STRICT"):
+    for text in (
+        "--sql-only",
+        "PERMISSION_BOT_SQL_ONLY",
+        "PERMISSION_BOT_API_STRICT",
+        "PERMISSION_BOT_API_TIMEOUT",
+    ):
         assert text in result.output
+    assert (
+        "A listing with no answer after PERMISSION_BOT_API_TIMEOUT seconds (default"
+        " 120) is read through SQL, and so is the rest of the run."
+    ) in " ".join(result.output.split())
+
+
+# PERMISSION_BOT_API_TIMEOUT
+
+LISTINGS = (
+    "databases",
+    "warehouses",
+    "users",
+    "schemas",
+    "database_roles",
+    "grants_to_role",
+    "future_grants_to_role",
+    "grants_to_user",
+)
+
+SHORT_DEADLINE = {"PERMISSION_BOT_API_TIMEOUT": "0.01"}
+
+
+@pytest.fixture
+def stalled_api(mocker, stall):
+    """Every REST listing held open, as it would be over a stalled connection."""
+    held = stall()
+    for listing in LISTINGS:
+        mocker.patch.object(FakeApi, listing, side_effect=held)
+    return held
+
+
+def test_run_reads_through_sql_after_a_stall(mocker, stalled_api):
+    account = users_account()
+    account.install(mocker)
+    expected = pending(invoke("run", "--dry", "--sql-only", USERS_SPEC).output)
+
+    result = invoke("run", "--dry", USERS_SPEC, env=SHORT_DEADLINE)
+
+    assert result.exit_code == 0, result.output
+    assert stalled_api.wait_for(1)
+    assert pending(result.output) == expected
+    assert re.fullmatch(
+        r"  API-capable listings: 0 through the API, \d+ through SQL \(fallbacks: \d+"
+        r" no answer within the deadline, then SQL for the rest of the run\)\.",
+        summary(result.output),
+    )
+
+
+def test_spec_test_reads_through_sql_after_a_stall(mocker, stalled_api):
+    users_account().install(mocker)
+
+    result = invoke("spec-test", USERS_SPEC, env=SHORT_DEADLINE)
+
+    assert result.exit_code == 0, result.output
+    assert re.fullmatch(
+        r"  API-capable listings: 0 through the API, \d+ through SQL \(fallbacks: \d+"
+        r" no answer within the deadline, then SQL for the rest of the run\)\.",
+        summary(result.output),
+    )
+
+
+@pytest.mark.parametrize(
+    "args", [["run", "--dry"], ["spec-test"]], ids=["run", "spec-test"]
+)
+def test_strict_mode_fails_a_load_that_stalls(mocker, stalled_api, args):
+    users_account().install(mocker)
+
+    result = invoke(
+        *args, USERS_SPEC, env={**SHORT_DEADLINE, "PERMISSION_BOT_API_STRICT": "1"}
+    )
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    # It names the setting that gives listings longer
+    assert (
+        "would read through SQL instead of the API (no answer within the deadline of"
+        " 0.01 s, which PERMISSION_BOT_API_TIMEOUT sets), and PERMISSION_BOT_API_STRICT"
+        " is set"
+    ) in " ".join(result.output.split())
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "soon", "nan"])
+@pytest.mark.parametrize(
+    "args", [["run", "--dry"], ["spec-test"]], ids=["run", "spec-test"]
+)
+def test_a_bad_timeout_fails_with_one_red_line_before_any_read(mocker, args, value):
+    account = users_account()
+    account.install(mocker)
+
+    result = invoke(
+        *args, USERS_SPEC, env={"PERMISSION_BOT_API_TIMEOUT": value}, color=True
+    )
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert [line for line in result.output.splitlines() if "\x1b[31m" in line] == [
+        "\x1b[31mPERMISSION_BOT_API_TIMEOUT must be a positive number of seconds,"
+        f" not {value!r}\x1b[0m"
+    ]
+    assert account.queries == [] and account.api_calls == []

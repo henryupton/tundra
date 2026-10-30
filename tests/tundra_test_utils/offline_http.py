@@ -37,7 +37,9 @@ class OfflineHttp:
     def answer(self, path: str, body: Any, status: int = 200, method: str = "GET"):
         """
         Answer `method path` (as sent, percent-encoded) with `body`, JSON unless bytes.
-        A `body` that's an exception is raised instead, as urllib3 raises a failure.
+        A `body` that's an exception is raised instead, as urllib3 raises a failure. A
+        `body` that's callable is called as the request is sent and answers with what it
+        returns, so a test can hold a request open as a stalled connection would.
         """
         self.answers[method, path] = (status, body)
 
@@ -81,6 +83,8 @@ class OfflineHttp:
         if (method, parts.path) not in self.answers:
             raise AssertionError(f"No answer for {method} {url}")
         status, body = self.answers[method, parts.path]
+        if callable(body):
+            body = body()
         if isinstance(body, Exception):
             raise body
         return urllib3.HTTPResponse(

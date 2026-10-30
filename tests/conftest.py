@@ -5,6 +5,7 @@ from colorama import init, Fore, Style
 
 from tundra.snowflake_connector import SnowflakeConnector
 from tundra_test_utils.offline import BUILD_API, GUARDS
+from tundra_test_utils.stall import Stall, release
 
 init()
 
@@ -32,6 +33,7 @@ UNSET_SETTINGS = (
     "WORKLOAD_IDENTITY_PROVIDER",
     "SQL_ONLY",
     "API_STRICT",
+    "API_TIMEOUT",
 )
 
 
@@ -58,6 +60,22 @@ def real_build_api(offline, monkeypatch):
     engine and Root themselves. A real engine still can't log in.
     """
     monkeypatch.setattr(SnowflakeConnector, "_build_api", BUILD_API)
+
+
+@pytest.fixture
+def stall():
+    """
+    Makes Stalls, side effects that hold a REST call open. Every one is released at
+    teardown and the watched threads joined, so none outlives the test.
+    """
+    made = []
+
+    def make(outcome=()):
+        made.append(Stall(outcome))
+        return made[-1]
+
+    yield make
+    release(made)
 
 
 def pytest_generate_tests(metafunc):
