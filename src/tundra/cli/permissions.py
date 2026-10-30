@@ -1,11 +1,16 @@
 import os
 import sys
-from typing import Optional
 
 import click
 
 from tundra import SpecLoadingError
-from tundra.snowflake_connector import ApiFallbackError, SnowflakeConnector
+from tundra.operations import SqlStatement, api_capable
+from tundra.snowflake_connector import (
+    ApiFallbackError,
+    SnowflakeConnector,
+    WriteStats,
+    api_error_detail,
+)
 from tundra.snowflake_spec_loader import SnowflakeSpecLoader
 
 from . import cli
@@ -51,21 +56,22 @@ def print_command(command, diff, dry=False):
 
 
 def error_detail(error: Exception) -> str:
-    """Snowflake's own message on one line, without SQLAlchemy's wrapper and SQL echo."""
-    return " ".join(str(getattr(error, "orig", error)).split())
-
-
-def _run(conn, sql: str) -> Optional[Exception]:
-    try:
-        conn.run_query(sql)
-    except Exception as exc:
-        return exc
-    return None
+    """
+    Snowflake's own message on one line: without SQLAlchemy's wrapper and SQL echo from
+    SQL, and as `error code (HTTP status): message` from snowflake.core.
+    """
+    return api_error_detail(error) or " ".join(
+        str(getattr(error, "orig", error)).split()
+    )
 
 
 def apply_query(conn, query):
     """
     Run one generated statement, recording run_status and, on failure, the error.
+
+    The connector runs it through snowflake.core or as its SQL (see
+    SnowflakeConnector.execute). A plain dict, or a planned command whose `sql` a caller
+    has changed since planning, runs its `sql` as SQL, so what runs is what prints.
 
     Statements are generated from a snapshot of the account, so an object something else
     drops between planning and applying (a CI job recreating its schema, say) fails every
@@ -74,17 +80,37 @@ def apply_query(conn, query):
     means it was recreated, so the statement is retried once against the new object.
     """
     sql = query.get("sql", "")
-    error = _run(conn, sql)
+    operation = getattr(query, "operation", None)
+    if operation is None or operation.sql != sql:
+        operation = SqlStatement(sql)
+    executed = conn.execute(operation)
 
-    missing = SnowflakeConnector.missing_object(error) if error else None
+    missing = (
+        SnowflakeConnector.missing_object(executed.error, operation)
+        if executed.error
+        else None
+    )
     if missing and conn.object_exists(*missing):
-        error = _run(conn, sql)
+        executed = conn.execute(operation)
     elif missing:
         query["vanished"] = True
 
-    query["run_status"] = error is None
-    if error is not None:
-        query["error"] = error_detail(error)
+    if api_capable(operation):
+        conn.write_stats.applied(executed.transport)
+    query["run_status"] = executed.error is None
+    if executed.error is not None:
+        query["error"] = error_detail(executed.error)
+
+
+def report_writes(conn) -> None:
+    """One line on how the statements apply ran went: through the API or SQL."""
+    stats = getattr(conn, "write_stats", None)
+    if not isinstance(stats, WriteStats) or not stats.statements:
+        return
+    click.secho(
+        stats.summary(sql_only=conn.sql_only),
+        fg="yellow" if stats.fallbacks else "green",
+    )
 
 
 @cli.command()  # type: ignore
@@ -156,9 +182,11 @@ def run(
     This fork includes support for Iceberg tables, dynamic tables, streamlit apps, semantic views, external volumes, and catalog integrations.
 
     Reads go through Snowflake's REST API where snowflake.core covers them, and any
-    listing it can't give in full is read again through SQL.
-    PERMISSION_BOT_SQL_ONLY=true does what --sql-only does, and
-    PERMISSION_BOT_API_STRICT=true fails the run instead of falling back to SQL.
+    listing it can't give in full is read again through SQL. Some kinds of statement go
+    through the API too (the README lists them), and the rest run as SQL, as does any
+    statement the API can't answer. PERMISSION_BOT_SQL_ONLY=true does what --sql-only
+    does, and
+    PERMISSION_BOT_API_STRICT=true fails the run instead of reading through SQL.
     """
     if role and user:
         run_list = ["roles", "users"]
@@ -332,6 +360,9 @@ def tundra_grants(
         else:
             if not query.get("already_granted") or print_skipped:
                 print_command(query, diff, dry=True)
+
+    if not dry:
+        report_writes(spec_loader.conn)
 
 
 cli.add_command(spec_test)  # type: ignore

@@ -10,6 +10,8 @@ from typing import (
     Callable,
     Dict,
     List,
+    Mapping,
+    NamedTuple,
     Optional,
     Sequence,
     Set,
@@ -39,6 +41,7 @@ from tundra.identifiers import (
     name_or_pattern,
 )
 from tundra.logger import GLOBAL_LOGGER as logger
+from tundra.operations import Operation, SqlStatement, routes_to_api
 from tundra.snowflake_api import SnowflakeApi
 from tundra.table_object_types import (
     ALL_OBJECT_TYPES,
@@ -87,6 +90,10 @@ MISSING_OBJECT_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# The error code snowflake.core's 400 carries when Snowflake can't parse the SQL it built
+# from a request, as for application role grants
+SYNTAX_ERROR = "001003"
+
 # SHOW ... IN SCHEMA against a schema that is gone fails with this rather than naming it.
 MISSING_CONTAINER_ERROR = "Object does not exist, or operation cannot be performed"
 
@@ -115,9 +122,20 @@ FALLBACK_REASONS = {
     "timeout": "retry timeout",
 }
 
-# After one of these the rest of the run reads through SQL, rather than wait out each
-# listing's own retries against an API that isn't answering
+# After one of these the rest of the run reads and writes through SQL, rather than wait
+# out each request's own retries against an API that isn't answering
 STICKY_REASONS = frozenset({"transport", "timeout"})
+
+# Why a statement sent through snowflake.core ran again as its SQL, as the summary
+# line after apply words each reason
+WRITE_FALLBACK_REASONS = {
+    "syntax": "syntax error",
+    "server": "server error",
+    "non-json": "non-JSON error",
+    "transport": "transport error",
+    "timeout": "retry timeout",
+    "unmatched": "unmatched 404",
+}
 
 T = TypeVar("T")
 
@@ -129,6 +147,10 @@ for logger_name in ["snowflake.connector", "bot", "boto3"]:
 
 def _env_flag(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _one_line(error: BaseException) -> str:
+    return " ".join(str(error).split())
 
 
 class ApiFallbackError(Exception):
@@ -143,16 +165,38 @@ class ApiFallbackError(Exception):
         self.reason = reason
 
 
-def _is_missing(error: BaseException) -> bool:
-    """Whether a snowflake.core error is a 404 for an object that doesn't exist."""
+def _request_info(error: BaseException) -> Optional[Dict[str, Any]]:
+    """The message and error code of a snowflake.core APIError, or None for any other."""
     from snowflake.core.exceptions import APIError
 
-    if not isinstance(error, APIError) or error.status != 404:
-        return False
+    if not isinstance(error, APIError):
+        return None
     try:
-        return str(error.get_request_info()["error_code"]) == DOES_NOT_EXIST
+        return error.get_request_info()
     except ValueError:
-        return False
+        return None
+
+
+def _is_missing(error: BaseException) -> bool:
+    """Whether a snowflake.core error is a 404 for an object that doesn't exist."""
+    info = _request_info(error)
+    return (
+        info is not None
+        and getattr(error, "status", None) == 404
+        and str(info["error_code"]) == DOES_NOT_EXIST
+    )
+
+
+def api_error_detail(error: BaseException) -> Optional[str]:
+    """
+    A snowflake.core error on one line as `error code (HTTP status): message`, in the
+    shape SQL errors print as `errno (sqlstate): message`. None for any other error.
+    """
+    info = _request_info(error)
+    if info is None or not info["message"]:
+        return None
+    status = getattr(error, "status", None)
+    return " ".join(f"{info['error_code']} ({status}): {info['message']}".split())
 
 
 def _fallback_reason(error: BaseException) -> Optional[str]:
@@ -181,6 +225,63 @@ def _fallback_reason(error: BaseException) -> Optional[str]:
     if error.__cause__ is not None and _fallback_reason(error.__cause__) == "transport":
         return "transport"
     return None
+
+
+def _write_fallback_reason(error: BaseException) -> Optional[str]:
+    """
+    Why a statement snowflake.core failed to run should run again as its SQL, or None
+    to report the error: SQL Snowflake built from the request and couldn't parse, a
+    5xx, an error body that isn't JSON, a transport failure, or a retry timeout.
+    snowflake.core resends a request answered 429, 503 or 504 (or polls a 202) until
+    its retry window closes, so those end as a RetryTimeoutError, never an APIError.
+    GRANT and REVOKE are idempotent, so running the SQL after a request that may have
+    landed late is safe. Anything else is Snowflake refusing the statement, which its
+    SQL would be refused for too.
+    """
+    from snowflake.core.exceptions import APIError
+
+    if isinstance(error, json.JSONDecodeError):
+        return "non-json"
+    if isinstance(error, APIError):
+        if not error.status:
+            return "transport"
+        if error.status >= 500:
+            return "server"
+        info = _request_info(error)
+        if info is not None and str(info["error_code"]) == SYNTAX_ERROR:
+            return "syntax"
+        return None
+    reason = _fallback_reason(error)
+    return reason if reason in STICKY_REASONS else None
+
+
+def _transport_summary(
+    noun: str,
+    by_transport: Mapping[str, int],
+    by_reason: Mapping[str, int],
+    reasons: Mapping[str, str],
+    sql_only: bool,
+) -> str:
+    line = (
+        f"  API-capable {noun}: {by_transport.get(API, 0)} through the API,"
+        f" {by_transport.get(SQL, 0)} through SQL"
+    )
+    if by_reason:
+        line += " (fallbacks: {})".format(
+            ", ".join(
+                f"{by_reason[reason]} {description}"
+                for reason, description in reasons.items()
+                if by_reason.get(reason)
+            )
+            + (
+                ", then SQL for the rest of the run"
+                if STICKY_REASONS & by_reason.keys()
+                else ""
+            )
+        )
+    elif sql_only:
+        line += " (SQL only)"
+    return line + "."
 
 
 class ReadStats:
@@ -221,28 +322,50 @@ class ReadStats:
         and fallbacks by reason. Reads that are always SQL, like SHOW ROLES, aren't
         counted.
         """
-        listings = self.by_transport()
-        line = (
-            f"  API-capable listings: {listings[API]} through the API,"
-            f" {listings[SQL]} through SQL"
+        return _transport_summary(
+            "listings",
+            self.by_transport(),
+            self.by_reason(),
+            FALLBACK_REASONS,
+            sql_only,
         )
-        fallbacks = self.by_reason()
-        if fallbacks:
-            line += " (fallbacks: {})".format(
-                ", ".join(
-                    f"{fallbacks[reason]} {description}"
-                    for reason, description in FALLBACK_REASONS.items()
-                    if fallbacks[reason]
-                )
-                + (
-                    ", then SQL for the rest of the run"
-                    if STICKY_REASONS & fallbacks.keys()
-                    else ""
-                )
-            )
-        elif sql_only:
-            line += " (SQL only)"
-        return line + "."
+
+
+class WriteStats:
+    """
+    How many API-capable statements apply ran through each transport, and why any it
+    sent through snowflake.core ran again as SQL. Apply runs one statement at a time.
+    """
+
+    def __init__(self) -> None:
+        self.statements: Counter = Counter()
+        self.fallbacks: Counter = Counter()
+
+    def applied(self, transport: str) -> None:
+        self.statements[transport] += 1
+
+    def fell_back(self, reason: str) -> None:
+        self.fallbacks[reason] += 1
+
+    def summary(self, sql_only: bool = False) -> str:
+        """
+        One line for the apply, in the read summary's form. Statements only SQL can
+        express, like GRANT OWNERSHIP, aren't counted.
+        """
+        return _transport_summary(
+            "statements",
+            self.statements,
+            self.fallbacks,
+            WRITE_FALLBACK_REASONS,
+            sql_only,
+        )
+
+
+class Executed(NamedTuple):
+    """How a planned statement ran: the transport that ran it last, and its error."""
+
+    transport: str
+    error: Optional[Exception] = None
 
 
 class _BufferedResult:
@@ -456,6 +579,13 @@ class SnowflakeConnector:
         stats = self.__dict__.get("_read_stats")
         if stats is None:
             stats = self.__dict__.setdefault("_read_stats", ReadStats())
+        return stats
+
+    @property
+    def write_stats(self) -> WriteStats:
+        stats = self.__dict__.get("_write_stats")
+        if stats is None:
+            stats = self.__dict__.setdefault("_write_stats", WriteStats())
         return stats
 
     def _read(
@@ -1062,18 +1192,102 @@ class SnowflakeConnector:
 
         return _BufferedResult(rows)
 
+    def writes_through_api(self, operation: Operation) -> bool:
+        """
+        Whether apply sends a planned statement through snowflake.core: ROUTES sends
+        its kind there, the connector isn't SQL only, and the API hasn't failed this
+        run. PERMISSION_BOT_API_STRICT is for reads, so it can't stop a run halfway.
+        """
+        return not (self.sql_only or self._api_failed) and routes_to_api(operation)
+
+    def execute(self, operation: Operation) -> Executed:
+        """
+        Run one planned statement, through snowflake.core where writes_through_api
+        says so and as its SQL otherwise. A statement snowflake.core gets no usable
+        answer for (see _write_fallback_reason) runs once more as its SQL, and the
+        fallback is logged. The error the statement ends with is returned, not raised.
+        """
+        if isinstance(operation, SqlStatement) or not self.writes_through_api(
+            operation
+        ):
+            return self._execute_sql(operation)
+
+        try:
+            api = self.api
+        except Exception as error:
+            return self._write_fall_back(operation, "transport", error)
+
+        try:
+            operation.send(api)
+        except Exception as error:
+            reason = _write_fallback_reason(error)
+            # The REST wording of a missing schema or database is modelled on a missing
+            # table's, so a 404 that doesn't name the statement's own target gets SQL's
+            # answer, which apply knows how to read
+            if (
+                reason is None
+                and _is_missing(error)
+                and self.missing_object(error, operation) is None
+            ):
+                reason = "unmatched"
+            if reason is None:
+                return Executed(API, error)
+            return self._write_fall_back(operation, reason, error)
+        return Executed(API)
+
+    def _execute_sql(self, operation: Operation) -> Executed:
+        try:
+            self.run_query(operation.sql)
+        except Exception as error:
+            return Executed(SQL, error)
+        return Executed(SQL)
+
+    def _write_fall_back(
+        self, operation: Operation, reason: str, error: BaseException
+    ) -> Executed:
+        then = "it runs as SQL"
+        if reason in STICKY_REASONS and not self._api_failed:
+            self._api_failed = True
+            then = "it and the rest of the run go through SQL"
+        logger.warning(
+            f"{operation.sql} through snowflake.core failed"
+            f" ({WRITE_FALLBACK_REASONS[reason]}), so {then}: {_one_line(error)}"
+        )
+        self.write_stats.fell_back(reason)
+        return self._execute_sql(operation)
+
     @staticmethod
-    def missing_object(error: Exception) -> Optional[Tuple[str, str]]:
+    def missing_object(
+        error: Exception, operation: Optional[Operation] = None
+    ) -> Optional[Tuple[str, NameLike]]:
         """
         The (kind, name) a failed statement reports as missing, or None when it failed
         for any other reason. See MISSING_OBJECT_PATTERN for which kinds count.
+
+        SQL's message names the object. snowflake.core's 404 lowercases the name in its
+        message, so for an error from the API the name is the operation's own, and only
+        when the message names that part of the operation's target.
         """
-        match = MISSING_OBJECT_PATTERN.search(str(error))
+        info = _request_info(error)
+        if operation is None or info is None:
+            match = MISSING_OBJECT_PATTERN.search(str(error))
+            if match is None:
+                return None
+            return match.group("kind").lower(), match.group("name")
+
+        if not _is_missing(error) or isinstance(operation, SqlStatement):
+            return None
+        match = MISSING_OBJECT_PATTERN.search(info["message"] or "")
         if match is None:
             return None
-        return match.group("kind").lower(), match.group("name")
+        kind = match.group("kind").lower()
+        name = operation.missing(kind)
+        reported = match.group("name").replace('"', "").lower()
+        if name is None or ".".join(name.parts).lower() != reported:
+            return None
+        return kind, name
 
-    def object_exists(self, kind: str, name: str) -> bool:
+    def object_exists(self, kind: str, name: NameLike) -> bool:
         """
         Look an object up with the same listing that discovered it at plan time. A
         parent that is gone too (in SQL's words or as snowflake.core's 404) means the

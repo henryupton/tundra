@@ -4,6 +4,7 @@ from typing import (
     FrozenSet,
     Iterable,
     List,
+    Literal,
     Mapping,
     Optional,
     Set,
@@ -26,6 +27,38 @@ from tundra.identifiers import (
     name_or_pattern,
 )
 from tundra.logger import GLOBAL_LOGGER as logger
+from tundra.operations import (
+    ALL,
+    FUTURE,
+    GRANT,
+    REVOKE,
+    BulkPrivileges,
+    BulkScope,
+    PlannedCommand,
+    Privileges,
+    RoleMembership,
+    SqlStatement,
+    UserTag,
+    sql_literal,
+)
+
+# isort: split
+# The templates the operations render, kept importable from here
+from tundra.operations import (  # noqa: F401
+    GRANT_ACCOUNT_PRIVILEGE_TEMPLATE,
+    GRANT_ALL_PRIVILEGES_TEMPLATE,
+    GRANT_DATABASE_ROLE_TEMPLATE,
+    GRANT_FUTURE_PRIVILEGES_TEMPLATE,
+    GRANT_PRIVILEGES_TEMPLATE,
+    GRANT_ROLE_TEMPLATE,
+    REVOKE_ACCOUNT_PRIVILEGE_TEMPLATE,
+    REVOKE_DATABASE_ROLE_TEMPLATE,
+    REVOKE_FUTURE_PRIVILEGES_TEMPLATE,
+    REVOKE_PRIVILEGES_TEMPLATE,
+    REVOKE_ROLE_TEMPLATE,
+    SET_USER_TAG_TEMPLATE,
+    UNSET_USER_TAG_TEMPLATE,
+)
 from tundra.snowflake_connector import (
     APPLICATION_ROLE_GRANT_TYPE,
     DATABASE_ROLE_GRANT_TYPE,
@@ -38,15 +71,7 @@ from tundra.table_object_types import (
     TableObjectType,
 )
 
-GRANT_ROLE_TEMPLATE = "GRANT ROLE {role_name} TO {type} {entity_name}"
-
-GRANT_DATABASE_ROLE_TEMPLATE = "GRANT DATABASE ROLE {role_name} TO ROLE {entity_name}"
-
-REVOKE_ROLE_TEMPLATE = "REVOKE ROLE {role_name} FROM {type} {entity_name}"
-
-REVOKE_DATABASE_ROLE_TEMPLATE = (
-    "REVOKE DATABASE ROLE {role_name} FROM ROLE {entity_name}"
-)
+# The statements only SQL can express. The rest are rendered by tundra.operations.
 
 GRANT_APPLICATION_ROLE_TEMPLATE = (
     "GRANT APPLICATION ROLE {role_name} TO ROLE {entity_name}"
@@ -56,29 +81,7 @@ REVOKE_APPLICATION_ROLE_TEMPLATE = (
     "REVOKE APPLICATION ROLE {role_name} FROM ROLE {entity_name}"
 )
 
-GRANT_PRIVILEGES_TEMPLATE = (
-    "GRANT {privileges} ON {resource_type} {resource_name} TO ROLE {role}"
-)
-
-REVOKE_PRIVILEGES_TEMPLATE = (
-    "REVOKE {privileges} ON {resource_type} {resource_name} FROM ROLE {role}"
-)
-
-GRANT_ACCOUNT_PRIVILEGE_TEMPLATE = "GRANT {privilege} ON ACCOUNT TO ROLE {role}"
-
-REVOKE_ACCOUNT_PRIVILEGE_TEMPLATE = "REVOKE {privilege} ON ACCOUNT FROM ROLE {role}"
-
-GRANT_ALL_PRIVILEGES_TEMPLATE = "GRANT {privileges} ON ALL {resource_type}s IN {grouping_type} {grouping_name} TO ROLE {role}"
-
-GRANT_FUTURE_PRIVILEGES_TEMPLATE = "GRANT {privileges} ON FUTURE {resource_type}s IN {grouping_type} {grouping_name} TO ROLE {role}"
-
-REVOKE_FUTURE_PRIVILEGES_TEMPLATE = "REVOKE {privileges} ON FUTURE {resource_type}s IN {grouping_type} {grouping_name} FROM ROLE {role}"
-
 ALTER_USER_TEMPLATE = "ALTER USER {user_name} SET {privileges}"
-
-SET_USER_TAG_TEMPLATE = "ALTER USER {user_name} SET TAG {tag} = {value}"
-
-UNSET_USER_TAG_TEMPLATE = "ALTER USER {user_name} UNSET TAG {tag}"
 
 GRANT_OWNERSHIP_TEMPLATE = "GRANT OWNERSHIP ON {resource_type} {resource_name} TO ROLE {role_name} COPY CURRENT GRANTS"
 
@@ -100,6 +103,9 @@ SCHEMA_PARTIAL_WRITE_PRIVILEGES = ", ".join(
     ]
 )
 
+# A wildcard entry's pair of grants, in the order tundra has always planned them
+FUTURE_THEN_ALL: Tuple[BulkScope, ...] = (FUTURE, ALL)
+
 # Grants between these raise errors on Snowflake, so they're never generated or revoked
 SNOWFLAKE_DEFAULT_ROLES = frozenset(
     map(
@@ -115,6 +121,11 @@ Name = Union[str, ObjectName]
 
 def _single_names(names: Iterable[NameLike]) -> Set[ObjectName]:
     return {ObjectName.single(name) for name in names}
+
+
+def _privileges(privileges: str) -> Tuple[str, ...]:
+    """A comma-joined privilege list, as the operations take it."""
+    return tuple(privileges.split(", "))
 
 
 def _is_star(entry: Any) -> bool:
@@ -321,6 +332,7 @@ class SnowflakeGrantsGenerator:
 
         returns:  a List of SQL Commands
         """
+        grant_type: Literal["role", "user"]
         if entity_type == "users":
             grant_type = "user"
         elif entity_type == "roles":
@@ -329,7 +341,7 @@ class SnowflakeGrantsGenerator:
             raise ValueError("grant_type must be either 'users' or 'roles'")
 
         entity_name = ObjectName.single(entity)
-        sql_commands = []
+        sql_commands: List[Dict] = []
         for member_role in member_of_list:
             is_application_role = member_role in self.application_roles
             is_database_role = len(member_role.parts) == 2 and not is_application_role
@@ -359,34 +371,28 @@ class SnowflakeGrantsGenerator:
 
             if is_application_role:
                 sql_commands.append(
-                    {
-                        "already_granted": already_granted,
-                        "sql": GRANT_APPLICATION_ROLE_TEMPLATE.format(
-                            role_name=member_role,
-                            entity_name=entity_name,
+                    PlannedCommand(
+                        already_granted,
+                        SqlStatement(
+                            GRANT_APPLICATION_ROLE_TEMPLATE.format(
+                                role_name=member_role,
+                                entity_name=entity_name,
+                            )
                         ),
-                    }
-                )
-            elif is_database_role:
-                sql_commands.append(
-                    {
-                        "already_granted": already_granted,
-                        "sql": GRANT_DATABASE_ROLE_TEMPLATE.format(
-                            role_name=member_role,
-                            entity_name=entity_name,
-                        ),
-                    }
+                    )
                 )
             else:
                 sql_commands.append(
-                    {
-                        "already_granted": already_granted,
-                        "sql": GRANT_ROLE_TEMPLATE.format(
-                            role_name=member_role,
-                            type=grant_type,
-                            entity_name=entity_name,
+                    PlannedCommand(
+                        already_granted,
+                        RoleMembership(
+                            GRANT,
+                            member_role,
+                            "database role" if is_database_role else "role",
+                            entity_name,
+                            grant_type,
                         ),
-                    }
+                    )
                 )
         return sql_commands
 
@@ -398,18 +404,14 @@ class SnowflakeGrantsGenerator:
         """
         user_name = ObjectName.single(username)
         wanted = set(member_of_list)
-        sql_commands = []
+        sql_commands: List[Dict] = []
         for granted_role in sorted(self._user_roles(username)):
             if granted_role not in wanted:
                 sql_commands.append(
-                    {
-                        "already_granted": False,
-                        "sql": REVOKE_ROLE_TEMPLATE.format(
-                            role_name=granted_role,
-                            type="user",
-                            entity_name=user_name,
-                        ),
-                    }
+                    PlannedCommand(
+                        False,
+                        RoleMembership(REVOKE, granted_role, "role", user_name, "user"),
+                    )
                 )
 
         return sql_commands
@@ -426,14 +428,10 @@ class SnowflakeGrantsGenerator:
                 ):
                     continue
                 sql_commands.append(
-                    {
-                        "already_granted": False,
-                        "sql": REVOKE_ROLE_TEMPLATE.format(
-                            role_name=granted_role,
-                            type="role",
-                            entity_name=role_name,
-                        ),
-                    }
+                    PlannedCommand(
+                        False,
+                        RoleMembership(REVOKE, granted_role, "role", role_name, "role"),
+                    )
                 )
 
         for granted_database_role in sorted(
@@ -441,13 +439,16 @@ class SnowflakeGrantsGenerator:
         ):
             if granted_database_role not in wanted:
                 sql_commands.append(
-                    {
-                        "already_granted": False,
-                        "sql": REVOKE_DATABASE_ROLE_TEMPLATE.format(
-                            role_name=granted_database_role,
-                            entity_name=role_name,
+                    PlannedCommand(
+                        False,
+                        RoleMembership(
+                            REVOKE,
+                            granted_database_role,
+                            "database role",
+                            role_name,
+                            "role",
                         ),
-                    }
+                    )
                 )
 
         for granted_application_role in sorted(
@@ -455,13 +456,15 @@ class SnowflakeGrantsGenerator:
         ):
             if granted_application_role not in wanted:
                 sql_commands.append(
-                    {
-                        "already_granted": False,
-                        "sql": REVOKE_APPLICATION_ROLE_TEMPLATE.format(
-                            role_name=granted_application_role,
-                            entity_name=role_name,
+                    PlannedCommand(
+                        False,
+                        SqlStatement(
+                            REVOKE_APPLICATION_ROLE_TEMPLATE.format(
+                                role_name=granted_application_role,
+                                entity_name=role_name,
+                            )
                         ),
-                    }
+                    )
                 )
 
         return sql_commands
@@ -726,29 +729,25 @@ class SnowflakeGrantsGenerator:
                 )
 
                 sql_commands.append(
-                    {
-                        "already_granted": already_granted,
-                        "sql": GRANT_PRIVILEGES_TEMPLATE.format(
-                            privileges=priv,
-                            resource_type="warehouse",
-                            resource_name=warehouse,
-                            role=role_name,
-                        ),
-                    }
+                    PlannedCommand(
+                        already_granted,
+                        Privileges(GRANT, (priv,), "warehouse", warehouse, role_name),
+                    )
                 )
         for priv in ["usage", "operate", "monitor"]:
             for granted_warehouse in sorted(self._held(role, priv, "warehouse")):
                 if granted_warehouse not in wanted:
                     sql_commands.append(
-                        {
-                            "already_granted": False,
-                            "sql": REVOKE_PRIVILEGES_TEMPLATE.format(
-                                privileges=priv,
-                                resource_type="warehouse",
-                                resource_name=granted_warehouse,
-                                role=role_name,
+                        PlannedCommand(
+                            False,
+                            Privileges(
+                                REVOKE,
+                                (priv,),
+                                "warehouse",
+                                granted_warehouse,
+                                role_name,
                             ),
-                        }
+                        )
                     )
 
         return sql_commands
@@ -774,28 +773,26 @@ class SnowflakeGrantsGenerator:
             )
 
             sql_commands.append(
-                {
-                    "already_granted": already_granted,
-                    "sql": GRANT_PRIVILEGES_TEMPLATE.format(
-                        privileges="usage",
-                        resource_type="integration",
-                        resource_name=integration,
-                        role=role_name,
+                PlannedCommand(
+                    already_granted,
+                    Privileges(
+                        GRANT, ("usage",), "integration", integration, role_name
                     ),
-                }
+                )
             )
         for granted_integration in sorted(self._held(role, "usage", "integration")):
             if granted_integration not in wanted:
                 sql_commands.append(
-                    {
-                        "already_granted": False,
-                        "sql": REVOKE_PRIVILEGES_TEMPLATE.format(
-                            privileges="usage",
-                            resource_type="integration",
-                            resource_name=granted_integration,
-                            role=role_name,
+                    PlannedCommand(
+                        False,
+                        Privileges(
+                            REVOKE,
+                            ("usage",),
+                            "integration",
+                            granted_integration,
+                            role_name,
                         ),
-                    }
+                    )
                 )
 
         return sql_commands
@@ -821,15 +818,16 @@ class SnowflakeGrantsGenerator:
             )
 
             sql_commands.append(
-                {
-                    "already_granted": already_granted,
-                    "sql": GRANT_PRIVILEGES_TEMPLATE.format(
-                        privileges="usage",
-                        resource_type="external volume",
-                        resource_name=external_volume,
-                        role=role_name,
+                PlannedCommand(
+                    already_granted,
+                    Privileges(
+                        GRANT,
+                        ("usage",),
+                        "external volume",
+                        external_volume,
+                        role_name,
                     ),
-                }
+                )
             )
 
         for granted_external_volume in sorted(
@@ -837,15 +835,16 @@ class SnowflakeGrantsGenerator:
         ):
             if granted_external_volume not in wanted:
                 sql_commands.append(
-                    {
-                        "already_granted": False,
-                        "sql": REVOKE_PRIVILEGES_TEMPLATE.format(
-                            privileges="usage",
-                            resource_type="external volume",
-                            resource_name=granted_external_volume,
-                            role=role_name,
+                    PlannedCommand(
+                        False,
+                        Privileges(
+                            REVOKE,
+                            ("usage",),
+                            "external volume",
+                            granted_external_volume,
+                            role_name,
                         ),
-                    }
+                    )
                 )
 
         return sql_commands
@@ -875,13 +874,10 @@ class SnowflakeGrantsGenerator:
 
         for privilege in wanted:
             sql_commands.append(
-                {
-                    "already_granted": privilege in granted,
-                    "sql": GRANT_ACCOUNT_PRIVILEGE_TEMPLATE.format(
-                        privilege=privilege,
-                        role=role_name,
-                    ),
-                }
+                PlannedCommand(
+                    privilege in granted,
+                    Privileges(GRANT, (privilege,), "account", None, role_name),
+                )
             )
 
         for privilege, granted_by in granted.items():
@@ -903,13 +899,9 @@ class SnowflakeGrantsGenerator:
                 continue
 
             sql_commands.append(
-                {
-                    "already_granted": False,
-                    "sql": REVOKE_ACCOUNT_PRIVILEGE_TEMPLATE.format(
-                        privilege=privilege,
-                        role=role_name,
-                    ),
-                }
+                PlannedCommand(
+                    False, Privileges(REVOKE, (privilege,), "account", None, role_name)
+                )
             )
 
         return sql_commands
@@ -928,25 +920,19 @@ class SnowflakeGrantsGenerator:
         # privilege to the user and skip granting the specific permissions as
         # "Granting individual privileges on imported databases is not allowed."
         if database in _single_names(shared_dbs):
-            return {
-                "already_granted": already_granted,
-                "sql": GRANT_PRIVILEGES_TEMPLATE.format(
-                    privileges="imported privileges",
-                    resource_type="database",
-                    resource_name=database,
-                    role=ObjectName.single(role),
-                ),
-            }
+            privileges = "imported privileges"
         else:
-            return {
-                "already_granted": already_granted,
-                "sql": GRANT_PRIVILEGES_TEMPLATE.format(
-                    privileges=read_privileges,
-                    resource_type="database",
-                    resource_name=database,
-                    role=ObjectName.single(role),
-                ),
-            }
+            privileges = read_privileges
+        return PlannedCommand(
+            already_granted,
+            Privileges(
+                GRANT,
+                _privileges(privileges),
+                "database",
+                database,
+                ObjectName.single(role),
+            ),
+        )
 
     def generate_database_grants(
         self, role: str, databases: Dict[str, List], shared_dbs: Set, spec_dbs: Set
@@ -996,28 +982,30 @@ class SnowflakeGrantsGenerator:
             # "Granting individual privileges on imported databases is not allowed."
             if database in shared_dbs:
                 sql_commands.append(
-                    {
-                        "already_granted": already_granted,
-                        "sql": GRANT_PRIVILEGES_TEMPLATE.format(
-                            privileges="imported privileges",
-                            resource_type="database",
-                            resource_name=database,
-                            role=role_name,
+                    PlannedCommand(
+                        already_granted,
+                        Privileges(
+                            GRANT,
+                            ("imported privileges",),
+                            "database",
+                            database,
+                            role_name,
                         ),
-                    }
+                    )
                 )
                 continue
 
             sql_commands.append(
-                {
-                    "already_granted": already_granted,
-                    "sql": GRANT_PRIVILEGES_TEMPLATE.format(
-                        privileges=write_privileges,
-                        resource_type="database",
-                        resource_name=database,
-                        role=role_name,
+                PlannedCommand(
+                    already_granted,
+                    Privileges(
+                        GRANT,
+                        _privileges(write_privileges),
+                        "database",
+                        database,
+                        role_name,
                     ),
-                }
+                )
             )
 
         # REVOKES
@@ -1037,28 +1025,30 @@ class SnowflakeGrantsGenerator:
                 granted_database not in all_databases and granted_database in shared_dbs
             ):
                 sql_commands.append(
-                    {
-                        "already_granted": False,
-                        "sql": REVOKE_PRIVILEGES_TEMPLATE.format(
-                            privileges="imported privileges",
-                            resource_type="database",
-                            resource_name=granted_database,
-                            role=role_name,
+                    PlannedCommand(
+                        False,
+                        Privileges(
+                            REVOKE,
+                            ("imported privileges",),
+                            "database",
+                            granted_database,
+                            role_name,
                         ),
-                    }
+                    )
                 )
             # Revoke read permissions on created databases in Snowflake
             elif granted_database not in all_databases:
                 sql_commands.append(
-                    {
-                        "already_granted": False,
-                        "sql": REVOKE_PRIVILEGES_TEMPLATE.format(
-                            privileges=read_privileges,
-                            resource_type="database",
-                            resource_name=granted_database,
-                            role=role_name,
+                    PlannedCommand(
+                        False,
+                        Privileges(
+                            REVOKE,
+                            _privileges(read_privileges),
+                            "database",
+                            granted_database,
+                            role_name,
                         ),
-                    }
+                    )
                 )
         # Get all other write privilege dbs in case there are dbs where
         # usage was revoked but other write permissions still exist
@@ -1077,27 +1067,29 @@ class SnowflakeGrantsGenerator:
                 and granted_database in shared_dbs
             ):
                 sql_commands.append(
-                    {
-                        "already_granted": False,
-                        "sql": REVOKE_PRIVILEGES_TEMPLATE.format(
-                            privileges="imported privileges",
-                            resource_type="database",
-                            resource_name=granted_database,
-                            role=role_name,
+                    PlannedCommand(
+                        False,
+                        Privileges(
+                            REVOKE,
+                            ("imported privileges",),
+                            "database",
+                            granted_database,
+                            role_name,
                         ),
-                    }
+                    )
                 )
             elif granted_database not in write_databases:
                 sql_commands.append(
-                    {
-                        "already_granted": False,
-                        "sql": REVOKE_PRIVILEGES_TEMPLATE.format(
-                            privileges=partial_write_privileges,
-                            resource_type="database",
-                            resource_name=granted_database,
-                            role=role_name,
+                    PlannedCommand(
+                        False,
+                        Privileges(
+                            REVOKE,
+                            _privileges(partial_write_privileges),
+                            "database",
+                            granted_database,
+                            role_name,
                         ),
-                    }
+                    )
                 )
 
         return sql_commands
@@ -1105,7 +1097,7 @@ class SnowflakeGrantsGenerator:
     def _generate_schema_read_grants(
         self, schemas, shared_dbs, role
     ) -> Tuple[List[Dict], List[ObjectName]]:
-        sql_commands = []
+        sql_commands: List[Dict] = []
         read_grant_schemas = []
         read_privileges = "usage"
         role_name = ObjectName.single(role)
@@ -1134,16 +1126,17 @@ class SnowflakeGrantsGenerator:
 
                 # Grant on FUTURE schemas
                 sql_commands.append(
-                    {
-                        "already_granted": schema_already_granted,
-                        "sql": GRANT_FUTURE_PRIVILEGES_TEMPLATE.format(
-                            privileges=read_privileges,
-                            resource_type="schema",
-                            grouping_type="database",
-                            grouping_name=database,
-                            role=role_name,
+                    PlannedCommand(
+                        schema_already_granted,
+                        BulkPrivileges(
+                            GRANT,
+                            FUTURE,
+                            _privileges(read_privileges),
+                            "schema",
+                            database,
+                            role_name,
                         ),
-                    }
+                    )
                 )
 
             for db_schema in fetched_schemas:
@@ -1155,22 +1148,23 @@ class SnowflakeGrantsGenerator:
                     already_granted = True
 
                 sql_commands.append(
-                    {
-                        "already_granted": already_granted,
-                        "sql": GRANT_PRIVILEGES_TEMPLATE.format(
-                            privileges=read_privileges,
-                            resource_type="schema",
-                            resource_name=db_schema,
-                            role=role_name,
+                    PlannedCommand(
+                        already_granted,
+                        Privileges(
+                            GRANT,
+                            _privileges(read_privileges),
+                            "schema",
+                            db_schema,
+                            role_name,
                         ),
-                    }
+                    )
                 )
         return (sql_commands, read_grant_schemas)
 
     def _generate_schema_write_grants(
         self, schemas, shared_dbs, role
     ) -> Tuple[List[Dict], List[ObjectName]]:
-        sql_commands = []
+        sql_commands: List[Dict] = []
         write_grant_schemas = []
         role_name = ObjectName.single(role)
         shared_dbs = _single_names(shared_dbs)
@@ -1208,16 +1202,17 @@ class SnowflakeGrantsGenerator:
 
                 # Grant on FUTURE schemas
                 sql_commands.append(
-                    {
-                        "already_granted": already_granted,
-                        "sql": GRANT_FUTURE_PRIVILEGES_TEMPLATE.format(
-                            privileges=write_privileges,
-                            resource_type="schema",
-                            grouping_type="database",
-                            grouping_name=database,
-                            role=role_name,
+                    PlannedCommand(
+                        already_granted,
+                        BulkPrivileges(
+                            GRANT,
+                            FUTURE,
+                            _privileges(write_privileges),
+                            "schema",
+                            database,
+                            role_name,
                         ),
-                    }
+                    )
                 )
 
             for db_schema in fetched_schemas:
@@ -1231,15 +1226,16 @@ class SnowflakeGrantsGenerator:
                         already_granted = False
 
                 sql_commands.append(
-                    {
-                        "already_granted": already_granted,
-                        "sql": GRANT_PRIVILEGES_TEMPLATE.format(
-                            privileges=write_privileges,
-                            resource_type="schema",
-                            resource_name=db_schema,
-                            role=role_name,
+                    PlannedCommand(
+                        already_granted,
+                        Privileges(
+                            GRANT,
+                            _privileges(write_privileges),
+                            "schema",
+                            db_schema,
+                            role_name,
                         ),
-                    }
+                    )
                 )
         return (sql_commands, write_grant_schemas)
 
@@ -1267,16 +1263,17 @@ class SnowflakeGrantsGenerator:
                 and future_schema not in all_grant_schemas  #
             ):
                 sql_commands.append(
-                    {
-                        "already_granted": False,
-                        "sql": REVOKE_FUTURE_PRIVILEGES_TEMPLATE.format(
-                            privileges=read_privileges,
-                            resource_type="schema",
-                            grouping_type="database",
-                            grouping_name=database,
-                            role=role_name,
+                    PlannedCommand(
+                        False,
+                        BulkPrivileges(
+                            REVOKE,
+                            FUTURE,
+                            _privileges(read_privileges),
+                            "schema",
+                            database,
+                            role_name,
                         ),
-                    }
+                    )
                 )
             elif granted_schema.is_future:
                 continue
@@ -1287,15 +1284,16 @@ class SnowflakeGrantsGenerator:
                 # Covers case where schema is granted in Snowflake
                 # But it's not in the grant list and it's not explicitly granted as a future grant
                 sql_commands.append(
-                    {
-                        "already_granted": False,
-                        "sql": REVOKE_PRIVILEGES_TEMPLATE.format(
-                            privileges=read_privileges,
-                            resource_type="schema",
-                            resource_name=granted_schema,
-                            role=role_name,
+                    PlannedCommand(
+                        False,
+                        Privileges(
+                            REVOKE,
+                            _privileges(read_privileges),
+                            "schema",
+                            granted_schema,
+                            role_name,
                         ),
-                    }
+                    )
                 )
 
         return sql_commands
@@ -1382,16 +1380,17 @@ class SnowflakeGrantsGenerator:
                 and future_schema not in write_grant_schemas_set
             ):
                 sql_commands.append(
-                    {
-                        "already_granted": False,
-                        "sql": REVOKE_FUTURE_PRIVILEGES_TEMPLATE.format(
-                            privileges=partial_write_privileges,
-                            resource_type="schema",
-                            grouping_type="database",
-                            grouping_name=database,
-                            role=role_name,
+                    PlannedCommand(
+                        False,
+                        BulkPrivileges(
+                            REVOKE,
+                            FUTURE,
+                            _privileges(partial_write_privileges),
+                            "schema",
+                            database,
+                            role_name,
                         ),
-                    }
+                    )
                 )
             elif granted_schema.is_future:
                 continue
@@ -1401,15 +1400,16 @@ class SnowflakeGrantsGenerator:
             ):
                 # Covers case where schema is granted and it's not explicitly granted as a future grant
                 sql_commands.append(
-                    {
-                        "already_granted": False,
-                        "sql": REVOKE_PRIVILEGES_TEMPLATE.format(
-                            privileges=partial_write_privileges,
-                            resource_type="schema",
-                            resource_name=granted_schema,
-                            role=role_name,
+                    PlannedCommand(
+                        False,
+                        Privileges(
+                            REVOKE,
+                            _privileges(partial_write_privileges),
+                            "schema",
+                            granted_schema,
+                            role_name,
                         ),
-                    }
+                    )
                 )
 
         return sql_commands
@@ -1498,21 +1498,19 @@ class SnowflakeGrantsGenerator:
                 coverage.add_object(future_database_object)
 
                 if isinstance(entry, NamePattern) and entry.globs == ("*", "*"):
-                    for template in (
-                        GRANT_FUTURE_PRIVILEGES_TEMPLATE,
-                        GRANT_ALL_PRIVILEGES_TEMPLATE,
-                    ):
+                    for on in FUTURE_THEN_ALL:
                         sql_commands.append(
-                            {
-                                "already_granted": already_granted,
-                                "sql": template.format(
-                                    privileges=privileges,
-                                    resource_type=object_type.name,
-                                    grouping_type="database",
-                                    grouping_name=database,
-                                    role=role_name,
+                            PlannedCommand(
+                                already_granted,
+                                BulkPrivileges(
+                                    GRANT,
+                                    on,
+                                    _privileges(privileges),
+                                    object_type.name,
+                                    database,
+                                    role_name,
                                 ),
-                            }
+                            )
                         )
 
                 # Objects of this type that privileges will be granted to
@@ -1535,21 +1533,19 @@ class SnowflakeGrantsGenerator:
                             role, privileges_array, object_type.grant_key, future_object
                         )
 
-                        for template in (
-                            GRANT_FUTURE_PRIVILEGES_TEMPLATE,
-                            GRANT_ALL_PRIVILEGES_TEMPLATE,
-                        ):
+                        for on in FUTURE_THEN_ALL:
                             sql_commands.append(
-                                {
-                                    "already_granted": already_granted,
-                                    "sql": template.format(
-                                        privileges=privileges,
-                                        resource_type=object_type.name,
-                                        grouping_type="schema",
-                                        grouping_name=schema,
-                                        role=role_name,
+                                PlannedCommand(
+                                    already_granted,
+                                    BulkPrivileges(
+                                        GRANT,
+                                        on,
+                                        _privileges(privileges),
+                                        object_type.name,
+                                        schema,
+                                        role_name,
                                     ),
-                                }
+                                )
                             )
 
                 # TODO Future elif to have partial table name
@@ -1571,15 +1567,16 @@ class SnowflakeGrantsGenerator:
                     )
 
                     sql_commands.append(
-                        {
-                            "already_granted": already_granted,
-                            "sql": GRANT_PRIVILEGES_TEMPLATE.format(
-                                privileges=privileges,
-                                resource_type=object_type.name,
-                                resource_name=db_object,
-                                role=role_name,
+                        PlannedCommand(
+                            already_granted,
+                            Privileges(
+                                GRANT,
+                                _privileges(privileges),
+                                object_type.name,
+                                db_object,
+                                role_name,
                             ),
-                        }
+                        )
                     )
 
         return sql_commands, grant_lists
@@ -1624,7 +1621,7 @@ class SnowflakeGrantsGenerator:
 
         Returns a list of REVOKE statements
         """
-        sql_commands = []
+        sql_commands: List[Dict] = []
         role_name = ObjectName.single(role)
         shared_dbs = _single_names(shared_dbs)
         spec_dbs = _single_names(spec_dbs)
@@ -1636,7 +1633,6 @@ class SnowflakeGrantsGenerator:
             scope = granted_resource.parent
             assert scope is not None, f"{granted_resource!s} isn't in a database"
             future_resource = scope.future(object_type.grant_key)
-            grouping_type = "database" if len(scope.parts) == 1 else "schema"
 
             resource_covered = coverage.covers(granted_resource)
             future_covered = coverage.covers(future_resource)
@@ -1650,16 +1646,17 @@ class SnowflakeGrantsGenerator:
             elif granted_resource == future_resource and not future_covered:
                 # If future privilege is granted in Snowflake but not in grant list
                 sql_commands.append(
-                    {
-                        "already_granted": False,
-                        "sql": REVOKE_FUTURE_PRIVILEGES_TEMPLATE.format(
-                            privileges=privilege_set,
-                            resource_type=object_type.name,
-                            grouping_type=grouping_type,
-                            grouping_name=scope,
-                            role=role_name,
+                    PlannedCommand(
+                        False,
+                        BulkPrivileges(
+                            REVOKE,
+                            FUTURE,
+                            _privileges(privilege_set),
+                            object_type.name,
+                            scope,
+                            role_name,
                         ),
-                    }
+                    )
                 )
             elif granted_resource.is_future:
                 continue
@@ -1667,15 +1664,16 @@ class SnowflakeGrantsGenerator:
                 # Covers case where resource is granted in Snowflake
                 # But it's not in the grant list and it's not explicitly granted as a future grant
                 sql_commands.append(
-                    {
-                        "already_granted": False,
-                        "sql": REVOKE_PRIVILEGES_TEMPLATE.format(
-                            privileges=privilege_set,
-                            resource_type=object_type.name,
-                            resource_name=granted_resource,
-                            role=role_name,
+                    PlannedCommand(
+                        False,
+                        Privileges(
+                            REVOKE,
+                            _privileges(privilege_set),
+                            object_type.name,
+                            granted_resource,
+                            role_name,
                         ),
-                    }
+                    )
                 )
         return sql_commands
 
@@ -1805,8 +1803,7 @@ class SnowflakeGrantsGenerator:
             return "TRUE" if value else "FALSE"
         if isinstance(value, (int, float)):
             return str(value)
-        escaped = str(value).replace("'", "''")
-        return f"'{escaped}'"
+        return sql_literal(str(value))
 
     def generate_alter_user(self, user: str, config: Dict[str, Any]) -> List[Dict]:
         """
@@ -1892,13 +1889,15 @@ class SnowflakeGrantsGenerator:
             )
         if alter_privileges:
             sql_commands.append(
-                {
-                    "already_granted": False,
-                    "sql": ALTER_USER_TEMPLATE.format(
-                        user_name=ObjectName.single(user),
-                        privileges=", ".join(alter_privileges),
+                PlannedCommand(
+                    False,
+                    SqlStatement(
+                        ALTER_USER_TEMPLATE.format(
+                            user_name=ObjectName.single(user),
+                            privileges=", ".join(alter_privileges),
+                        )
                     ),
-                }
+                )
             )
 
         return sql_commands
@@ -1933,44 +1932,36 @@ class SnowflakeGrantsGenerator:
 
         for tag, value in sorted(spec_tags.items()):
             sql_commands.append(
-                {
-                    "already_granted": live_tags.get(tag) == value,
-                    "sql": SET_USER_TAG_TEMPLATE.format(
-                        user_name=user_name,
-                        tag=tag,
-                        value=self._sql_parameter_literal(value),
-                    ),
-                }
+                PlannedCommand(
+                    live_tags.get(tag) == value, UserTag("set", user_name, tag, value)
+                )
             )
 
         for tag in sorted(set(live_tags) - set(spec_tags)):
-            sql_commands.append(
-                {
-                    "already_granted": False,
-                    "sql": UNSET_USER_TAG_TEMPLATE.format(user_name=user_name, tag=tag),
-                }
-            )
+            sql_commands.append(PlannedCommand(False, UserTag("unset", user_name, tag)))
 
         return sql_commands
 
     def _generate_ownership_grant_database(
         self, role: str, database_refs: List[str]
     ) -> List[Dict]:
-        sql_commands = []
+        sql_commands: List[Dict] = []
         for database in map(ObjectName.single, database_refs):
             already_granted = self.is_granted_privilege(
                 role, "ownership", "database", database
             )
 
             sql_commands.append(
-                {
-                    "already_granted": already_granted,
-                    "sql": GRANT_OWNERSHIP_TEMPLATE.format(
-                        resource_type="database",
-                        resource_name=database,
-                        role_name=ObjectName.single(role),
+                PlannedCommand(
+                    already_granted,
+                    SqlStatement(
+                        GRANT_OWNERSHIP_TEMPLATE.format(
+                            resource_type="database",
+                            resource_name=database,
+                            role_name=ObjectName.single(role),
+                        )
                     ),
-                }
+                )
             )
         return sql_commands
 
@@ -1988,7 +1979,7 @@ class SnowflakeGrantsGenerator:
         ]
 
     def _generate_ownership_grant_schema(self, conn, role, schema_refs) -> List[Dict]:
-        sql_commands = []
+        sql_commands: List[Dict] = []
         for schema in schema_refs:
             entry = name_or_pattern(schema, arity=2)
 
@@ -1998,21 +1989,23 @@ class SnowflakeGrantsGenerator:
                 )
 
                 sql_commands.append(
-                    {
-                        "already_granted": already_granted,
-                        "sql": GRANT_OWNERSHIP_TEMPLATE.format(
-                            resource_type="schema",
-                            resource_name=db_schema,
-                            role_name=ObjectName.single(role),
+                    PlannedCommand(
+                        already_granted,
+                        SqlStatement(
+                            GRANT_OWNERSHIP_TEMPLATE.format(
+                                resource_type="schema",
+                                resource_name=db_schema,
+                                role_name=ObjectName.single(role),
+                            )
                         ),
-                    }
+                    )
                 )
         return sql_commands
 
     def _generate_ownership_grant_table(
         self, conn: SnowflakeConnector, role, table_refs
     ) -> List[Dict]:
-        sql_commands = []
+        sql_commands: List[Dict] = []
 
         tables: List[ObjectName] = []
 
@@ -2049,14 +2042,16 @@ class SnowflakeGrantsGenerator:
             )
 
             sql_commands.append(
-                {
-                    "already_granted": already_granted,
-                    "sql": GRANT_OWNERSHIP_TEMPLATE.format(
-                        resource_type=resource_type,
-                        resource_name=db_table,
-                        role_name=ObjectName.single(role),
+                PlannedCommand(
+                    already_granted,
+                    SqlStatement(
+                        GRANT_OWNERSHIP_TEMPLATE.format(
+                            resource_type=resource_type,
+                            resource_name=db_table,
+                            role_name=ObjectName.single(role),
+                        )
                     ),
-                }
+                )
             )
         return sql_commands
 

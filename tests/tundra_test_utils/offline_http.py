@@ -1,8 +1,9 @@
 """snowflake.core over a mock connection, with every request stopped at SFPoolManager._send.
 
-The Root is real, so snowflake.core builds the URLs, quotes the path, adds showLimit and
-deserialises the answers the way it does against Snowflake. Nothing reaches urllib3:
-the request is recorded and answered from `answers`, and a request with no answer fails.
+The Root is real, so snowflake.core builds the URLs, quotes the path, adds showLimit,
+serialises request bodies and deserialises the answers the way it does against
+Snowflake. Nothing reaches urllib3: the request is recorded, its JSON body decoded, and
+answered from `answers`, and a request with no answer fails.
 """
 
 import json
@@ -24,6 +25,7 @@ class Request:
     method: str
     path: str
     query: Dict[str, List[str]]
+    body: Any = None
 
 
 @dataclass
@@ -46,7 +48,7 @@ class OfflineHttp:
         capture = self
 
         def send(pool, method, url, fields, headers, urlopen_kw):
-            return capture.send(method, url)
+            return capture.send(method, url, urlopen_kw.get("body"))
 
         monkeypatch.setattr(Root, "__init__", ROOT_INIT)
         monkeypatch.setattr(SFPoolManager, "_send", send)
@@ -64,9 +66,18 @@ class OfflineHttp:
         self.root = Root(connection)
         return self.root
 
-    def send(self, method: str, url: str) -> urllib3.HTTPResponse:
+    def send(
+        self, method: str, url: str, body: Optional[str] = None
+    ) -> urllib3.HTTPResponse:
         parts = urlsplit(url)
-        self.requests.append(Request(method, parts.path, parse_qs(parts.query)))
+        self.requests.append(
+            Request(
+                method,
+                parts.path,
+                parse_qs(parts.query),
+                None if body is None else json.loads(body),
+            )
+        )
         if (method, parts.path) not in self.answers:
             raise AssertionError(f"No answer for {method} {url}")
         status, body = self.answers[method, parts.path]
