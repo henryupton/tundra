@@ -284,11 +284,20 @@ def test_cli_run_plans_and_applies_on_one_connector(mocker, monkeypatch, name, a
     def run_query(conn, query):
         ran_on.add(id(conn))
         if query.startswith(("GRANT ", "REVOKE ", "ALTER ")):
-            applied.append(query)
             return None
         return fake.run_query(query)
 
+    # Statements go through the API or SQL as ROUTES says, so each is recorded where
+    # the connector runs it, whichever transport takes it from there
+    execute = SnowflakeConnector.execute
+
+    def record(conn, operation):
+        ran_on.add(id(conn))
+        applied.append(operation.sql)
+        return execute(conn, operation)
+
     mocker.patch.object(SnowflakeConnector, "run_query", run_query)
+    mocker.patch.object(SnowflakeConnector, "execute", record)
     monkeypatch.setenv("PERMISSION_BOT_MAX_WORKERS", "1")
 
     result = CliRunner().invoke(cli, ["run", str(GOLDEN / f"{name}.yml")])

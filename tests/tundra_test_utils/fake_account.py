@@ -21,6 +21,12 @@ Identifiers tundra sends are resolved with Snowflake's rules, so a query naming
 `"group"` finds nothing when the stored object is `GROUP`, and an unquoted reserved word
 fails the way it would in Snowflake. A query the fake can't answer fails the test, so
 every query a scenario makes is accounted for.
+
+Writes change the account's state, whether they arrive as SQL statements or as
+FakeApi's write calls, and both go through the same mutators, so a statement applied
+either way leaves the same state. A write naming something the account doesn't have
+fails the way Snowflake reports it: SQL names it in its message, and the API answers
+with a 404 whose message lowercases the name, as the dev probe recorded.
 """
 
 import json
@@ -48,6 +54,7 @@ from snowflake.core.warehouse import Warehouse
 
 from tundra.snowflake_api import LIST_LIMIT
 from tundra.snowflake_connector import SnowflakeConnector, _BufferedResult
+from tundra.table_object_types import ALL_OBJECT_TYPES
 
 Name = Tuple[str, ...]
 
@@ -64,6 +71,58 @@ QUOTED_IN_GRANTS = RESERVED | {"AGGREGATE", "WINDOW"}
 
 class SnowflakeError(Exception):
     pass
+
+
+class Missing(Exception):
+    """Something a write names that the account doesn't have: its kind and canonical parts."""
+
+    def __init__(self, kind: str, name: "Name") -> None:
+        super().__init__(f"{kind} {'.'.join(name)}")
+        self.kind = kind
+        self.name = name
+
+
+class Refused(Exception):
+    """A write the current role isn't allowed to make."""
+
+    def __init__(self, role: str) -> None:
+        super().__init__(role)
+        self.role = role
+
+
+# Registry kinds as statements name them (iceberg table), to the SHOW keyword that
+# lists them in `objects` (ICEBERG TABLES)
+_SHOW_KEYWORD = {t.name: t.show_command.replace("TERSE ", "") for t in ALL_OBJECT_TYPES}
+
+# The keywords a privilege statement can name its securable with, longest first
+_SECURABLE_KEYWORDS = sorted(
+    ["database", "schema", "warehouse", "integration", "external volume"]
+    + list(_SHOW_KEYWORD),
+    key=len,
+    reverse=True,
+)
+
+# The adapter's write methods, as api_calls records them
+WRITE_CALLS = frozenset(
+    {
+        "grant_privileges",
+        "revoke_privileges",
+        "grant_privileges_on_all",
+        "grant_future_privileges",
+        "revoke_future_privileges",
+        "grant_role_to_role",
+        "revoke_role_from_role",
+        "grant_role_to_user",
+        "revoke_role_from_user",
+        "set_user_tag",
+        "unset_user_tag",
+    }
+)
+
+
+def granted_on(securable_type: str) -> str:
+    """A securable type or SQL keyword as SHOW GRANTS reports it: ICEBERG_TABLE."""
+    return securable_type.strip().upper().replace(" ", "_")
 
 
 def canonical(spelling: str, *, strict: bool = False) -> Name:
@@ -187,18 +246,25 @@ class FakeAccount:
     future_grants: List[FutureGrant] = field(default_factory=list)
     user_roles: Dict[str, List[str]] = field(default_factory=dict)
     user_tags: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    # Each ALTER USER ... SET <properties> the account was sent, by user
+    user_properties: Dict[str, List[str]] = field(default_factory=dict)
 
     # The most rows a REST listing returns, and whether a mixed-case part goes bare
     rest_list_cap: int = LIST_LIMIT
     rest_bare_mixed_case: bool = False
 
+    # Roles the current role can't grant to or revoke from, on either transport
+    unmanageable_roles: Set[str] = field(default_factory=set)
+    # Errors FakeApi raises instead of answering, by write method, one per call
+    api_write_errors: Dict[str, List[BaseException]] = field(default_factory=dict)
+
     queries: List[str] = field(default_factory=list)
-    api_calls: List[Tuple[str, ...]] = field(default_factory=list)
+    api_calls: List[Tuple[Any, ...]] = field(default_factory=list)
 
     def install(self, mocker) -> None:
         """
         Route every SnowflakeConnector, including ones tundra creates itself, here: its
-        SQL to run_query and its REST reads to FakeApi.
+        SQL to run_query and its REST calls to FakeApi.
         """
         account = self
 
@@ -296,6 +362,37 @@ class FakeAccount:
                 r"WHERE level = domain",
                 self._tag_references,
             ),
+            # Writes
+            (
+                r"GRANT OWNERSHIP ON (\w+) (.+) TO ROLE (.+) COPY CURRENT GRANTS",
+                self._sql(self._sql_ownership),
+            ),
+            (
+                r"(GRANT|REVOKE) (DATABASE ROLE|APPLICATION ROLE|ROLE) (.+) "
+                r"(?:TO|FROM) (ROLE|USER) (.+)",
+                self._sql(self._sql_membership),
+            ),
+            (
+                r"(GRANT|REVOKE) (.+?) ON ACCOUNT (?:TO|FROM) ROLE (.+)",
+                self._sql(self._sql_account),
+            ),
+            (
+                r"(GRANT|REVOKE) (.+?) ON (ALL|FUTURE) (.+?)S IN (DATABASE|SCHEMA) (.+) "
+                r"(?:TO|FROM) ROLE (.+)",
+                self._sql(self._sql_bulk),
+            ),
+            (
+                r"(GRANT|REVOKE) (.+?) ON ({}) (.+) (?:TO|FROM) ROLE (.+)".format(
+                    "|".join(_SECURABLE_KEYWORDS)
+                ),
+                self._sql(self._sql_privileges),
+            ),
+            (
+                r"ALTER USER (.+?) SET TAG (.+) = '((?:[^']|'')*)'",
+                self._sql(self._sql_set_tag),
+            ),
+            (r"ALTER USER (.+?) UNSET TAG (.+)", self._sql(self._sql_unset_tag)),
+            (r"ALTER USER (.+?) SET (.+)", self._sql(self._sql_alter_user)),
         ]
 
     def _show_schemas(self, database: Optional[str]):
@@ -397,6 +494,351 @@ class FakeAccount:
             )
         return [{"name": canonical(r)[0]} for r in apps[app]]
 
+    # SQL writes: each handler resolves the statement's identifiers and calls a mutator
+
+    def _sql(self, handler):
+        """A write handler that answers with no rows and fails the way SQL does."""
+
+        def run(*groups):
+            try:
+                handler(*groups)
+            except Missing as missing:
+                kind = missing.kind[0].upper() + missing.kind[1:]
+                raise SnowflakeError(
+                    f"SQL compilation error:\n{kind} '{spell(missing.name)}' does not"
+                    " exist or not authorized."
+                )
+            except Refused as refused:
+                raise SnowflakeError(
+                    "SQL access control error:\nInsufficient privileges to operate on"
+                    f" role '{refused.role}'"
+                )
+            return []
+
+        return run
+
+    @staticmethod
+    def _privilege_list(privileges: str) -> List[str]:
+        return [privilege.strip().upper() for privilege in privileges.split(",")]
+
+    def _sql_ownership(self, kind: str, name: str, role: str) -> None:
+        self.grant_ownership(
+            self._sql_role(role), kind.lower(), canonical(name, strict=True)
+        )
+
+    def _sql_membership(self, action, member_kind, member, grantee_kind, grantee):
+        member_kind = member_kind.upper()
+        name = canonical(member, strict=True)
+        if grantee_kind.upper() == "USER":
+            (user,) = canonical(grantee, strict=True)
+            (role,) = name
+            if action.upper() == "GRANT":
+                self.grant_user_role(user, role)
+            else:
+                self.revoke_user_role(user, role)
+            return
+        on = member_kind.replace(" ", "_")
+        if action.upper() == "GRANT":
+            self.grant_role(self._sql_role(grantee), on, name)
+        else:
+            self.revoke_role(self._sql_role(grantee), on, name)
+
+    def _sql_account(self, action: str, privileges: str, role: str) -> None:
+        write = (
+            self.grant_privileges
+            if action.upper() == "GRANT"
+            else self.revoke_privileges
+        )
+        write(self._sql_role(role), self._privilege_list(privileges), "account", ())
+
+    def _sql_bulk(self, action, privileges, on, kind, scope, container, role):
+        role = self._sql_role(role)
+        privilege_list = self._privilege_list(privileges)
+        name = canonical(container, strict=True)
+        if on.upper() == "ALL":
+            assert action.upper() == "GRANT", "tundra never revokes ON ALL"
+            self.grant_on_all(role, privilege_list, kind.lower(), name)
+        elif action.upper() == "GRANT":
+            self.grant_future(role, privilege_list, granted_on(kind), name)
+        else:
+            self.revoke_future(role, privilege_list, granted_on(kind), name)
+
+    def _sql_privileges(self, action, privileges, kind, name, role) -> None:
+        write = (
+            self.grant_privileges
+            if action.upper() == "GRANT"
+            else self.revoke_privileges
+        )
+        write(
+            self._sql_role(role),
+            self._privilege_list(privileges),
+            kind.lower(),
+            canonical(name, strict=True),
+        )
+
+    def _sql_set_tag(self, user: str, tag: str, value: str) -> None:
+        (name,) = canonical(user, strict=True)
+        self.set_user_tag(name, canonical(tag, strict=True), value.replace("''", "'"))
+
+    def _sql_unset_tag(self, user: str, tag: str) -> None:
+        (name,) = canonical(user, strict=True)
+        self.unset_user_tag(name, canonical(tag, strict=True))
+
+    def _sql_alter_user(self, user: str, properties: str) -> None:
+        (name,) = canonical(user, strict=True)
+        self.require("user", (name,))
+        self.user_properties.setdefault(spell((name,)), []).append(properties)
+
+    def _sql_role(self, spelling: str) -> str:
+        (role,) = canonical(spelling, strict=True)
+        return role
+
+    # Mutators, shared by the SQL statements and FakeApi's write calls. Names are
+    # canonical parts and roles and users canonical names.
+
+    def require(self, kind: str, name: Name) -> None:
+        """
+        Raise Missing for the first part of `name` the account doesn't have, the way
+        Snowflake reports a missing parent rather than the object in it.
+        """
+        known: Dict[str, Iterable[Name]] = {
+            "warehouse": [(n,) for n in self._account_objects("WAREHOUSES")],
+            "integration": [(n,) for n in self._account_objects("INTEGRATIONS")],
+            "external volume": [
+                (n,) for n in self._account_objects("EXTERNAL VOLUMES")
+            ],
+            "user": [(n,) for n in self._account_objects("USERS")],
+            "role": [(self._key(r),) for r in self.roles],
+        }
+        if kind == "account":
+            return
+        if kind in known:
+            if name not in set(known[kind]):
+                raise Missing(kind, name)
+            return
+        if name[:1] not in {(n,) for n in self._account_objects("DATABASES")}:
+            if kind not in ("database role", "application role"):
+                raise Missing("database", name[:1])
+        if kind == "database":
+            return
+        if kind == "database role":
+            roles = {canonical(k)[0]: v for k, v in self.database_roles.items()}
+            if name[1] not in {canonical(r)[0] for r in roles.get(name[0], [])}:
+                raise Missing(kind, name)
+            return
+        if kind == "application role":
+            apps = {canonical(k)[0]: v for k, v in self.applications.items()}
+            if name[1] not in {canonical(r)[0] for r in apps.get(name[0], [])}:
+                raise Missing(kind, name)
+            return
+        if name[:2] not in set(self._schemas()):
+            raise Missing("schema", name[:2])
+        if kind != "schema" and name not in set(self._objects(_SHOW_KEYWORD[kind])):
+            raise Missing(kind, name)
+
+    def _require_role(self, role: str) -> None:
+        self.require("role", (role,))
+        if role in {self._key(r) for r in self.unmanageable_roles}:
+            raise Refused(role)
+
+    def _held(self, grant: Grant, role: str, privilege: str, on: str, name: Name):
+        return (
+            self._key(grant.to) == role
+            and grant.privilege.upper() == privilege
+            and granted_on(grant.on) == on
+            and (on == "ACCOUNT" or canonical(grant.name) == name)
+        )
+
+    def grant_privileges(
+        self, role: str, privileges: Iterable[str], kind: str, name: Name
+    ) -> None:
+        """Privileges on a securable of `kind` (database, iceberg table, account...)."""
+        self.require(kind, name)
+        self.grant(role, privileges, granted_on(kind), name)
+
+    def revoke_privileges(
+        self, role: str, privileges: Iterable[str], kind: str, name: Name
+    ) -> None:
+        self.require(kind, name)
+        self.revoke(role, privileges, granted_on(kind), name)
+
+    def grant(self, role: str, privileges: Iterable[str], on: str, name: Name):
+        """GRANT <privileges> ON <on> <name> TO ROLE <role>. `on` is SHOW GRANTS' granted_on."""
+        self._require_role(role)
+        for privilege in privileges:
+            # SHOW GRANTS reports IMPORTED PRIVILEGES on a database as USAGE on it
+            if privilege == "IMPORTED PRIVILEGES":
+                privilege = "USAGE"
+            if any(self._held(g, role, privilege, on, name) for g in self.grants):
+                continue
+            self.grants.append(
+                Grant(
+                    spell((role,)),
+                    privilege,
+                    on,
+                    "-" if on == "ACCOUNT" else spell(name),
+                    granted_by=self.current_role,
+                )
+            )
+
+    def revoke(self, role: str, privileges: Iterable[str], on: str, name: Name):
+        self._require_role(role)
+        for privilege in privileges:
+            held = (
+                ("USAGE", "IMPORTED PRIVILEGES")
+                if privilege == "IMPORTED PRIVILEGES"
+                else (privilege,)
+            )
+            self.grants = [
+                g
+                for g in self.grants
+                if not any(self._held(g, role, p, on, name) for p in held)
+            ]
+
+    def grant_on_all(
+        self, role: str, privileges: List[str], kind: str, container: Name
+    ):
+        self._require_role(role)
+        self.require("database" if len(container) == 1 else "schema", container)
+        for name in self._objects(_SHOW_KEYWORD[kind]):
+            if name[: len(container)] == container:
+                self.grant(role, privileges, granted_on(kind), name)
+
+    def grant_future(self, role: str, privileges: List[str], on: str, container: Name):
+        self._require_role(role)
+        self.require("database" if len(container) == 1 else "schema", container)
+        for privilege in privileges:
+            if not self._future_held(role, privilege, on, container):
+                self.future_grants.append(
+                    FutureGrant(spell((role,)), privilege, on, spell(container))
+                )
+
+    def revoke_future(self, role: str, privileges: List[str], on: str, container: Name):
+        self._require_role(role)
+        self.require("database" if len(container) == 1 else "schema", container)
+        self.future_grants = [
+            g
+            for g in self.future_grants
+            if not any(
+                self._future_held(role, p, on, container, [g]) for p in privileges
+            )
+        ]
+
+    def _future_held(self, role, privilege, on, container, grants=None) -> bool:
+        return any(
+            self._key(g.to) == role
+            and g.privilege.upper() == privilege
+            and granted_on(g.on) == on
+            and canonical(g.container) == container
+            for g in (self.future_grants if grants is None else grants)
+        )
+
+    def grant_role(self, grantee: str, on: str, member: Name) -> None:
+        """A role, database role or application role (on) granted to a role."""
+        self.require(on.replace("_", " ").lower(), member)
+        self.grant(grantee, ["USAGE"], on, member)
+
+    def revoke_role(self, grantee: str, on: str, member: Name) -> None:
+        self.require(on.replace("_", " ").lower(), member)
+        self.revoke(grantee, ["USAGE"], on, member)
+
+    def grant_user_role(self, user: str, role: str) -> None:
+        self.require("user", (user,))
+        self.require("role", (role,))
+        roles = self._user_role_list(user)
+        if role not in {self._key(r) for r in roles}:
+            roles.append(spell((role,)))
+
+    def revoke_user_role(self, user: str, role: str) -> None:
+        self.require("user", (user,))
+        self.require("role", (role,))
+        roles = self._user_role_list(user)
+        roles[:] = [r for r in roles if self._key(r) != role]
+
+    def _user_role_list(self, user: str) -> List[str]:
+        for key, roles in self.user_roles.items():
+            if self._key(key) == user:
+                return roles
+        return self.user_roles.setdefault(spell((user,)), [])
+
+    def set_user_tag(self, user: str, tag: Name, value: str) -> None:
+        self.unset_user_tag(user, tag)
+        self._user_tag_map(user)[spell(tag)] = value
+
+    def unset_user_tag(self, user: str, tag: Name) -> None:
+        self.require("user", (user,))
+        tags = self._user_tag_map(user)
+        for key in [k for k in tags if canonical(k) == tag]:
+            del tags[key]
+
+    def _user_tag_map(self, user: str) -> Dict[str, str]:
+        for key, tags in self.user_tags.items():
+            if self._key(key) == user:
+                return tags
+        return self.user_tags.setdefault(spell((user,)), {})
+
+    def grant_ownership(self, role: str, kind: str, name: Name) -> None:
+        self._require_role(role)
+        self.require(kind, name)
+        on = granted_on(kind)
+        self.grants = [
+            g
+            for g in self.grants
+            if not (
+                g.privilege.upper() == "OWNERSHIP"
+                and granted_on(g.on) == on
+                and canonical(g.name) == name
+            )
+        ]
+        self.grant(role, ["OWNERSHIP"], on, name)
+
+    def state(self) -> Dict[str, Any]:
+        """
+        What writes change, in canonical names and sorted, so two accounts that took
+        the same statements compare equal however each spelt or ordered them.
+        """
+        return {
+            "grants": sorted(
+                {
+                    (
+                        self._key(g.to),
+                        g.privilege.upper(),
+                        granted_on(g.on),
+                        () if granted_on(g.on) == "ACCOUNT" else canonical(g.name),
+                    )
+                    for g in self.grants
+                }
+            ),
+            "future_grants": sorted(
+                {
+                    (
+                        self._key(g.to),
+                        g.privilege.upper(),
+                        granted_on(g.on),
+                        canonical(g.container),
+                    )
+                    for g in self.future_grants
+                }
+            ),
+            "user_roles": sorted(
+                (self._key(user), tuple(sorted(self._key(r) for r in roles)))
+                for user, roles in self.user_roles.items()
+                if roles
+            ),
+            "user_tags": sorted(
+                (
+                    self._key(user),
+                    tuple(sorted((canonical(t), v) for t, v in tags.items())),
+                )
+                for user, tags in self.user_tags.items()
+                if tags
+            ),
+            "user_properties": sorted(
+                (self._key(user), tuple(properties))
+                for user, properties in self.user_properties.items()
+            ),
+        }
+
     def _tag_references(self, identifier: str):
         user = canonical(identifier.replace("''", "'"), strict=True)[0]
         rows = []
@@ -420,7 +862,8 @@ class FakeApi:
     models, so their validators check every spelling the fake sends. Each call is
     recorded in api_calls, and a listing stops at rest_list_cap rows, in the order SHOW
     lists them. A name in a path resolves like an identifier: quoted exactly, bare in
-    uppercase. A role that doesn't exist is a 404, as Snowflake answers it.
+    uppercase. A role that doesn't exist is a 404, as Snowflake answers it. Write calls
+    change the account through the same mutators as the statements' SQL.
     """
 
     def __init__(self, account: FakeAccount) -> None:
@@ -515,7 +958,182 @@ class FakeApi:
         roles = {canonical(k)[0]: v for k, v in self.account.database_roles.items()}
         return self._named(DatabaseRole, [canonical(r)[0] for r in roles.get(db, [])])
 
-    def _called(self, call: str, *args: str) -> None:
+    # Writes, answered by changing the account the way the statement's SQL does
+
+    def grant_privileges(self, role, privileges, securable_type, securable) -> None:
+        self._write(
+            "grant_privileges",
+            (role, privileges, securable_type, securable),
+            lambda: self.account.grant_privileges(
+                self._role(role),
+                self._privileges(privileges),
+                securable_type.lower(),
+                self._name(securable),
+            ),
+        )
+
+    def revoke_privileges(self, role, privileges, securable_type, securable) -> None:
+        self._write(
+            "revoke_privileges",
+            (role, privileges, securable_type, securable),
+            lambda: self.account.revoke_privileges(
+                self._role(role),
+                self._privileges(privileges),
+                securable_type.lower(),
+                self._name(securable),
+            ),
+        )
+
+    def grant_privileges_on_all(
+        self, role, privileges, securable_type, containing_scope
+    ) -> None:
+        self._write(
+            "grant_privileges_on_all",
+            (role, privileges, securable_type, containing_scope),
+            lambda: self.account.grant_on_all(
+                self._role(role),
+                self._privileges(privileges),
+                securable_type.lower(),
+                self._name(containing_scope),
+            ),
+        )
+
+    def grant_future_privileges(
+        self, role, privileges, securable_type, containing_scope
+    ) -> None:
+        self._write(
+            "grant_future_privileges",
+            (role, privileges, securable_type, containing_scope),
+            lambda: self.account.grant_future(
+                self._role(role),
+                self._privileges(privileges),
+                granted_on(securable_type),
+                self._name(containing_scope),
+            ),
+        )
+
+    def revoke_future_privileges(
+        self, role, privileges, securable_type, containing_scope
+    ) -> None:
+        self._write(
+            "revoke_future_privileges",
+            (role, privileges, securable_type, containing_scope),
+            lambda: self.account.revoke_future(
+                self._role(role),
+                self._privileges(privileges),
+                granted_on(securable_type),
+                self._name(containing_scope),
+            ),
+        )
+
+    def grant_role_to_role(self, grantee, role_type, role) -> None:
+        self._write(
+            "grant_role_to_role",
+            (grantee, role_type, role),
+            lambda: self.account.grant_role(
+                self._role(grantee), self._role_type(role_type), self._name(role)
+            ),
+        )
+
+    def revoke_role_from_role(self, grantee, role_type, role) -> None:
+        self._write(
+            "revoke_role_from_role",
+            (grantee, role_type, role),
+            lambda: self.account.revoke_role(
+                self._role(grantee), self._role_type(role_type), self._name(role)
+            ),
+        )
+
+    def grant_role_to_user(self, user, role) -> None:
+        self._write(
+            "grant_role_to_user",
+            (user, role),
+            lambda: self.account.grant_user_role(self._path(user), *self._name(role)),
+        )
+
+    def revoke_role_from_user(self, user, role) -> None:
+        self._write(
+            "revoke_role_from_user",
+            (user, role),
+            lambda: self.account.revoke_user_role(self._path(user), *self._name(role)),
+        )
+
+    def set_user_tag(self, user, tag, value) -> None:
+        self._write(
+            "set_user_tag",
+            (user, tag, value),
+            lambda: self.account.set_user_tag(
+                self._path(user), tuple(map(self._canonical, tag)), value
+            ),
+        )
+
+    def unset_user_tag(self, user, tag) -> None:
+        self._write(
+            "unset_user_tag",
+            (user, tag),
+            lambda: self.account.unset_user_tag(
+                self._path(user), tuple(map(self._canonical, tag))
+            ),
+        )
+
+    def _write(self, call: str, args: Tuple[Any, ...], change) -> None:
+        """
+        Record the call, then answer it as Snowflake would: an error queued in
+        api_write_errors, a 404 naming what's missing in lowercase, a 403 for a role
+        the current role can't manage, or the change made.
+        """
+        self._called(call, *map(_jsonable, args))
+        errors = self.account.api_write_errors.get(call)
+        if errors:
+            raise errors.pop(0)
+        try:
+            change()
+        except Missing as missing:
+            name = ".".join(missing.name).lower()
+            raise api_error(
+                404,
+                f"{missing.kind} '{name}' does not exist or not authorized. your"
+                f" primary role {self.account.current_role.lower()} must have at least"
+                f" one privilege granted on {missing.kind} {name}.",
+            )
+        except Refused as refused:
+            raise api_error(
+                403,
+                f"Insufficient privileges to operate on role '{refused.role}'.",
+                "003001",
+            )
+
+    @staticmethod
+    def _privileges(privileges: List[str]) -> List[str]:
+        return [privilege.upper() for privilege in privileges]
+
+    @staticmethod
+    def _role_type(role_type: str) -> str:
+        if role_type == "application role":
+            # What the dev probe got back for an application role through grant_role
+            raise api_error(
+                400, "syntax error line 1 at position 12 unexpected 'on'.", "001003"
+            )
+        return granted_on(role_type)
+
+    @staticmethod
+    def _canonical(part: str) -> str:
+        """One part of a request body, resolved the way the server resolves it."""
+        (name,) = canonical(part)
+        return name
+
+    def _name(self, model: Any) -> Name:
+        """The canonical parts of a Securable or ContainingScope, or () for none."""
+        if model is None:
+            return ()
+        parts = (
+            getattr(model, "database", None),
+            getattr(model, "var_schema", None),
+            getattr(model, "name", None),
+        )
+        return tuple(self._canonical(part) for part in parts if part is not None)
+
+    def _called(self, call: str, *args: Any) -> None:
         self.account.api_calls.append((call, *args))
 
     def _capped(self, models: List[Any]) -> List[Any]:
@@ -546,6 +1164,15 @@ class FakeApi:
                 404, f"Role '{role.lower()}' does not exist or not authorized."
             )
         return role
+
+
+def _jsonable(value: Any) -> Any:
+    """A write call's argument as api_calls records it: models as their request body."""
+    if hasattr(value, "to_dict"):
+        return value.to_dict()
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    return value
 
 
 def _is_canonical(name: str) -> bool:

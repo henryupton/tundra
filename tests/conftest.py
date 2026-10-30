@@ -13,8 +13,12 @@ logging.basicConfig(level=logging.INFO)
 pytest_plugins = ["fixtures.fs", "fixtures.cli"]
 
 # These run once on each transport against the same expected output, so REST and SQL
-# reads are pinned to the same plans
-BOTH_TRANSPORTS = ("test_golden_scenarios", "test_identifier_rendering")
+# reads are pinned to the same plans, and API and SQL writes to the same outcomes
+BOTH_TRANSPORTS = (
+    "test_golden_scenarios",
+    "test_identifier_rendering",
+    "test_apply_transports",
+)
 
 # The connection settings every test starts from, whatever the shell running the tests
 # has: dummy credentials, and no other way to log in
