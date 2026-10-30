@@ -509,15 +509,15 @@ def test_strict_mode_raises_instead_of_falling_back(mocker, monkeypatch, reason,
     assert account.queries == []
 
 
-def test_strict_mode_leaves_an_object_lookup_present(mocker, monkeypatch):
+def test_strict_mode_looks_an_object_up_through_sql(mocker, monkeypatch):
     account = names_account(rest_list_cap=1)
     account.install(mocker)
     monkeypatch.setenv("PERMISSION_BOT_API_STRICT", "true")
 
     # A lookup runs during apply, after a statement failed, so raising would stop the
     # run with some statements applied
-    assert SnowflakeConnector().object_exists("database", "GONE")
-    assert account.queries == []
+    assert not SnowflakeConnector().object_exists("database", "GONE")
+    assert account.queries == ["SHOW DATABASES"]
 
 
 def test_strict_mode_leaves_missing_objects_and_sql_only_alone(mocker, monkeypatch):

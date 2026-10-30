@@ -19,6 +19,7 @@ from tundra.snowflake_connector import (
     DATABASE_ROLE_GRANT_TYPE,
     ReadStats,
     SnowflakeConnector,
+    api_timeout,
 )
 from tundra.snowflake_grants import SnowflakeGrantsGenerator
 from tundra.spec_file_loader import load_spec
@@ -92,6 +93,9 @@ class SnowflakeSpecLoader:
         roles = None if roles is None else list(roles)
         users = None if users is None else list(users)
         _check_filters(roles, users)
+        # A bad PERMISSION_BOT_API_TIMEOUT fails here, before anything is read, whatever
+        # connector was passed in
+        api_timeout()
         self.conn = conn or SnowflakeConnector()
         if sql_only:
             self.conn.sql_only = True

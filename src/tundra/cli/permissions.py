@@ -7,6 +7,7 @@ from tundra import SpecLoadingError
 from tundra.operations import SqlStatement, api_capable
 from tundra.snowflake_connector import (
     ApiFallbackError,
+    InvalidSettingError,
     SnowflakeConnector,
     WriteStats,
     api_error_detail,
@@ -184,8 +185,9 @@ def run(
     Reads go through Snowflake's REST API where snowflake.core covers them, and any
     listing it can't give in full is read again through SQL. Some kinds of statement go
     through the API too (the README lists them), and the rest run as SQL, as does any
-    statement the API can't answer. PERMISSION_BOT_SQL_ONLY=true does what --sql-only
-    does, and
+    statement the API can't answer. A listing with no answer after
+    PERMISSION_BOT_API_TIMEOUT seconds (default 120) is read through SQL, and so is the
+    rest of the run. PERMISSION_BOT_SQL_ONLY=true does what --sql-only does, and
     PERMISSION_BOT_API_STRICT=true fails the run instead of reading through SQL.
     """
     if role and user:
@@ -257,6 +259,8 @@ def spec_test(spec, role, user, run_list, ignore_memberships, sql_only):
     listing it can't give in full is read again through SQL.
     PERMISSION_BOT_SQL_ONLY=true does what --sql-only does, and
     PERMISSION_BOT_API_STRICT=true fails the run instead of falling back to SQL.
+    A listing with no answer after PERMISSION_BOT_API_TIMEOUT seconds (default 120)
+    is read through SQL, and so is the rest of the run.
     """
     load_specs(
         spec,
@@ -297,7 +301,7 @@ def load_specs(
             sql_only=sql_only,
         )
         click.secho("Snowflake specs successfully loaded", fg="green")
-    except (SpecLoadingError, ApiFallbackError) as exc:
+    except (SpecLoadingError, ApiFallbackError, InvalidSettingError) as exc:
         exit_with_error(exc)
 
     return spec_loader

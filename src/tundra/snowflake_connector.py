@@ -1,14 +1,18 @@
+import contextvars
 import json
 import logging
+import math
 import os
 import re
 import subprocess
 import threading
 from collections import Counter
+from contextlib import contextmanager
 from typing import (
     Any,
     Callable,
     Dict,
+    Iterator,
     List,
     Mapping,
     NamedTuple,
@@ -29,6 +33,7 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 from snowflake.sqlalchemy import URL
 
+from tundra.concurrency import DeadlineExceeded, call_with_deadline
 from tundra.identifiers import (
     RESERVED_KEYWORDS,
     InvalidNameError,
@@ -108,6 +113,13 @@ DOES_NOT_EXIST = "002003"
 
 SQL_ONLY_ENV = "PERMISSION_BOT_SQL_ONLY"
 API_STRICT_ENV = "PERMISSION_BOT_API_STRICT"
+API_TIMEOUT_ENV = "PERMISSION_BOT_API_TIMEOUT"
+
+# How many seconds a REST listing may go unanswered before it's read through SQL.
+# snowflake.core sends its requests with no socket timeout, so a stalled connection
+# would otherwise hang the run. The slowest role in the dev probes took 40 s for both its
+# listings at 8 threads, and a listing cut off here is still answered, through SQL.
+DEFAULT_API_TIMEOUT = 120.0
 
 API = "api"
 SQL = "sql"
@@ -120,11 +132,12 @@ FALLBACK_REASONS = {
     "non-json": "non-JSON error",
     "transport": "transport error",
     "timeout": "retry timeout",
+    "stall": "no answer within the deadline",
 }
 
 # After one of these the rest of the run reads and writes through SQL, rather than wait
 # out each request's own retries against an API that isn't answering
-STICKY_REASONS = frozenset({"transport", "timeout"})
+STICKY_REASONS = frozenset({"transport", "timeout", "stall"})
 
 # Why a statement sent through snowflake.core ran again as its SQL, as the summary
 # line after apply words each reason
@@ -144,6 +157,12 @@ for logger_name in ["snowflake.connector", "bot", "boto3"]:
     log = logging.getLogger(logger_name)
     log.setLevel(logging.WARNING)
 
+# snowflake.core has no handler of its own, unlike snowflake.connector and urllib3, so
+# with nothing on the root logger its records went to stderr through logging.lastResort.
+# One is an ERROR for each error body that isn't JSON, which tundra reports itself, and a
+# listing abandoned at its deadline could print it anywhere later in the run.
+logging.getLogger("snowflake.core").addHandler(logging.NullHandler())
+
 
 def _env_flag(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in ("1", "true", "yes", "on")
@@ -153,13 +172,58 @@ def _one_line(error: BaseException) -> str:
     return " ".join(str(error).split())
 
 
-class ApiFallbackError(Exception):
-    """A REST read that would have fallen back to SQL, raised under PERMISSION_BOT_API_STRICT."""
+# Set while object_exists looks an object up, which strict mode doesn't apply to
+_NOT_STRICT = contextvars.ContextVar("tundra_not_strict", default=False)
 
-    def __init__(self, reader: str, reason: str) -> None:
+
+@contextmanager
+def _not_strict() -> Iterator[None]:
+    token = _NOT_STRICT.set(True)
+    try:
+        yield
+    finally:
+        _NOT_STRICT.reset(token)
+
+
+class InvalidSettingError(ValueError):
+    """A PERMISSION_BOT_* setting tundra can't use."""
+
+
+def api_timeout() -> float:
+    """
+    PERMISSION_BOT_API_TIMEOUT, the seconds a REST call may take before tundra stops
+    waiting for it, or DEFAULT_API_TIMEOUT when it's unset or blank.
+    """
+    value = os.getenv(API_TIMEOUT_ENV, "").strip()
+    if not value:
+        return DEFAULT_API_TIMEOUT
+    try:
+        seconds = float(value)
+    except ValueError:
+        seconds = math.nan
+    if not (math.isfinite(seconds) and seconds > 0):
+        raise InvalidSettingError(
+            f"{API_TIMEOUT_ENV} must be a positive number of seconds, not {value!r}"
+        )
+    return seconds
+
+
+class ApiFallbackError(Exception):
+    """
+    A read that can't go through the API, raised under PERMISSION_BOT_API_STRICT in
+    place of the SQL read it would fall back to.
+    """
+
+    def __init__(
+        self, reader: str, reason: str, error: Optional[BaseException] = None
+    ) -> None:
+        detail = FALLBACK_REASONS[reason]
+        # So a run that fails on the deadline says what it was and how to change it
+        if isinstance(error, DeadlineExceeded):
+            detail += f" of {error.deadline:g} s, which {API_TIMEOUT_ENV} sets"
         super().__init__(
-            f"{reader} would read through SQL instead of the API"
-            f" ({FALLBACK_REASONS[reason]}), and {API_STRICT_ENV} is set"
+            f"{reader} would read through SQL instead of the API ({detail}), and"
+            f" {API_STRICT_ENV} is set"
         )
         self.reader = reader
         self.reason = reason
@@ -205,6 +269,8 @@ def _fallback_reason(error: BaseException) -> Optional[str]:
     from pydantic import ValidationError
     from snowflake.core.exceptions import APIError, RetryTimeoutError
 
+    if isinstance(error, DeadlineExceeded):
+        return "stall"
     if isinstance(error, ValidationError):
         return "validation"
     # Raised by APIError's constructor itself, for an error body that isn't JSON
@@ -388,13 +454,18 @@ class SnowflakeConnector:
     # fakes, MockSnowflakeConnector) reads the same way
     _sql_only = False
     _api_failed = False
+    # The reason and error that set _api_failed
+    _api_failure: Tuple[str, Optional[BaseException]] = ("transport", None)
     _api: Optional[SnowflakeApi] = None
     _api_error: Optional[Exception] = None
     _api_connection: Any = None
     _api_lock = threading.Lock()
+    _api_failure_lock = threading.Lock()
 
     def __init__(self, config: Optional[Dict] = None, sql_only: bool = False) -> None:
         self._sql_only = sql_only
+        # A bad PERMISSION_BOT_API_TIMEOUT fails before anything connects
+        api_timeout()
         max_workers = int(os.getenv("PERMISSION_BOT_MAX_WORKERS", "8"))
         pool_kwargs = {"pool_size": max_workers, "max_overflow": max_workers}
 
@@ -537,8 +608,16 @@ class SnowflakeConnector:
 
     @property
     def api_strict(self) -> bool:
-        """PERMISSION_BOT_API_STRICT: a REST read that would fall back to SQL raises."""
-        return _env_flag(API_STRICT_ENV)
+        """
+        PERMISSION_BOT_API_STRICT: a REST read that would fall back to SQL raises,
+        except in object_exists.
+        """
+        return _env_flag(API_STRICT_ENV) and not _NOT_STRICT.get()
+
+    @property
+    def api_timeout(self) -> float:
+        """The deadline for each snowflake.core call, PERMISSION_BOT_API_TIMEOUT."""
+        return api_timeout()
 
     @property
     def api(self) -> SnowflakeApi:
@@ -600,18 +679,33 @@ class SnowflakeConnector:
         them. The SQL reader `sql` answers instead when the connector is SQL only, after
         a transport error, and for any listing that falls back (see _fall_back). A 404
         for an object that doesn't exist is raised, as SQL's "does not exist" is.
+
+        The listing runs under the api_timeout deadline, and one with no answer by then
+        is read through SQL like a transport error. Building the API isn't timed: Root
+        only runs SQL as it's built, over the connector's own timeouts.
+
+        In strict mode every read after a sticky failure (a transport error, retry
+        timeout or stall) raises at once, so a load stops after one deadline rather than
+        wait one out for each listing still to start.
         """
-        if self.sql_only or self._api_failed:
+        if self.sql_only:
+            self.read_stats.listed(reader, SQL)
+            return sql()
+        if self._api_failed:
+            if self.api_strict:
+                failure, cause = self._api_failure
+                raise ApiFallbackError(reader, failure, cause) from cause
             self.read_stats.listed(reader, SQL)
             return sql()
 
+        deadline = self.api_timeout
         try:
             api = self.api
         except Exception as error:
             return self._fall_back(reader, "transport", sql, error)
 
         try:
-            models = listing(api)
+            models = call_with_deadline(lambda: listing(api), deadline)
         except Exception as error:
             if _is_missing(error):
                 self.read_stats.listed(reader, API)
@@ -642,13 +736,16 @@ class SnowflakeConnector:
         """
         Read through SQL what the API couldn't give in full: a listing at the row limit
         (it may have left rows out), a model snowflake.core or tundra can't read, an API
-        error, or a transport failure, after which the rest of the run reads through SQL.
+        error, or a transport failure or stall, after which the rest of the run reads
+        through SQL, or in strict mode raises.
         """
+        first = reason in STICKY_REASONS and self._fail_api(reason, error)
         if self.api_strict:
-            raise ApiFallbackError(reader, reason) from error
+            raise ApiFallbackError(reader, reason, error) from error
         detail = f": {error}" if error is not None else ""
-        if reason in STICKY_REASONS and not self._api_failed:
-            self._api_failed = True
+        if isinstance(error, DeadlineExceeded):
+            detail += f" ({API_TIMEOUT_ENV} sets the deadline)"
+        if first:
             logger.warning(
                 f"{reader} through snowflake.core failed ({FALLBACK_REASONS[reason]}),"
                 f" so the rest of the run reads through SQL{detail}"
@@ -660,6 +757,18 @@ class SnowflakeConnector:
         self.read_stats.fell_back(reader, reason)
         self.read_stats.listed(reader, SQL)
         return sql()
+
+    def _fail_api(self, reason: str, error: Optional[BaseException] = None) -> bool:
+        """
+        Send the rest of the run's API-capable reads through SQL, or in strict mode have
+        them raise `reason`. Whether this is the first failure.
+        """
+        with self._api_failure_lock:
+            if self._api_failed:
+                return False
+            self._api_failure = (reason, error)
+            self._api_failed = True
+            return True
 
     @staticmethod
     def _api_granted_on(securable_type: str) -> str:
@@ -1292,27 +1401,31 @@ class SnowflakeConnector:
         Look an object up with the same listing that discovered it at plan time. A
         parent that is gone too (in SQL's words or as snowflake.core's 404) means the
         object is gone. A lookup that fails for any other reason reports the object as
-        present, since its absence can't be confirmed. That includes strict mode's
-        ApiFallbackError, so a lookup during apply can't stop a run halfway.
+        present, since its absence can't be confirmed. Strict mode doesn't apply: a
+        lookup runs during apply, where raising would stop a run halfway, so one the API
+        can't answer reads through SQL.
         """
         try:
-            if kind == "database":
-                identifier = ObjectName.single(name)
-                found = set(map(ObjectName.single, self.show_databases()))
-            elif kind == "schema":
-                identifier = ObjectName(name)
-                found = set(
-                    map(ObjectName, self.show_schemas(database=identifier.parent))
-                )
-            else:
-                identifier = ObjectName(name)
-                object_type = next(t for t in ALL_OBJECT_TYPES if t.name == kind)
-                found = set(
-                    map(
-                        ObjectName,
-                        self.show_table_objects(object_type, schema=identifier.parent),
+            with _not_strict():
+                if kind == "database":
+                    identifier = ObjectName.single(name)
+                    found = set(map(ObjectName.single, self.show_databases()))
+                elif kind == "schema":
+                    identifier = ObjectName(name)
+                    found = set(
+                        map(ObjectName, self.show_schemas(database=identifier.parent))
                     )
-                )
+                else:
+                    identifier = ObjectName(name)
+                    object_type = next(t for t in ALL_OBJECT_TYPES if t.name == kind)
+                    found = set(
+                        map(
+                            ObjectName,
+                            self.show_table_objects(
+                                object_type, schema=identifier.parent
+                            ),
+                        )
+                    )
         except Exception as exc:
             return not (
                 self.missing_object(exc)
