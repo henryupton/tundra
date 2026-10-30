@@ -111,10 +111,6 @@ def roles_account() -> FakeAccount:
     )
 
 
-def test_roles(mocker):
-    assert_plan("roles", roles_account(), mocker)
-
-
 def users_account() -> FakeAccount:
     return FakeAccount(
         warehouses=["REPORTING_WH"],
@@ -133,10 +129,6 @@ def users_account() -> FakeAccount:
         },
         grants=[Grant("ANALYST", "USAGE", "WAREHOUSE", "REPORTING_WH")],
     )
-
-
-def test_users(mocker):
-    assert_plan("users", users_account(), mocker)
 
 
 def wildcards_account() -> FakeAccount:
@@ -168,34 +160,27 @@ def wildcards_account() -> FakeAccount:
     )
 
 
-def test_wildcards_shares_and_ownership(mocker):
-    assert_plan("wildcards", wildcards_account(), mocker)
-
-
-def test_external_volume_grant_reported_with_an_underscore_is_the_same_grant(mocker):
+def underscored_volumes_account() -> FakeAccount:
     account = wildcards_account()
     account.grants = [
         replace(grant, on="EXTERNAL_VOLUME") if grant.on == "EXTERNAL VOLUME" else grant
         for grant in account.grants
     ]
-    assert_plan("wildcards", account, mocker)
+    return account
 
 
-def test_missing_objects_are_left_out_when_ignored(mocker):
-    account = FakeAccount(
+def missing_objects_account() -> FakeAccount:
+    return FakeAccount(
         warehouses=["REPORTING_WH"],
         databases=["RAW"],
         schemas=["RAW.PUBLIC"],
         objects={"TABLES": ["RAW.PUBLIC.EVENTS"]},
         roles={"READER": "SECURITYADMIN"},
     )
-    assert_plan("missing_objects", account, mocker, ignore_missing_objects=True)
 
 
-def test_keyword_named_schema_is_left_alone_when_already_granted(mocker):
-    # Regression for lab_results.aggregate: every run re-granted the schema and then
-    # revoked its future grants on the quoted form.
-    account = FakeAccount(
+def keyword_schema_account() -> FakeAccount:
+    return FakeAccount(
         databases=["LAB_RESULTS"],
         schemas=["LAB_RESULTS.AGGREGATE"],
         roles={"LOADER": "SECURITYADMIN"},
@@ -208,11 +193,10 @@ def test_keyword_named_schema_is_left_alone_when_already_granted(mocker):
             FutureGrant("LOADER", "SELECT", "VIEW", "LAB_RESULTS.AGGREGATE"),
         ],
     )
-    assert_plan("keyword_schema", account, mocker)
 
 
-def test_reserved_word_schema_resolves_to_the_stored_object(mocker):
-    account = FakeAccount(
+def reserved_schema_account() -> FakeAccount:
+    return FakeAccount(
         databases=["RAW"],
         schemas=["RAW.GROUP"],
         roles={"LOADER": "SECURITYADMIN"},
@@ -221,11 +205,10 @@ def test_reserved_word_schema_resolves_to_the_stored_object(mocker):
             Grant("LOADER", "USAGE", "SCHEMA", 'RAW."GROUP"'),
         ],
     )
-    assert_plan("reserved_schema", account, mocker)
 
 
-def test_unquoted_mixed_case_schema_resolves_to_uppercase(mocker):
-    account = FakeAccount(
+def mixed_case_schema_account() -> FakeAccount:
+    return FakeAccount(
         databases=["RAW"],
         schemas=["RAW.MIXEDCASE"],
         roles={"LOADER": "SECURITYADMIN"},
@@ -234,7 +217,52 @@ def test_unquoted_mixed_case_schema_resolves_to_uppercase(mocker):
             Grant("LOADER", "USAGE", "SCHEMA", "RAW.MIXEDCASE"),
         ],
     )
-    assert_plan("mixed_case_schema", account, mocker)
+
+
+# Every pinned plan: its spec, the account it's planned against and the loader's
+# options. The pinning test runs from this list, so a test that checks something across
+# all of them, like test_plan_invariants, sees every plan.
+PLANNED = [
+    ("roles", roles_account, {}),
+    ("users", users_account, {}),
+    # Shares and ownership
+    ("wildcards", wildcards_account, {}),
+    # An external volume grant reported with an underscore is the same grant
+    ("wildcards", underscored_volumes_account, {}),
+    # Missing objects are left out when ignored
+    ("missing_objects", missing_objects_account, {"ignore_missing_objects": True}),
+    # A keyword-named schema is left alone when already granted. Regression for
+    # lab_results.aggregate: every run re-granted the schema and then revoked its
+    # future grants on the quoted form.
+    ("keyword_schema", keyword_schema_account, {}),
+    # A reserved-word schema resolves to the stored object
+    ("reserved_schema", reserved_schema_account, {}),
+    # An unquoted mixed-case schema resolves to uppercase
+    ("mixed_case_schema", mixed_case_schema_account, {}),
+]
+
+
+@pytest.mark.parametrize(
+    "name,account,options",
+    PLANNED,
+    ids=[account.__name__.removesuffix("_account") for _, account, _ in PLANNED],
+)
+def test_the_plan_is_pinned(mocker, name, account, options):
+    assert_plan(name, account(), mocker, **options)
+
+
+def test_every_golden_spec_and_account_is_planned():
+    assert {name for name, _, _ in PLANNED} == {
+        spec.stem for spec in GOLDEN.glob("*.yml")
+    }
+    # An account left out of PLANNED, or a row dropped from it, would leave a plan
+    # pinned nowhere and checked by nothing
+    accounts = {
+        value
+        for key, value in globals().items()
+        if key.endswith("_account") and callable(value)
+    }
+    assert {account for _, account, _ in PLANNED} == accounts
 
 
 # A run builds one connector, and every phase shares its pool. Between them, these two
@@ -291,10 +319,10 @@ def test_cli_run_plans_and_applies_on_one_connector(mocker, monkeypatch, name, a
     # the connector runs it, whichever transport takes it from there
     execute = SnowflakeConnector.execute
 
-    def record(conn, operation):
+    def record(conn, operation, **options):
         ran_on.add(id(conn))
         applied.append(operation.sql)
-        return execute(conn, operation)
+        return execute(conn, operation, **options)
 
     mocker.patch.object(SnowflakeConnector, "run_query", run_query)
     mocker.patch.object(SnowflakeConnector, "execute", record)

@@ -13,7 +13,7 @@ from snowflake.core._generated import api_client
 from snowflake.core.exceptions import APIError, RetryTimeoutError
 from snowflake.core.role import Securable
 
-from tundra.cli.permissions import apply_query, print_command
+from tundra.cli.permissions import apply_query, print_command, report_writes
 from tundra.identifiers import ObjectName
 from tundra.operations import (
     FUTURE,
@@ -29,7 +29,15 @@ from tundra.operations import (
     SqlStatement,
 )
 from tundra.snowflake_api import SnowflakeApi
-from tundra.snowflake_connector import API, SQL, SnowflakeConnector
+from tundra.snowflake_connector import (
+    API,
+    FALLBACK_REASONS,
+    SQL,
+    STICKY_REASONS,
+    WRITE_FALLBACK_REASONS,
+    SnowflakeConnector,
+    WriteStats,
+)
 from tundra_test_utils.fake_account import (
     WRITE_CALLS,
     FakeAccount,
@@ -299,8 +307,8 @@ def test_a_404_that_doesnt_name_the_target_gets_sqls_answer(
     assert not conn._api_failed
     (warning,) = [r for r in caplog.records if r.levelno >= logging.WARNING]
     assert warning.getMessage().startswith(
-        f"{command['sql']} through snowflake.core failed (unmatched 404), so it runs"
-        " as SQL: "
+        f"{command['sql']} through snowflake.core failed (unrecognised 404), so it"
+        " runs as SQL: 002003 (404): "
     )
 
 
@@ -318,7 +326,44 @@ def test_an_unmatched_404_for_a_dropped_schema_is_vanished_by_sql(fake, conn):
     assert sql_writes(fake) == [command["sql"]]
 
 
-def test_a_missing_spec_role_is_an_error_on_both_transports(fake, conn):
+def test_a_statement_the_api_couldnt_answer_is_retried_as_sql(
+    fake, conn, monkeypatch, caplog
+):
+    # The API's 404 doesn't name the schema, and SQL finds it gone and then back
+    fake.api_write_errors["grant_future_privileges"] = [
+        api_error(404, "Object 'RAW.LANDING' not found.")
+    ] * 2
+    command = future_tables("raw.landing")
+    run_query = conn.run_query
+    ran = []
+
+    def recreated(query):
+        if query.startswith("GRANT "):
+            ran.append(query)
+            if len(ran) == 1:
+                raise Exception(
+                    "002003 (02000): SQL compilation error:\n"
+                    "Schema 'RAW.LANDING' does not exist or not authorized."
+                )
+        return run_query(query)
+
+    monkeypatch.setattr(conn, "run_query", recreated)
+
+    apply_query(conn, command)
+
+    assert command["run_status"] is True
+    assert not command.get("vanished")
+    # One request, one fallback and one warning for the statement
+    assert len(writes(fake)) == 1
+    assert ran == [command["sql"]] * 2
+    assert conn.write_stats.statements == Counter({SQL: 1})
+    assert conn.write_stats.fallbacks == Counter({"unmatched": 1})
+    assert len([r for r in caplog.records if r.levelno >= logging.WARNING]) == 1
+
+
+@pytest.mark.parametrize("sql_only", [False, True], ids=["api", "sql"])
+def test_a_missing_spec_role_is_an_error_on_both_transports(fake, conn, sql_only):
+    conn.sql_only = sql_only
     del fake.roles["LOADER"]
     command = future_tables()
 
@@ -326,7 +371,15 @@ def test_a_missing_spec_role_is_an_error_on_both_transports(fake, conn):
 
     assert command["run_status"] is False
     assert not command.get("vanished")
+    # SQL's answer, in its uppercase, wins after the API's 404 for the role
     assert "Role 'LOADER' does not exist or not authorized." in command["error"]
+    assert [call[0] for call in writes(fake)] == (
+        [] if sql_only else ["grant_future_privileges"]
+    )
+    assert sql_writes(fake) == [command["sql"]]
+    assert conn.write_stats.fallbacks == (
+        Counter() if sql_only else Counter({"unmatched": 1})
+    )
 
 
 @pytest.mark.parametrize(
@@ -350,12 +403,26 @@ def test_only_a_404_with_002003_is_a_missing_object(fake, conn, status, code):
     assert sql_writes(fake) == []
 
 
-def non_json() -> json.JSONDecodeError:
-    try:
-        api_error(502, body=b"<html>Bad Gateway</html>")
-    except json.JSONDecodeError as error:
-        return error
-    raise AssertionError("A non-JSON body should fail to decode")
+# Error bodies snowflake.core's APIError can't be built from, as a gateway may send
+UNREADABLE_BODIES = [
+    pytest.param(b"<html>Bad Gateway</html>", json.JSONDecodeError, id="not JSON"),
+    pytest.param(
+        b"<html>Passerelle d\xe9faillante</html>", UnicodeDecodeError, id="not UTF-8"
+    ),
+    pytest.param(b'"Bad Gateway"', AttributeError, id="a JSON string"),
+    pytest.param(b'{"message": null}', AttributeError, id="a null message"),
+]
+
+
+def unreadable(body: bytes, raised: type):
+    def error() -> Exception:
+        try:
+            api_error(502, body=body)
+        except raised as error:
+            return error
+        raise AssertionError("snowflake.core should fail to read the body")
+
+    return error
 
 
 FALLBACKS = [
@@ -382,7 +449,16 @@ FALLBACKS = [
         False,
         id="502",
     ),
-    pytest.param("non-json", non_json, "non-JSON error", False, id="JSONDecodeError"),
+    *(
+        pytest.param(
+            "non-json",
+            unreadable(*body.values),
+            "non-JSON error",
+            False,
+            id=f"body {body.id}",
+        )
+        for body in UNREADABLE_BODIES
+    ),
     pytest.param(
         "timeout",
         lambda: RetryTimeoutError("503 Service Unavailable query timeout"),
@@ -416,9 +492,11 @@ FALLBACKS = [
 
 @pytest.mark.parametrize("reason,error,description,sticky", FALLBACKS)
 def test_a_statement_the_api_cant_answer_runs_once_as_its_sql(
-    fake, conn, caplog, reason, error, description, sticky
+    fake, conn, mocker, caplog, reason, error, description, sticky
 ):
-    fake.api_write_errors["grant_future_privileges"] = [error()]
+    raised = error()
+    fake.api_write_errors["grant_future_privileges"] = [raised]
+    failed = mocker.spy(conn, "_fail_api")
     command = future_tables()
 
     with caplog.at_level(logging.WARNING):
@@ -435,6 +513,8 @@ def test_a_statement_the_api_cant_answer_runs_once_as_its_sql(
     assert f"{command['sql']} through snowflake.core failed ({description})" in (
         caplog.text
     )
+    # A sticky failure is set in the one locked place reads set it too
+    assert failed.call_args_list == ([mocker.call(reason, raised)] if sticky else [])
 
     # After a transport failure or a timeout the rest of the run goes through SQL
     # without trying
@@ -499,6 +579,20 @@ def test_a_status_snowflake_core_retries_runs_as_sql_once_its_window_closes(
         "  API-capable statements: 0 through the API, 2 through SQL"
         " (fallbacks: 1 retry timeout, then SQL for the rest of the run)."
     )
+
+
+@pytest.mark.parametrize("body,raised", UNREADABLE_BODIES)
+def test_a_gateway_page_snowflake_core_cant_read_runs_as_sql(
+    http, http_conn, body, raised
+):
+    http.answer("/api/v2/roles/LOADER/future-grants", body, 502, "POST")
+    command = future_tables()
+
+    apply_query(http_conn, command)
+
+    assert command["run_status"] is True
+    assert http_conn.ran == [command["sql"]]
+    assert http_conn.write_stats.fallbacks == Counter({"non-json": 1})
 
 
 def test_an_api_that_cant_be_built_runs_every_write_as_sql():
@@ -685,3 +779,115 @@ def test_the_summary_counts_fallbacks_by_reason(fake, conn):
         "  API-capable statements: 1 through the API, 3 through SQL"
         " (fallbacks: 1 syntax error, 1 server error)."
     )
+
+
+def test_a_repeated_fallback_is_logged_at_info_with_snowflakes_message(
+    fake, conn, caplog
+):
+    fake.api_write_errors["grant_future_privileges"] = [
+        api_error(400, "syntax error line 1 at position 12.", "001003")
+    ] * 2
+    first, second = future_tables(), future_tables("raw.landing")
+
+    with caplog.at_level(logging.INFO, logger="tundra.logger"):
+        apply_query(conn, first)
+        apply_query(conn, second)
+
+    logged = [
+        (r.levelno, r.getMessage())
+        for r in caplog.records
+        if "through snowflake.core failed" in r.getMessage()
+    ]
+    assert logged == [
+        (
+            level,
+            f"{command['sql']} through snowflake.core failed (syntax error), so it"
+            " runs as SQL: 001003 (400): syntax error line 1 at position 12.",
+        )
+        for level, command in [(logging.WARNING, first), (logging.INFO, second)]
+    ]
+    assert conn.write_stats.fallbacks == Counter({"syntax": 2})
+
+
+def test_the_rest_of_the_run_follows_the_reason_that_sent_it_to_sql():
+    stats = WriteStats()
+    stats.statements[SQL] += 3
+    stats.fell_back("stall")
+    stats.fell_back("unmatched")
+
+    assert stats.summary() == (
+        "  API-capable statements: 0 through the API, 3 through SQL (fallbacks: 1"
+        " unrecognised 404, 1 missed deadline, then SQL for the rest of the run)."
+    )
+
+
+@pytest.mark.parametrize(
+    "reasons", [FALLBACK_REASONS, WRITE_FALLBACK_REASONS], ids=["reads", "writes"]
+)
+def test_the_sticky_reasons_are_summarised_last(reasons):
+    assert set(list(reasons)[-len(STICKY_REASONS) :]) == STICKY_REASONS
+
+
+@pytest.mark.parametrize(
+    "fallbacks,api_failure,diverted,summary",
+    [
+        ({}, None, 0, "1 through the API, 2 through SQL."),
+        (
+            {},
+            "stall",
+            2,
+            "1 through the API, 2 through SQL (SQL for the rest of the run after a"
+            " listing's missed deadline).",
+        ),
+        (
+            {"unmatched": 1},
+            "transport",
+            1,
+            "1 through the API, 2 through SQL (fallbacks: 1 unrecognised 404, then SQL"
+            " for the rest of the run after a listing's transport error).",
+        ),
+        # A statement's own failure is already named
+        (
+            {"timeout": 1},
+            "timeout",
+            1,
+            "1 through the API, 2 through SQL (fallbacks: 1 retry timeout, then SQL for"
+            " the rest of the run).",
+        ),
+        # The API failed, but no statement it was meant to take ran as SQL for it
+        ({}, "stall", 0, "1 through the API, 2 through SQL."),
+    ],
+    ids=[
+        "none",
+        "a listing's",
+        "a listing's after a fallback",
+        "a statement's",
+        "a listing's that sent nothing to SQL",
+    ],
+)
+def test_the_summary_names_a_listings_failure_for_the_run(
+    fallbacks, api_failure, diverted, summary
+):
+    stats = WriteStats()
+    stats.statements.update({API: 1, SQL: 2})
+    stats.fallbacks.update(fallbacks)
+    stats.diverted = diverted
+
+    assert stats.summary(api_failure=api_failure) == (
+        f"  API-capable statements: {summary}"
+    )
+    assert stats.any_sent_to_sql is bool(fallbacks or diverted)
+
+
+def test_a_sql_only_apply_has_a_green_summary(fake, conn, mocker):
+    conn.sql_only = True
+    secho = mocker.patch("click.secho")
+
+    apply_query(conn, future_tables())
+    report_writes(conn)
+
+    secho.assert_called_once_with(
+        "  API-capable statements: 0 through the API, 1 through SQL (SQL only).",
+        fg="green",
+    )
+    assert conn.write_stats.diverted == 0

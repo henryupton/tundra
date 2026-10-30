@@ -19,6 +19,7 @@ BOTH_TRANSPORTS = (
     "test_golden_scenarios",
     "test_identifier_rendering",
     "test_apply_transports",
+    "test_plan_invariants",
 )
 
 # The connection settings every test starts from, whatever the shell running the tests
