@@ -6,6 +6,7 @@ import click
 from tundra import SpecLoadingError
 from tundra.operations import SqlStatement, api_capable
 from tundra.snowflake_connector import (
+    API,
     ApiFallbackError,
     InvalidSettingError,
     SnowflakeConnector,
@@ -79,6 +80,8 @@ def apply_query(conn, query):
     statement still queued against it. A fresh lookup separates the two outcomes: still
     gone marks the statement vanished, as there is nothing left to grant on; back again
     means it was recreated, so the statement is retried once against the new object.
+    The retry goes the way the first try ended: a statement the API couldn't answer, and
+    ran as SQL, is retried as SQL.
     """
     sql = query.get("sql", "")
     operation = getattr(query, "operation", None)
@@ -92,7 +95,7 @@ def apply_query(conn, query):
         else None
     )
     if missing and conn.object_exists(*missing):
-        executed = conn.execute(operation)
+        executed = conn.execute(operation, through_api=executed.transport == API)
     elif missing:
         query["vanished"] = True
 
@@ -104,13 +107,17 @@ def apply_query(conn, query):
 
 
 def report_writes(conn) -> None:
-    """One line on how the statements apply ran went: through the API or SQL."""
+    """
+    One line on how the statements apply ran went: through the API or SQL, and why any
+    ran as SQL when the API was meant to take them, including a listing's failure that
+    sent the rest of the run through SQL.
+    """
     stats = getattr(conn, "write_stats", None)
     if not isinstance(stats, WriteStats) or not stats.statements:
         return
     click.secho(
-        stats.summary(sql_only=conn.sql_only),
-        fg="yellow" if stats.fallbacks else "green",
+        stats.summary(sql_only=conn.sql_only, api_failure=conn.api_failure),
+        fg="yellow" if stats.any_sent_to_sql else "green",
     )
 
 
@@ -184,10 +191,10 @@ def run(
 
     Reads go through Snowflake's REST API where snowflake.core covers them, and any
     listing it can't give in full is read again through SQL. Some kinds of statement go
-    through the API too (the README lists them), and the rest run as SQL, as does any
-    statement the API can't answer. A listing with no answer after
-    PERMISSION_BOT_API_TIMEOUT seconds (default 120) is read through SQL, and so is the
-    rest of the run. PERMISSION_BOT_SQL_ONLY=true does what --sql-only does, and
+    through the API too, and the rest run as SQL, as does any statement the API can't
+    answer. A listing or statement with no answer after PERMISSION_BOT_API_TIMEOUT
+    seconds (default 120) goes through SQL, and so does the rest of the run.
+    PERMISSION_BOT_SQL_ONLY=true does what --sql-only does, and
     PERMISSION_BOT_API_STRICT=true fails the run instead of reading through SQL.
     """
     if role and user:

@@ -247,8 +247,11 @@ def invalid_model(*args):
     return [Database.from_dict({"name": "not-an-identifier"})]
 
 
-def non_json_error(*args):
-    return api_error(502, body=b"<html>Bad Gateway</html>")
+def unreadable_body(body):
+    def side_effect(*args):
+        return api_error(502, body=body)
+
+    return side_effect
 
 
 def raises(error):
@@ -284,7 +287,21 @@ TRIGGERS = [
     pytest.param(
         "api error", raises(api_error(500, "Internal error", "000603")), False, id="500"
     ),
-    pytest.param("non-json", non_json_error, False, id="JSONDecodeError"),
+    pytest.param(
+        "non-json", unreadable_body(b"<html>Bad Gateway</html>"), False, id="not JSON"
+    ),
+    pytest.param(
+        "non-json",
+        unreadable_body(b"<html>Passerelle d\xe9faillante</html>"),
+        False,
+        id="not UTF-8",
+    ),
+    pytest.param(
+        "non-json", unreadable_body(b'"Bad Gateway"'), False, id="JSON string"
+    ),
+    pytest.param(
+        "non-json", unreadable_body(b'{"message": null}'), False, id="null message"
+    ),
     pytest.param(
         "transport",
         raises(urllib3.exceptions.MaxRetryError(None, "/api/v2/databases")),

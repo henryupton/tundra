@@ -30,6 +30,10 @@ class DeadlineExceeded(Exception):
         self.deadline = deadline
 
 
+class ThreadStartError(RuntimeError):
+    """call_with_deadline couldn't start the thread to run a call on, so never made it."""
+
+
 def call_with_deadline(fn: Callable[[], R], deadline: float) -> R:
     """
     What ``fn`` returns or raises, if it finishes within ``deadline`` seconds, and
@@ -39,7 +43,9 @@ def call_with_deadline(fn: Callable[[], R], deadline: float) -> R:
     cancelled, so one that misses its deadline is left to finish on its own, and what it
     returns or raises then is dropped. Being a daemon, it doesn't hold up the
     interpreter's exit, which a concurrent.futures worker would. A deadline that isn't a
-    positive number raises ValueError before ``fn`` starts.
+    positive number raises ValueError before ``fn`` starts, and a thread that can't be
+    started raises ThreadStartError, so a caller can tell a call never made from one
+    that raised.
     """
     wait = float(deadline)
     if not wait > 0:
@@ -57,9 +63,13 @@ def call_with_deadline(fn: Callable[[], R], deadline: float) -> R:
             done.set()
 
     context = contextvars.copy_context()
-    threading.Thread(
+    thread = threading.Thread(
         target=context.run, args=(run,), name="call_with_deadline", daemon=True
-    ).start()
+    )
+    try:
+        thread.start()
+    except RuntimeError as error:
+        raise ThreadStartError(f"no thread to run the call on: {error}") from error
     if not done.wait(min(wait, threading.TIMEOUT_MAX)):
         raise DeadlineExceeded(deadline)
     if errors:

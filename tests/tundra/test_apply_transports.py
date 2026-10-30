@@ -14,7 +14,12 @@ from tundra.cli import cli
 from tundra.operations import api_capable, routes_to_api
 from tundra.snowflake_connector import SnowflakeConnector
 from tundra.snowflake_spec_loader import SnowflakeSpecLoader
-from tundra_test_utils.fake_account import WRITE_CALLS, FakeAccount, FutureGrant
+from tundra_test_utils.fake_account import (
+    WRITE_CALLS,
+    FakeAccount,
+    FakeApi,
+    FutureGrant,
+)
 
 SCENARIOS = [
     ("roles", golden.roles_account),
@@ -89,6 +94,70 @@ def test_a_plan_applies_the_same_on_either_transport(
             f"  API-capable statements: 0 through the API, {len(capable)} through SQL"
             " (SQL only)."
         ]
+
+
+@pytest.mark.parametrize(
+    "name,account", [scenario for scenario in SCENARIOS if scenario[0] != "users"]
+)
+def test_a_stalled_write_sends_the_rest_of_the_apply_through_sql(
+    mocker, monkeypatch, caplog, stall, read_transport, name, account
+):
+    spec = golden.GOLDEN / f"{name}.yml"
+    pending = plan(spec, account(), mocker)
+    expected = applied_as_sql(account(), [c["sql"] for c in pending])
+    capable = [c for c in pending if api_capable(c.operation)]
+    fake = account()
+    fake.install(mocker)
+    # Every write the API is sent is held, and made once it's released
+    held = stall()
+    for call in WRITE_CALLS:
+        mocker.patch.object(FakeApi, call, held.then(getattr(FakeApi, call)))
+    # The listings keep the default deadline, so only the writes miss theirs
+    generate = SnowflakeSpecLoader.generate_permission_queries
+
+    def generate_then_shorten(self, *args, **kwargs):
+        commands = generate(self, *args, **kwargs)
+        monkeypatch.setenv("PERMISSION_BOT_API_TIMEOUT", "0.01")
+        return commands
+
+    mocker.patch.object(
+        SnowflakeSpecLoader, "generate_permission_queries", generate_then_shorten
+    )
+
+    result = run(spec)
+
+    assert result.exit_code == 0, result.output
+    assert statuses(result.output) == sorted(f"[SUCCESS] {c['sql']};" for c in pending)
+    assert fake.state() == expected
+    stalls = [
+        record.getMessage()
+        for record in caplog.records
+        if "(missed deadline)" in record.getMessage()
+    ]
+    if read_transport == "rest":
+        # Strict mode is on for the reads, and doesn't stop the apply
+        assert held.wait_for(1)
+        assert len(held.threads) == 1
+        (warning,) = stalls
+        assert "the API request may still be applied" in warning
+        assert summary(result.output) == [
+            f"  API-capable statements: 0 through the API, {len(capable)} through SQL"
+            " (fallbacks: 1 missed deadline, then SQL for the rest of the run)."
+        ]
+    else:
+        assert held.threads == []
+        assert stalls == []
+        assert summary(result.output) == [
+            f"  API-capable statements: 0 through the API, {len(capable)} through SQL"
+            " (SQL only)."
+        ]
+
+    # The held request lands once it's released, and repeats what its SQL did
+    held.released.set()
+    for thread in held.threads:
+        thread.join(5)
+    assert len(api_writes(fake)) == len(held.threads)
+    assert fake.state() == expected
 
 
 @pytest.mark.parametrize("name,account", SCENARIOS)

@@ -33,7 +33,7 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 from snowflake.sqlalchemy import URL
 
-from tundra.concurrency import DeadlineExceeded, call_with_deadline
+from tundra.concurrency import DeadlineExceeded, ThreadStartError, call_with_deadline
 from tundra.identifiers import (
     RESERVED_KEYWORDS,
     InvalidNameError,
@@ -115,10 +115,11 @@ SQL_ONLY_ENV = "PERMISSION_BOT_SQL_ONLY"
 API_STRICT_ENV = "PERMISSION_BOT_API_STRICT"
 API_TIMEOUT_ENV = "PERMISSION_BOT_API_TIMEOUT"
 
-# How many seconds a REST listing may go unanswered before it's read through SQL.
-# snowflake.core sends its requests with no socket timeout, so a stalled connection
-# would otherwise hang the run. The slowest role in the dev probes took 40 s for both its
-# listings at 8 threads, and a listing cut off here is still answered, through SQL.
+# How many seconds a REST call, a listing or a statement apply sends, may go unanswered
+# before tundra goes through SQL instead. snowflake.core sends its requests with no
+# socket timeout, so a stalled connection would otherwise hang the run. The slowest role
+# in the dev probes took 40 s for both its listings at 8 threads. A listing cut off here
+# is still answered, through SQL, and a statement still runs, as its SQL.
 DEFAULT_API_TIMEOUT = 120.0
 
 API = "api"
@@ -132,22 +133,25 @@ FALLBACK_REASONS = {
     "non-json": "non-JSON error",
     "transport": "transport error",
     "timeout": "retry timeout",
-    "stall": "no answer within the deadline",
+    "stall": "missed deadline",
 }
 
-# After one of these the rest of the run reads and writes through SQL, rather than wait
-# out each request's own retries against an API that isn't answering
+# After one of these, on a read or a write, the rest of the run reads and writes through
+# SQL, rather than wait out each request's own retries, or another deadline, against an
+# API that isn't answering
 STICKY_REASONS = frozenset({"transport", "timeout", "stall"})
 
 # Why a statement sent through snowflake.core ran again as its SQL, as the summary
-# line after apply words each reason
+# line after apply words each reason. The sticky reasons come last, as in
+# FALLBACK_REASONS, so the summary's "then SQL for the rest of the run" follows them.
 WRITE_FALLBACK_REASONS = {
     "syntax": "syntax error",
     "server": "server error",
     "non-json": "non-JSON error",
+    "unmatched": "unrecognised 404",
     "transport": "transport error",
     "timeout": "retry timeout",
-    "unmatched": "unmatched 404",
+    "stall": FALLBACK_REASONS["stall"],
 }
 
 T = TypeVar("T")
@@ -160,7 +164,7 @@ for logger_name in ["snowflake.connector", "bot", "boto3"]:
 # snowflake.core has no handler of its own, unlike snowflake.connector and urllib3, so
 # with nothing on the root logger its records went to stderr through logging.lastResort.
 # One is an ERROR for each error body that isn't JSON, which tundra reports itself, and a
-# listing abandoned at its deadline could print it anywhere later in the run.
+# request abandoned at its deadline could print it anywhere later in the run.
 logging.getLogger("snowflake.core").addHandler(logging.NullHandler())
 
 
@@ -263,6 +267,22 @@ def api_error_detail(error: BaseException) -> Optional[str]:
     return " ".join(f"{info['error_code']} ({status}): {info['message']}".split())
 
 
+def _unreadable_error_body(error: BaseException) -> bool:
+    """
+    Whether snowflake.core's APIError constructor raised `error` reading the response
+    body: JSON that won't parse, bytes that aren't UTF-8, or JSON that isn't an object
+    of strings. A gateway's error page is the usual source, so its status never reaches
+    tundra. An APIError that was built and raised has no constructor frame in its
+    traceback.
+    """
+    traceback = error.__traceback__
+    while traceback is not None:
+        if traceback.tb_frame.f_globals.get("__name__") == "snowflake.core.exceptions":
+            return True
+        traceback = traceback.tb_next
+    return False
+
+
 def _fallback_reason(error: BaseException) -> Optional[str]:
     """Why a failed REST listing should be read through SQL, or None to raise it."""
     import urllib3
@@ -271,10 +291,12 @@ def _fallback_reason(error: BaseException) -> Optional[str]:
 
     if isinstance(error, DeadlineExceeded):
         return "stall"
+    # Nothing was sent, and with no thread there's no deadline for the next call either
+    if isinstance(error, ThreadStartError):
+        return "transport"
     if isinstance(error, ValidationError):
         return "validation"
-    # Raised by APIError's constructor itself, for an error body that isn't JSON
-    if isinstance(error, json.JSONDecodeError):
+    if isinstance(error, json.JSONDecodeError) or _unreadable_error_body(error):
         return "non-json"
     if isinstance(error, RetryTimeoutError):
         return "timeout"
@@ -297,16 +319,28 @@ def _write_fallback_reason(error: BaseException) -> Optional[str]:
     """
     Why a statement snowflake.core failed to run should run again as its SQL, or None
     to report the error: SQL Snowflake built from the request and couldn't parse, a
-    5xx, an error body that isn't JSON, a transport failure, or a retry timeout.
-    snowflake.core resends a request answered 429, 503 or 504 (or polls a 202) until
-    its retry window closes, so those end as a RetryTimeoutError, never an APIError.
-    GRANT and REVOKE are idempotent, so running the SQL after a request that may have
-    landed late is safe. Anything else is Snowflake refusing the statement, which its
-    SQL would be refused for too.
+    5xx, an error body snowflake.core can't read, a transport failure, a retry
+    timeout, or no answer by the deadline (a stall). snowflake.core resends a request
+    answered 429, 503 or 504 (or polls a 202) until its retry window closes, so those
+    end as a RetryTimeoutError, never an APIError, unless the deadline cuts the window
+    short. A thread that couldn't be started to send the request under the deadline
+    counts as a transport failure: nothing was sent.
+
+    A request abandoned at its deadline may still land after its SQL has run, after
+    later statements, and even after tundra exits. snowflake.core sends the first
+    request with no socket timeout, so one with no answer can be applied whenever
+    Snowflake gets to it; it resends one answered 429, 503 or 504 until 600 s after the
+    first send; and a 202 is a job Snowflake finishes whatever the client does. Within
+    a run that's safe: GRANT and REVOKE are idempotent, and no plan holds a statement
+    that a late one would undo (test_plan_invariants checks the plans the golden and
+    apply tests make), so a late request repeats what's already done. Across runs it
+    isn't: a late GRANT that lands after the next run has revoked the privilege puts
+    it back until the run after. Anything else is Snowflake refusing the statement,
+    which its SQL would be refused for too.
     """
     from snowflake.core.exceptions import APIError
 
-    if isinstance(error, json.JSONDecodeError):
+    if isinstance(error, json.JSONDecodeError) or _unreadable_error_body(error):
         return "non-json"
     if isinstance(error, APIError):
         if not error.status:
@@ -327,26 +361,34 @@ def _transport_summary(
     by_reason: Mapping[str, int],
     reasons: Mapping[str, str],
     sql_only: bool,
+    read_failure: Optional[str] = None,
 ) -> str:
     line = (
         f"  API-capable {noun}: {by_transport.get(API, 0)} through the API,"
         f" {by_transport.get(SQL, 0)} through SQL"
     )
+    notes = []
     if by_reason:
-        line += " (fallbacks: {})".format(
-            ", ".join(
+        notes.append(
+            "fallbacks: "
+            + ", ".join(
                 f"{by_reason[reason]} {description}"
                 for reason, description in reasons.items()
                 if by_reason.get(reason)
             )
-            + (
-                ", then SQL for the rest of the run"
-                if STICKY_REASONS & by_reason.keys()
-                else ""
-            )
         )
-    elif sql_only:
-        line += " (SQL only)"
+    if STICKY_REASONS & by_reason.keys():
+        notes.append("then SQL for the rest of the run")
+    elif read_failure is not None:
+        # A listing's sticky failure, which the read summary printed before apply began
+        # or a lookup during apply hit, sent the rest of the statements through SQL
+        then = "SQL for the rest of the run after a listing's"
+        then += f" {FALLBACK_REASONS[read_failure]}"
+        notes.append(f"then {then}" if notes else then)
+    if not notes and sql_only:
+        notes.append("SQL only")
+    if notes:
+        line += f" ({', '.join(notes)})"
     return line + "."
 
 
@@ -400,12 +442,17 @@ class ReadStats:
 class WriteStats:
     """
     How many API-capable statements apply ran through each transport, and why any it
-    sent through snowflake.core ran again as SQL. Apply runs one statement at a time.
+    sent through snowflake.core ran again as SQL, a stall among them. Apply runs one
+    statement at a time and counts each from its own thread, so a request left running
+    past its deadline never counts itself, and no lock is needed.
     """
 
     def __init__(self) -> None:
         self.statements: Counter = Counter()
         self.fallbacks: Counter = Counter()
+        # Statements ROUTES sends to the API that ran as SQL because the API had failed
+        # for the run
+        self.diverted = 0
 
     def applied(self, transport: str) -> None:
         self.statements[transport] += 1
@@ -413,10 +460,18 @@ class WriteStats:
     def fell_back(self, reason: str) -> None:
         self.fallbacks[reason] += 1
 
-    def summary(self, sql_only: bool = False) -> str:
+    @property
+    def any_sent_to_sql(self) -> bool:
+        """Whether any statement the API was meant to take ran as SQL instead."""
+        return bool(self.fallbacks or self.diverted)
+
+    def summary(self, sql_only: bool = False, api_failure: Optional[str] = None) -> str:
         """
         One line for the apply, in the read summary's form. Statements only SQL can
-        express, like GRANT OWNERSHIP, aren't counted.
+        express, like GRANT OWNERSHIP, aren't counted. `api_failure` is the sticky
+        reason that sent the rest of the run through SQL (SnowflakeConnector.api_failure),
+        named here when a listing's failure rather than a statement's set it, and only
+        if a statement ran as SQL because of it.
         """
         return _transport_summary(
             "statements",
@@ -424,6 +479,7 @@ class WriteStats:
             self.fallbacks,
             WRITE_FALLBACK_REASONS,
             sql_only,
+            api_failure if self.diverted else None,
         )
 
 
@@ -620,6 +676,14 @@ class SnowflakeConnector:
         return api_timeout()
 
     @property
+    def api_failure(self) -> Optional[str]:
+        """
+        The sticky reason that sent the rest of the run through SQL (see _fail_api), or
+        None while the API is still in use.
+        """
+        return self._api_failure[0] if self._api_failed else None
+
+    @property
     def api(self) -> SnowflakeApi:
         """
         snowflake.core, built the first time a reader needs it over a connection checked
@@ -677,12 +741,14 @@ class SnowflakeConnector:
         """
         Read through snowflake.core: `listing` fetches the models and `parse` reads
         them. The SQL reader `sql` answers instead when the connector is SQL only, after
-        a transport error, and for any listing that falls back (see _fall_back). A 404
-        for an object that doesn't exist is raised, as SQL's "does not exist" is.
+        a sticky failure (see _fail_api), and for any listing that falls back (see
+        _fall_back). A 404 for an object that doesn't exist is raised, as SQL's "does
+        not exist" is.
 
         The listing runs under the api_timeout deadline, and one with no answer by then
-        is read through SQL like a transport error. Building the API isn't timed: Root
-        only runs SQL as it's built, over the connector's own timeouts.
+        is read through SQL like a transport error, as is one with no thread to run on.
+        Building the API isn't timed: Root only runs SQL as it's built, over the
+        connector's own timeouts.
 
         In strict mode every read after a sticky failure (a transport error, retry
         timeout or stall) raises at once, so a load stops after one deadline rather than
@@ -736,8 +802,8 @@ class SnowflakeConnector:
         """
         Read through SQL what the API couldn't give in full: a listing at the row limit
         (it may have left rows out), a model snowflake.core or tundra can't read, an API
-        error, or a transport failure or stall, after which the rest of the run reads
-        through SQL, or in strict mode raises.
+        error, or a transport failure, retry timeout or stall, after which the rest of
+        the run reads and writes through SQL. In strict mode a read raises instead.
         """
         first = reason in STICKY_REASONS and self._fail_api(reason, error)
         if self.api_strict:
@@ -748,7 +814,7 @@ class SnowflakeConnector:
         if first:
             logger.warning(
                 f"{reader} through snowflake.core failed ({FALLBACK_REASONS[reason]}),"
-                f" so the rest of the run reads through SQL{detail}"
+                f" so the rest of the run goes through SQL{detail}"
             )
         else:
             logger.info(
@@ -760,8 +826,8 @@ class SnowflakeConnector:
 
     def _fail_api(self, reason: str, error: Optional[BaseException] = None) -> bool:
         """
-        Send the rest of the run's API-capable reads through SQL, or in strict mode have
-        them raise `reason`. Whether this is the first failure.
+        Send the rest of the run's API-capable reads and writes through SQL, or in
+        strict mode have the reads raise `reason`. Whether this is the first failure.
         """
         with self._api_failure_lock:
             if self._api_failed:
@@ -1309,25 +1375,35 @@ class SnowflakeConnector:
         """
         return not (self.sql_only or self._api_failed) and routes_to_api(operation)
 
-    def execute(self, operation: Operation) -> Executed:
+    def execute(self, operation: Operation, through_api: bool = True) -> Executed:
         """
         Run one planned statement, through snowflake.core where writes_through_api
         says so and as its SQL otherwise. A statement snowflake.core gets no usable
         answer for (see _write_fallback_reason) runs once more as its SQL, and the
         fallback is logged. The error the statement ends with is returned, not raised.
+        `through_api=False` runs it as its SQL whatever ROUTES says, as apply retries a
+        statement whose first try ended as SQL.
+
+        The request runs under the api_timeout deadline, as a listing does, and one with
+        no answer by then runs as its SQL, as does the rest of the run. Building the API
+        isn't timed, and a failure to build it is a transport error, as is a thread that
+        can't be started to send it. A statement that runs as SQL starts no thread.
         """
-        if isinstance(operation, SqlStatement) or not self.writes_through_api(
-            operation
-        ):
+        if not through_api or isinstance(operation, SqlStatement):
+            return self._execute_sql(operation)
+        if not self.writes_through_api(operation):
+            if self._api_failed and not self.sql_only and routes_to_api(operation):
+                self.write_stats.diverted += 1
             return self._execute_sql(operation)
 
+        deadline = self.api_timeout
         try:
             api = self.api
         except Exception as error:
             return self._write_fall_back(operation, "transport", error)
 
         try:
-            operation.send(api)
+            call_with_deadline(lambda: operation.send(api), deadline)
         except Exception as error:
             reason = _write_fallback_reason(error)
             # The REST wording of a missing schema or database is modelled on a missing
@@ -1354,13 +1430,28 @@ class SnowflakeConnector:
     def _write_fall_back(
         self, operation: Operation, reason: str, error: BaseException
     ) -> Executed:
+        """
+        Run a statement snowflake.core gave no usable answer for as its SQL, once, and
+        return how that went. After a sticky reason (a transport error, retry timeout or
+        stall) the rest of the run goes through SQL too. Strict mode doesn't apply: a
+        write runs during apply, where raising would stop a run halfway.
+
+        The first fallback for each reason is a warning, and a repeat is logged at INFO,
+        so a kind of statement the API fails every time doesn't fill apply's output. The
+        summary after apply counts them all.
+        """
         then = "it runs as SQL"
-        if reason in STICKY_REASONS and not self._api_failed:
-            self._api_failed = True
+        if reason in STICKY_REASONS and self._fail_api(reason, error):
             then = "it and the rest of the run go through SQL"
-        logger.warning(
+        detail = api_error_detail(error) or _one_line(error)
+        if reason == "stall":
+            # The request can't be called back, and Snowflake may still apply it
+            then += ", though the API request may still be applied"
+            detail += f" ({API_TIMEOUT_ENV} sets the deadline)"
+        log = logger.info if self.write_stats.fallbacks[reason] else logger.warning
+        log(
             f"{operation.sql} through snowflake.core failed"
-            f" ({WRITE_FALLBACK_REASONS[reason]}), so {then}: {_one_line(error)}"
+            f" ({WRITE_FALLBACK_REASONS[reason]}), so {then}: {detail}"
         )
         self.write_stats.fell_back(reason)
         return self._execute_sql(operation)

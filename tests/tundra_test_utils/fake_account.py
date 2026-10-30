@@ -175,8 +175,9 @@ def api_error(
     status: int, message: str = "", error_code: str = "002003", body: Any = None
 ) -> APIError:
     """
-    The error snowflake.core raises for an HTTP response, built offline. A `body` that
-    isn't JSON raises JSONDecodeError here, as it does inside snowflake.core.
+    The error snowflake.core raises for an HTTP response, built offline. A `body` its
+    APIError can't read (not JSON, not UTF-8, or JSON that isn't an object of strings)
+    raises here, as it does inside snowflake.core.
     """
     if body is None:
         body = json.dumps(

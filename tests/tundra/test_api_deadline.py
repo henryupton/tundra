@@ -13,14 +13,18 @@ import threading
 from collections import Counter
 from pathlib import Path
 
+import click
 import pytest
+import test_golden_scenarios as golden
 import urllib3
+from click.testing import CliRunner
 from snowflake.core.exceptions import NotFoundError
 from test_rest_reads import TRIGGERS, names_account
 
 import tundra
+from tundra.cli import cli
 from tundra.cli.permissions import apply_query
-from tundra.concurrency import DeadlineExceeded, call_with_deadline
+from tundra.concurrency import DeadlineExceeded, ThreadStartError, call_with_deadline
 from tundra.snowflake_api import SnowflakeApi
 from tundra.snowflake_connector import (
     DEFAULT_API_TIMEOUT,
@@ -33,11 +37,17 @@ from tundra.snowflake_connector import (
     api_timeout,
 )
 from tundra.snowflake_spec_loader import SnowflakeSpecLoader
-from tundra_test_utils.fake_account import FakeAccount, FakeApi, Grant, api_error
+from tundra_test_utils.fake_account import (
+    WRITE_CALLS,
+    FakeAccount,
+    FakeApi,
+    Grant,
+    api_error,
+)
 from tundra_test_utils.offline import OfflineError
 from tundra_test_utils.offline_http import OfflineHttp
 from tundra_test_utils.snowflake_connector import MockSnowflakeConnector
-from tundra_test_utils.stall import WATCHED_THREAD
+from tundra_test_utils.stall import WATCHED_THREAD, refuse_watched_threads
 
 DATABASES = ["raw", '"SNOWFLAKE"', '"Mixed-Db"', '"lower_db"']
 
@@ -122,6 +132,56 @@ def test_a_bad_deadline_is_refused_before_the_call_starts(deadline, raised):
     assert WATCHED_THREAD not in [thread.name for thread in threading.enumerate()]
 
 
+def test_a_thread_that_cant_start_raises_thread_start_error(mocker):
+    refused = refuse_watched_threads(mocker)
+    called = []
+
+    with pytest.raises(ThreadStartError) as raised:
+        call_with_deadline(lambda: called.append(1), 5)
+
+    # Told apart from a call that raised RuntimeError, and never made
+    assert raised.value.__cause__ is refused
+    assert str(raised.value) == "no thread to run the call on: can't start new thread"
+    assert called == []
+
+
+def test_a_listing_with_no_thread_to_run_on_reads_through_sql_for_the_run(mocker):
+    account = names_account()
+    account.install(mocker)
+    refused = refuse_watched_threads(mocker)
+    failed = mocker.spy(SnowflakeConnector, "_fail_api")
+    conn = SnowflakeConnector()
+
+    first = conn.show_databases()
+    second = conn.show_databases()
+
+    # Nothing was sent, and the API isn't tried again
+    assert first == second and first
+    assert account.api_calls == []
+    assert len(account.queries) == 2
+    assert conn.api_failure == "transport"
+    (_, reason, cause), _ = failed.call_args
+    assert failed.call_count == 1
+    assert reason == "transport" and isinstance(cause, ThreadStartError)
+    assert cause.__cause__ is refused
+    assert conn.read_stats.fallbacks == Counter({("show_databases", "transport"): 1})
+
+
+def test_strict_mode_raises_for_a_listing_with_no_thread_to_run_on(mocker, monkeypatch):
+    monkeypatch.setenv("PERMISSION_BOT_API_STRICT", "1")
+    account = names_account()
+    account.install(mocker)
+    refuse_watched_threads(mocker)
+    conn = SnowflakeConnector()
+
+    with pytest.raises(ApiFallbackError) as raised:
+        conn.show_databases()
+
+    assert raised.value.reason == "transport"
+    assert isinstance(raised.value.__cause__, ThreadStartError)
+    assert account.api_calls == [] and account.queries == []
+
+
 def test_a_deadline_past_the_lock_limit_is_waited_on():
     # The call is still running when the wait starts, so the wait is given the deadline
     answer = threading.Event()
@@ -182,9 +242,9 @@ def test_a_listing_with_no_answer_reads_through_sql_for_the_rest_of_the_run(
         for record in caplog.records
         if record.levelno >= logging.WARNING
     ] == [
-        "show_databases through snowflake.core failed (no answer within the"
-        " deadline), so the rest of the run reads through SQL: still running after"
-        " 0.01 s (PERMISSION_BOT_API_TIMEOUT sets the deadline)"
+        "show_databases through snowflake.core failed (missed deadline), so the rest"
+        " of the run goes through SQL: still running after 0.01 s"
+        " (PERMISSION_BOT_API_TIMEOUT sets the deadline)"
     ]
 
     conn.show_warehouses()
@@ -196,8 +256,7 @@ def test_a_listing_with_no_answer_reads_through_sql_for_the_rest_of_the_run(
     assert conn.read_stats.by_transport() == Counter({"sql": 3})
     assert conn.read_stats.summary() == (
         "  API-capable listings: 0 through the API, 3 through SQL"
-        " (fallbacks: 1 no answer within the deadline, then SQL for the rest of the"
-        " run)."
+        " (fallbacks: 1 missed deadline, then SQL for the rest of the run)."
     )
 
 
@@ -304,9 +363,9 @@ def test_strict_mode_raises_on_a_stall(mocker, monkeypatch, stall, short_deadlin
 
     assert (error.value.reader, error.value.reason) == ("show_databases", "stall")
     assert str(error.value) == (
-        "show_databases would read through SQL instead of the API (no answer within"
-        " the deadline of 0.01 s, which PERMISSION_BOT_API_TIMEOUT sets), and"
-        " PERMISSION_BOT_API_STRICT is set"
+        "show_databases would read through SQL instead of the API (missed deadline of"
+        " 0.01 s, which PERMISSION_BOT_API_TIMEOUT sets), and PERMISSION_BOT_API_STRICT"
+        " is set"
     )
     assert isinstance(error.value.__cause__, DeadlineExceeded)
     assert account.queries == []
@@ -317,8 +376,7 @@ def test_strict_mode_raises_on_a_stall(mocker, monkeypatch, stall, short_deadlin
     [
         (
             "stall",
-            "no answer within the deadline of 0.01 s, which PERMISSION_BOT_API_TIMEOUT"
-            " sets",
+            "missed deadline of 0.01 s, which PERMISSION_BOT_API_TIMEOUT sets",
         ),
         (ConnectionResetError("reset"), "transport error"),
     ],
@@ -430,7 +488,7 @@ def test_the_summary_names_a_stall_apart_from_a_retry_timeout():
 
     assert stats.summary() == (
         "  API-capable listings: 4 through the API, 6 through SQL (fallbacks: 1 retry"
-        " timeout, 2 no answer within the deadline, then SQL for the rest of the run)."
+        " timeout, 2 missed deadline, then SQL for the rest of the run)."
     )
 
 
@@ -456,6 +514,7 @@ def test_a_late_answer_changes_nothing(
     hooked = []
     monkeypatch.setattr(threading, "excepthook", hooked.append)
     caplog.set_level(logging.DEBUG)
+    caplog.set_level(logging.DEBUG, logger="tundra.logger")
     caplog.clear()
     capfd.readouterr()
 
@@ -635,6 +694,7 @@ def test_a_late_error_inside_snowflake_core_prints_nothing(
     conn = offline_conn(http, monkeypatch)
     assert SnowflakeConnector.show_databases(conn) == ["raw"]
     caplog.set_level(logging.DEBUG)
+    caplog.set_level(logging.DEBUG, logger="tundra.logger")
     caplog.clear()
     capfd.readouterr()
 
@@ -832,3 +892,50 @@ def test_a_load_refuses_a_bad_timeout_before_it_reads(mocker, monkeypatch):
         SnowflakeSpecLoader(str(spec))
 
     assert account.queries == [] and account.api_calls == []
+
+
+# The listings a plan reads through the API
+LISTINGS = (
+    "databases",
+    "warehouses",
+    "users",
+    "schemas",
+    "database_roles",
+    "grants_to_role",
+    "future_grants_to_role",
+    "grants_to_user",
+)
+
+
+@pytest.mark.parametrize(
+    "name,note",
+    [
+        ("roles", " (SQL for the rest of the run after a listing's missed deadline)"),
+        # The users spec plans no statement on an API row
+        ("users", ""),
+    ],
+    ids=["roles", "users"],
+)
+def test_a_planning_stall_is_named_after_apply_when_it_sent_statements_to_sql(
+    mocker, monkeypatch, stall, short_deadline, name, note
+):
+    monkeypatch.setenv("PERMISSION_BOT_MAX_WORKERS", "1")
+    fake = getattr(golden, f"{name}_account")()
+    fake.install(mocker)
+    held = stall()
+    for listing in LISTINGS:
+        mocker.patch.object(FakeApi, listing, side_effect=held)
+    secho = mocker.spy(click, "secho")
+
+    result = CliRunner().invoke(cli, ["run", str(golden.GOLDEN / f"{name}.yml")])
+
+    assert result.exit_code == 0, result.output
+    assert held.wait_for(1)
+    assert [c for c in fake.api_calls if c[0] in WRITE_CALLS] == []
+    (summary,) = [
+        call
+        for call in secho.call_args_list
+        if call.args and "API-capable statements" in str(call.args[0])
+    ]
+    assert summary.args[0].endswith(f" through SQL{note}.")
+    assert summary.kwargs["fg"] == ("yellow" if note else "green")

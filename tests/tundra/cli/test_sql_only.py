@@ -197,8 +197,23 @@ def test_strict_mode_fails_a_plan_that_falls_back(mocker, tmp_path):
     )
 
 
-@pytest.mark.parametrize("command", ["run", "spec-test"])
-def test_help_documents_the_transport_switches(command):
+@pytest.mark.parametrize(
+    "command,timeout",
+    [
+        # A run's writes have the deadline too
+        (
+            "run",
+            "A listing or statement with no answer after PERMISSION_BOT_API_TIMEOUT"
+            " seconds (default 120) goes through SQL, and so does the rest of the run.",
+        ),
+        (
+            "spec-test",
+            "A listing with no answer after PERMISSION_BOT_API_TIMEOUT seconds (default"
+            " 120) is read through SQL, and so is the rest of the run.",
+        ),
+    ],
+)
+def test_help_documents_the_transport_switches(command, timeout):
     result = invoke(command, "--help")
 
     assert result.exit_code == 0
@@ -209,10 +224,9 @@ def test_help_documents_the_transport_switches(command):
         "PERMISSION_BOT_API_TIMEOUT",
     ):
         assert text in result.output
-    assert (
-        "A listing with no answer after PERMISSION_BOT_API_TIMEOUT seconds (default"
-        " 120) is read through SQL, and so is the rest of the run."
-    ) in " ".join(result.output.split())
+    assert timeout in " ".join(result.output.split())
+    # It points nowhere the reader can't follow: the README has no list of API rows yet
+    assert "README" not in result.output
 
 
 # PERMISSION_BOT_API_TIMEOUT
@@ -252,7 +266,7 @@ def test_run_reads_through_sql_after_a_stall(mocker, stalled_api):
     assert pending(result.output) == expected
     assert re.fullmatch(
         r"  API-capable listings: 0 through the API, \d+ through SQL \(fallbacks: \d+"
-        r" no answer within the deadline, then SQL for the rest of the run\)\.",
+        r" missed deadline, then SQL for the rest of the run\)\.",
         summary(result.output),
     )
 
@@ -265,7 +279,7 @@ def test_spec_test_reads_through_sql_after_a_stall(mocker, stalled_api):
     assert result.exit_code == 0, result.output
     assert re.fullmatch(
         r"  API-capable listings: 0 through the API, \d+ through SQL \(fallbacks: \d+"
-        r" no answer within the deadline, then SQL for the rest of the run\)\.",
+        r" missed deadline, then SQL for the rest of the run\)\.",
         summary(result.output),
     )
 
@@ -284,9 +298,8 @@ def test_strict_mode_fails_a_load_that_stalls(mocker, stalled_api, args):
     assert isinstance(result.exception, SystemExit)
     # It names the setting that gives listings longer
     assert (
-        "would read through SQL instead of the API (no answer within the deadline of"
-        " 0.01 s, which PERMISSION_BOT_API_TIMEOUT sets), and PERMISSION_BOT_API_STRICT"
-        " is set"
+        "would read through SQL instead of the API (missed deadline of 0.01 s, which"
+        " PERMISSION_BOT_API_TIMEOUT sets), and PERMISSION_BOT_API_STRICT is set"
     ) in " ".join(result.output.split())
 
 

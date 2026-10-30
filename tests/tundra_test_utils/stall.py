@@ -1,7 +1,7 @@
 """Calls held open the way a stalled connection holds a request, for the deadline tests."""
 
 import threading
-from typing import Any, Iterable, List
+from typing import Any, Callable, Iterable, List
 
 # The name tundra.concurrency.call_with_deadline gives the threads it runs calls on
 WATCHED_THREAD = "call_with_deadline"
@@ -40,6 +40,19 @@ class Stall:
             raise self.outcome
         return self.outcome
 
+    def then(self, call: Callable[..., Any]) -> Callable[..., Any]:
+        """
+        A side effect held here and then answered by `call`, as a request that lands
+        late is: a FakeApi write patched with it changes the account once it's released.
+        An `outcome` that's an exception is raised instead, and `call` never made.
+        """
+
+        def late(*args: Any) -> Any:
+            self(*args)
+            return call(*args)
+
+        return late
+
     def wait_for(self, calls: int = 1) -> bool:
         """
         Whether `calls` calls have reached the stall within HOLD_LIMIT seconds. A read
@@ -63,3 +76,20 @@ def release(stalls: Iterable[Stall]) -> None:
             assert not thread.is_alive(), "A watched thread outlived its test"
     expired = [stall for stall in stalls if stall.expired]
     assert not expired, f"A call was held for {HOLD_LIMIT} s: nothing gave up on it"
+
+
+def refuse_watched_threads(mocker: Any) -> RuntimeError:
+    """
+    Make Thread.start fail, as it does at the process's thread limit, for the threads
+    call_with_deadline starts, and return the error it raises.
+    """
+    refused = RuntimeError("can't start new thread")
+    start = threading.Thread.start
+
+    def refuse(thread: threading.Thread) -> None:
+        if thread.name == WATCHED_THREAD:
+            raise refused
+        start(thread)
+
+    mocker.patch.object(threading.Thread, "start", refuse)
+    return refused
