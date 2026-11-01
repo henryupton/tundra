@@ -3616,8 +3616,8 @@ class TestWireFormGrantMatching:
 
 
 class TestKeywordNamedSchema:
-    """Regression for landing_ga4.aggregate. Snowflake reports the schema as
-    LANDING_GA4."AGGREGATE" because AGGREGATE is a keyword, and the spec spells it
+    """Regression for lab_results.aggregate. Snowflake reports the schema as
+    LAB_RESULTS."AGGREGATE" because AGGREGATE is a keyword, and the spec spells it
     unquoted. Until the two canonicalised to the same name, every run re-issued the
     schema's grants and then revoked its FUTURE grants on the quoted form.
     """
@@ -3627,19 +3627,19 @@ class TestKeywordNamedSchema:
         mocker.patch.object(
             SnowflakeConnector,
             "full_schema_list",
-            return_value=["landing_ga4.aggregate"],
+            return_value=["lab_results.aggregate"],
         )
         return SnowflakeGrantsGenerator({"loader": grants}, {})
 
     def test_held_future_grants_are_neither_regranted_nor_revoked(self, mocker):
-        reported = SnowflakeConnector.snowflaky('LANDING_GA4."AGGREGATE".<TABLE>')
+        reported = SnowflakeConnector.snowflaky('LAB_RESULTS."AGGREGATE".<TABLE>')
         generator = self._generator(mocker, {"select": {"table": [reported]}})
 
         commands = generator.generate_table_and_view_grants(
             "loader",
-            {"read": ["landing_ga4.aggregate.*"], "write": []},
+            {"read": ["lab_results.aggregate.*"], "write": []},
             set(),
-            {"landing_ga4"},
+            {"lab_results"},
         )
 
         assert [c["sql"] for c in commands if c["sql"].startswith("REVOKE")] == []
@@ -3648,28 +3648,28 @@ class TestKeywordNamedSchema:
             for c in commands
             if c["sql"]
             in (
-                "GRANT select ON FUTURE tables IN schema landing_ga4.aggregate TO ROLE loader",
-                "GRANT select ON ALL tables IN schema landing_ga4.aggregate TO ROLE loader",
+                "GRANT select ON FUTURE tables IN schema lab_results.aggregate TO ROLE loader",
+                "GRANT select ON ALL tables IN schema lab_results.aggregate TO ROLE loader",
             )
         ]
         assert len(schema_table_grants) == 2
         assert all(c["already_granted"] for c in schema_table_grants)
 
     def test_held_schema_usage_is_not_regranted(self, mocker):
-        reported = SnowflakeConnector.snowflaky('LANDING_GA4."AGGREGATE"')
+        reported = SnowflakeConnector.snowflaky('LAB_RESULTS."AGGREGATE"')
         generator = self._generator(mocker, {"usage": {"schema": [reported]}})
 
         commands = generator.generate_schema_grants(
             "loader",
-            {"read": ["landing_ga4.aggregate"], "write": []},
+            {"read": ["lab_results.aggregate"], "write": []},
             set(),
-            {"landing_ga4"},
+            {"lab_results"},
         )
 
         assert commands == [
             {
                 "already_granted": True,
-                "sql": "GRANT usage ON schema landing_ga4.aggregate TO ROLE loader",
+                "sql": "GRANT usage ON schema lab_results.aggregate TO ROLE loader",
             }
         ]
 

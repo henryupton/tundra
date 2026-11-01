@@ -721,7 +721,7 @@ class SnowflakeConnector:
              527-INVESTIGATE$ISSUES.ANALYTICS.COUNTRY_CODES -->
              --> "527-INVESTIGATE$ISSUES".ANALYTICS.COUNTRY_CODES;
              DEPARTMENT - DATA --> "DEPARTMENT - DATA"
-             LANDING_GA4."AGGREGATE" --> landing_ga4.aggregate
+             LAB_RESULTS."AGGREGATE" --> lab_results.aggregate
              analytics.group --> analytics."GROUP"
 
         Every spelling of the same object comes out as the same string, because fetched

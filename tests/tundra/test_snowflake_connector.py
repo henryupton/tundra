@@ -403,7 +403,7 @@ class TestSnowflakeConnector:
     def test_show_future_grants_in_schema_named_after_a_keyword(self, mocker):
         # Regression: Snowflake quotes AGGREGATE in SHOW FUTURE GRANTS output because
         # it's a keyword, though not a reserved one. Left quoted, it never matched the
-        # spec's landing_ga4.aggregate, and every run re-granted then revoked it.
+        # spec's lab_results.aggregate, and every run re-granted then revoked it.
         mocker.patch("sqlalchemy.create_engine")
         conn = SnowflakeConnector()
         conn.run_query = mocker.MagicMock()
@@ -416,15 +416,15 @@ class TestSnowflakeConnector:
                     "grantee_name": "LOADER",
                     "privilege": "SELECT",
                     "grant_on": "TABLE",
-                    "name": 'LANDING_GA4."AGGREGATE".<TABLE>',
+                    "name": 'LAB_RESULTS."AGGREGATE".<TABLE>',
                 },
             ],
         )
 
-        future_grants = conn.show_future_grants(schema="landing_ga4.aggregate")
+        future_grants = conn.show_future_grants(schema="lab_results.aggregate")
 
         assert future_grants == {
-            "loader": {"select": {"table": ["landing_ga4.aggregate.<table>"]}}
+            "loader": {"select": {"table": ["lab_results.aggregate.<table>"]}}
         }
 
     def test_show_future_grants_in_database(self, mocker):
@@ -724,14 +724,14 @@ class TestSnowflakyQuotedIdentifiers:
         "quoted,unquoted,expected",
         [
             (
-                'LANDING_GA4."AGGREGATE".<TABLE>',
-                "landing_ga4.aggregate.<table>",
-                "landing_ga4.aggregate.<table>",
+                'LAB_RESULTS."AGGREGATE".<TABLE>',
+                "lab_results.aggregate.<table>",
+                "lab_results.aggregate.<table>",
             ),
             (
-                'LANDING_GA4."AGGREGATE"',
-                "LANDING_GA4.AGGREGATE",
-                "landing_ga4.aggregate",
+                'LAB_RESULTS."AGGREGATE"',
+                "LAB_RESULTS.AGGREGATE",
+                "lab_results.aggregate",
             ),
             (
                 'DATABASE_1.SCHEMA_1."TABLE$A"',
@@ -771,7 +771,7 @@ class TestSnowflakyQuotedIdentifiers:
     @pytest.mark.parametrize(
         "name",
         [
-            'LANDING_GA4."AGGREGATE".<TABLE>',
+            'LAB_RESULTS."AGGREGATE".<TABLE>',
             "analytics.schema.table",
             'DATABASE_1."GROUP"',
             'database_1."Aggregate"',
@@ -1001,8 +1001,8 @@ class TestMissingObjects:
                 ("database", "ZZ_DB"),
             ),
             (
-                "Schema 'TEST_ANALYTICS.PR_1__DATA_1' does not exist or not authorized.",
-                ("schema", "TEST_ANALYTICS.PR_1__DATA_1"),
+                "Schema 'TRIAL_DATABASE.PREVIEW_TMP1' does not exist or not authorized.",
+                ("schema", "TRIAL_DATABASE.PREVIEW_TMP1"),
             ),
             (
                 "Table 'DB.S.T' does not exist or not authorized.",
@@ -1022,8 +1022,8 @@ class TestMissingObjects:
                 ("streamlit", "DB.S.APP"),
             ),
             (
-                "Semantic View 'DB.S.SVW' does not exist or not authorized.",
-                ("semantic view", "DB.S.SVW"),
+                "Semantic View 'DB.S.SEM' does not exist or not authorized.",
+                ("semantic view", "DB.S.SEM"),
             ),
         ],
     )
@@ -1046,12 +1046,12 @@ class TestMissingObjects:
     def test_object_exists_schema(self, mocker):
         conn = MockSnowflakeConnector()
         show_schemas = mocker.patch.object(
-            conn, "show_schemas", return_value=["test_analytics.pr_1__data_1"]
+            conn, "show_schemas", return_value=["trial_database.preview_tmp1"]
         )
 
-        assert conn.object_exists("schema", "TEST_ANALYTICS.PR_1__DATA_1")
-        assert not conn.object_exists("schema", "TEST_ANALYTICS.PR_2__DATA_2")
-        show_schemas.assert_called_with(database="test_analytics")
+        assert conn.object_exists("schema", "TRIAL_DATABASE.PREVIEW_TMP1")
+        assert not conn.object_exists("schema", "TRIAL_DATABASE.PREVIEW_TMP2")
+        show_schemas.assert_called_with(database="trial_database")
 
     def test_object_exists_database(self, mocker):
         conn = MockSnowflakeConnector()
@@ -1063,10 +1063,10 @@ class TestMissingObjects:
     def test_object_exists_table_like_looks_in_its_schema(self, mocker):
         conn = MockSnowflakeConnector()
         show = mocker.patch.object(
-            conn, "show_table_objects", return_value=["db.s.svw"]
+            conn, "show_table_objects", return_value=["db.s.sem"]
         )
 
-        assert conn.object_exists("semantic view", "DB.S.SVW")
+        assert conn.object_exists("semantic view", "DB.S.SEM")
         show.assert_called_with(SEMANTIC_VIEW, schema="db.s")
 
     @pytest.mark.parametrize(

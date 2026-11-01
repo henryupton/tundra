@@ -65,18 +65,18 @@ class TestGrantCoverage:
         assert not GrantCoverage().covers("database_1.schema_1.table_1")
 
     def test_keyword_schema_matches_however_it_is_quoted(self):
-        # Regression: the spec says landing_ga4.aggregate, SHOW FUTURE GRANTS says
-        # LANDING_GA4."AGGREGATE".<TABLE>. Both name the same schema.
+        # Regression: the spec says lab_results.aggregate, SHOW FUTURE GRANTS says
+        # LAB_RESULTS."AGGREGATE".<TABLE>. Both name the same schema.
         coverage = GrantCoverage()
-        coverage.add_schema("landing_ga4.aggregate")
+        coverage.add_schema("lab_results.aggregate")
 
-        assert coverage.covers('LANDING_GA4."AGGREGATE".<TABLE>')
-        assert coverage.covers('landing_ga4."AGGREGATE".table_1')
+        assert coverage.covers('LAB_RESULTS."AGGREGATE".<TABLE>')
+        assert coverage.covers('lab_results."AGGREGATE".table_1')
 
         quoted = GrantCoverage()
-        quoted.add_schema('LANDING_GA4."AGGREGATE"')
+        quoted.add_schema('LAB_RESULTS."AGGREGATE"')
 
-        assert quoted.covers("landing_ga4.aggregate.<table>")
+        assert quoted.covers("lab_results.aggregate.<table>")
 
     def test_reserved_schema_matches_however_it_is_quoted(self):
         coverage = GrantCoverage()

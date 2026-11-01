@@ -107,7 +107,7 @@ class SnowflakeGrantsGenerator:
 
         account_grants_to_role: a dict, mapping role to its account-level privileges
             and the role that granted each, for roles declaring `account_privileges`.
-            e.g. {'transformer': {'apply tag': 'securityadmin', 'create share': 'accountadmin'}}
+            e.g. {'loader': {'execute task': 'accountadmin', 'apply tag': 'securityadmin'}}
         application_roles: the member_of references (app.role) the spec loader resolved
             to application roles rather than database roles, e.g.
             {'snowflake.cortex_analyst_requests_viewer'}
@@ -175,8 +175,8 @@ class SnowflakeGrantsGenerator:
         <application_role>, given as an app.role FQN.
 
         For example:
-        is_granted_application_role('monitor', 'snowflake.cortex_analyst_requests_viewer') -> True
-        means that role monitor has already been granted the SNOWFLAKE application's
+        is_granted_application_role('auditor', 'snowflake.cortex_analyst_requests_viewer') -> True
+        means that role auditor has already been granted the SNOWFLAKE application's
         CORTEX_ANALYST_REQUESTS_VIEWER application role on the Snowflake server.
         """
         granted = (
