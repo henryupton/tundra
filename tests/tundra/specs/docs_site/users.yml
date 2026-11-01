@@ -1,0 +1,38 @@
+users:
+  - etl_bot:
+      can_login: true
+      type: SERVICE
+      comment: Runs the nightly load.
+      member_of:
+        - loader
+      default_role: loader
+      default_warehouse: loading
+
+  - report_bot:
+      can_login: true
+      type: SERVICE
+      member_of:
+        - reader
+
+  - user_one:
+      can_login: true
+      member_of:
+        - analyst
+        - reader
+      default_role: analyst
+      default_warehouse: reporting
+      email: user.one@example.com
+      first_name: User
+      last_name: One
+
+  # The same roles as user_one, listed the other way round
+  - user_two:
+      can_login: true
+      member_of:
+        - reader
+        - analyst
+
+  - user_three:
+      can_login: false
+      member_of:
+        - reader
