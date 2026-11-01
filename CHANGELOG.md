@@ -139,6 +139,12 @@ tundra compares Snowflake names by identity. Every spelling that Snowflake resol
 - Future grants are read once for each spec role, through the REST API or with `SHOW FUTURE GRANTS TO ROLE`, `--ignore-memberships` included. 1.0.6 read them once for each database and once for each schema. A role that doesn't exist holds none, and tundra logs `Role <name> doesn't exist, so it holds no future grants` at INFO.
 - A spec plans the same statements whichever transport reads the grants.
 
+### Docs site
+
+- `tundra docs generate` and `tundra docs serve` build and serve a static site for a spec, with a page for each role, user and object and a graph of the role hierarchy. The site reads the spec alone by default. With `--live` it also reads the account, read only, and marks each membership and usage grant as applied, not applied or drift. The README's [Docs site](README.md#docs-site) section covers the options.
+- The site opens from disk with no network. Graphviz 16.1.0 compiled to WebAssembly (Viz.js 3.31.0) ships in the package to lay out the graphs in the browser, which adds about 1.3 MB to the wheel.
+- New modules `tundra.docs.catalogue`, `tundra.docs.live` and `tundra.docs.site`. `build_catalogue` returns the catalogue as a dict holding the same data as `catalogue.json`.
+
 ### Python API
 
 - New module `tundra.identifiers` with `ObjectName`, `NamePattern` and `InvalidNameError`. `ObjectName` replaces `SnowflakeConnector.snowflaky` and the other `snowflaky_*` helpers, which are removed along with `show_external_volumes`, `show_grants_to_database_role` and `FUTURE_PLACEHOLDER_PATTERN`. For names in REST models it has `ObjectName.from_api`, and the module has `canonical_from_api` and `api_granted_name`.
