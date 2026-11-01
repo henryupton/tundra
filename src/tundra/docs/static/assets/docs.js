@@ -49,14 +49,28 @@
     integration: 'Integration',
     external_volume: 'External volume',
   };
+  // Nav sections, keyed as metadata.counts counts them, so a section's length and the
+  // count shown anywhere else are the same number
   const SECTIONS = [
-    ['role', 'Roles'],
-    ['user', 'Users'],
-    ['warehouse', 'Warehouses'],
-    ['database', 'Databases'],
-    ['integration', 'Integrations'],
-    ['external_volume', 'External volumes'],
+    ['roles', 'Roles'],
+    ['managed_roles', 'Database and application roles'],
+    ['users', 'Users'],
+    ['warehouses', 'Warehouses'],
+    ['databases', 'Databases'],
+    ['integrations', 'Integrations'],
+    ['external_volumes', 'External volumes'],
   ];
+  const COUNTED_AS = {
+    role: 'roles',
+    database_role: 'managed_roles',
+    application_role: 'managed_roles',
+    user: 'users',
+    warehouse: 'warehouses',
+    database: 'databases',
+    integration: 'integrations',
+    external_volume: 'external_volumes',
+  };
+  const COUNTS = C.metadata.counts;
   const STATUS = {
     both: { icon: '✓', label: 'applied', text: 'in the spec and on Snowflake' },
     spec_only: { icon: '○', label: 'not applied', text: 'in the spec, not on Snowflake' },
@@ -194,13 +208,13 @@
   const search = document.getElementById('search');
 
   function buildNav() {
-    const byType = {};
-    Object.keys(NODES).forEach((id) => push(byType, prefixOf(id), id));
-    nav.innerHTML = SECTIONS.filter((s) => byType[s[0]]).map(([type, label]) => {
-      const ids = byType[type].slice().sort(byName);
+    const bySection = {};
+    Object.keys(NODES).forEach((id) => push(bySection, COUNTED_AS[NODES[id].type], id));
+    nav.innerHTML = SECTIONS.filter((s) => bySection[s[0]]).map(([section, label]) => {
+      const ids = bySection[section].slice().sort(byName);
       const items = ids.map((id) => `<li data-name="${esc(NODES[id].name.toLowerCase())}"><a href="${href(id)}" data-id="${esc(id)}">${swatch(NODES[id])}${esc(NODES[id].name)}</a></li>`).join('');
-      const open = ids.length <= 60 || type === 'role' ? ' open' : '';
-      return `<details${open} data-type="${type}"><summary>${label}<span class="count">${ids.length}</span></summary><ul>${items}</ul></details>`;
+      const open = ids.length <= 60 || section === 'roles' ? ' open' : '';
+      return `<details${open} data-section="${section}"><summary>${label}<span class="count">${ids.length}</span></summary><ul>${items}</ul></details>`;
     }).join('') + '<div class="empty" hidden>Nothing matches.</div>';
   }
 
@@ -240,24 +254,22 @@
   const main = document.getElementById('main');
 
   function overview() {
-    const count = (fn) => Object.values(NODES).filter(fn).length;
     const stat = (n, label, target) => `<a class="stat link" href="${target}"><b>${n.toLocaleString()}</b><span>${label}</span></a>`;
-    const people = count((n) => n.type === 'user' && n.family === 'people');
-    const service = count((n) => n.type === 'user' && n.family === 'service');
-    const firstOf = (type) => {
-      const ids = Object.keys(NODES).filter((id) => prefixOf(id) === type).sort(byName);
+    const firstOf = (section) => {
+      const ids = Object.keys(NODES).filter((id) => COUNTED_AS[NODES[id].type] === section).sort(byName);
       return ids.length ? href(ids[0]) : '#/';
     };
     const stats = [
-      stat(count((n) => n.type === 'role' && n.defined), 'roles in the spec', firstOf('role')),
-      stat(people, 'people', firstOf('user')),
-      stat(service, 'service users', firstOf('user')),
+      stat(COUNTS.roles, 'roles', firstOf('roles')),
+      COUNTS.managed_roles ? stat(COUNTS.managed_roles, 'database and application roles', firstOf('managed_roles')) : '',
+      stat(COUNTS.people, 'people', firstOf('users')),
+      stat(COUNTS.service_users, 'service users', firstOf('users')),
       stat(C.user_groups.length, 'distinct role sets among people', '#/graph'),
-      stat(count((n) => n.type === 'warehouse'), 'warehouses', firstOf('warehouse')),
-      stat(count((n) => n.type === 'database'), 'databases', firstOf('database')),
-    ];
-    if (count((n) => n.type === 'integration')) stats.push(stat(count((n) => n.type === 'integration'), 'integrations', firstOf('integration')));
-    if (count((n) => n.type === 'external_volume')) stats.push(stat(count((n) => n.type === 'external_volume'), 'external volumes', firstOf('external_volume')));
+      stat(COUNTS.warehouses, 'warehouses', firstOf('warehouses')),
+      stat(COUNTS.databases, 'databases', firstOf('databases')),
+      COUNTS.integrations ? stat(COUNTS.integrations, 'integrations', firstOf('integrations')) : '',
+      COUNTS.external_volumes ? stat(COUNTS.external_volumes, 'external volumes', firstOf('external_volumes')) : '',
+    ].filter(Boolean);
 
     const generated = new Date(C.metadata.generated_at);
     let html = `<div class="page"><h1>${esc(C.metadata.spec)}</h1>
@@ -982,9 +994,13 @@
   }
 
   const summary = document.getElementById('summary');
-  const roleCount = Object.values(NODES).filter((n) => n.type === 'role' && n.defined).length;
-  const userCount = Object.values(NODES).filter((n) => n.type === 'user').length;
-  summary.textContent = `${plural(roleCount, 'role')} · ${plural(userCount, 'user')} · ${LIVE ? 'spec and live grants' : 'spec only'} · generated ${new Date(C.metadata.generated_at).toLocaleString()}`;
+  summary.textContent = [
+    plural(COUNTS.roles, 'role'),
+    COUNTS.managed_roles ? plural(COUNTS.managed_roles, 'database or application role', 'database and application roles') : '',
+    plural(COUNTS.users, 'user'),
+    LIVE ? 'spec and live grants' : 'spec only',
+    `generated ${new Date(C.metadata.generated_at).toLocaleString()}`,
+  ].filter(Boolean).join(' · ');
 
   buildNav();
   window.addEventListener('hashchange', route);

@@ -183,6 +183,10 @@ def test_metadata_says_it_is_live(catalogue):
     assert catalogue["metadata"]["live"] is True
 
 
+def test_roles_only_snowflake_has_are_counted_as_roles(catalogue):
+    assert catalogue["metadata"]["counts"]["roles"] == 9
+
+
 class TestReadOnlyConnector:
     def test_refuses_to_apply_a_statement(self):
         conn = ReadOnlyConnector()

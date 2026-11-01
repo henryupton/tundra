@@ -1,5 +1,6 @@
 import json
 import re
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
@@ -290,6 +291,32 @@ class TestShape:
             r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", metadata["generated_at"]
         )
         datetime.strptime(metadata["generated_at"], "%Y-%m-%dT%H:%M:%SZ")
+
+    def test_counts_give_each_kind_one_definition(self, catalogue):
+        # Roles are account roles, defined or only referenced. Snowflake's database
+        # and application roles are counted on their own.
+        assert catalogue["metadata"]["counts"] == {
+            "roles": 8,
+            "managed_roles": 1,
+            "users": 5,
+            "people": 3,
+            "service_users": 2,
+            "warehouses": 3,
+            "databases": 3,
+            "integrations": 1,
+            "external_volumes": 0,
+        }
+
+    def test_counts_match_the_nodes_the_site_lists(self, catalogue):
+        types = Counter(node["type"] for node in catalogue["nodes"].values())
+        counts = catalogue["metadata"]["counts"]
+        assert counts["roles"] == types["role"]
+        assert (
+            counts["managed_roles"]
+            == types["database_role"] + types["application_role"]
+        )
+        assert counts["users"] == types["user"]
+        assert counts["people"] + counts["service_users"] == counts["users"]
 
     def test_every_node_is_keyed_by_its_id(self, catalogue):
         family_ids = {f["id"] for f in catalogue["families"]}
