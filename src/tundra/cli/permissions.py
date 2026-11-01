@@ -191,10 +191,10 @@ def run(
 
     Reads go through Snowflake's REST API where snowflake.core covers them, and any
     listing it can't give in full is read again through SQL. Some kinds of statement go
-    through the API too, and the rest run as SQL, as does any statement the API can't
-    answer. A listing or statement with no answer after PERMISSION_BOT_API_TIMEOUT
-    seconds (default 120) goes through SQL, and so does the rest of the run.
-    PERMISSION_BOT_SQL_ONLY=true does what --sql-only does, and
+    through the API too (the README lists them), and the rest run as SQL, as does any
+    statement the API can't answer. A listing or statement with no answer after
+    PERMISSION_BOT_API_TIMEOUT seconds (default 120) goes through SQL, and so does the
+    rest of the run. PERMISSION_BOT_SQL_ONLY=true does what --sql-only does, and
     PERMISSION_BOT_API_STRICT=true fails the run instead of reading through SQL.
     """
     if role and user:

@@ -198,22 +198,24 @@ def test_strict_mode_fails_a_plan_that_falls_back(mocker, tmp_path):
 
 
 @pytest.mark.parametrize(
-    "command,timeout",
+    "command,timeout,readme",
     [
-        # A run's writes have the deadline too
+        # A run's writes have the deadline too, and the README lists the API rows
         (
             "run",
             "A listing or statement with no answer after PERMISSION_BOT_API_TIMEOUT"
             " seconds (default 120) goes through SQL, and so does the rest of the run.",
+            "Some kinds of statement go through the API too (the README lists them)",
         ),
         (
             "spec-test",
             "A listing with no answer after PERMISSION_BOT_API_TIMEOUT seconds (default"
             " 120) is read through SQL, and so is the rest of the run.",
+            None,
         ),
     ],
 )
-def test_help_documents_the_transport_switches(command, timeout):
+def test_help_documents_the_transport_switches(command, timeout, readme):
     result = invoke(command, "--help")
 
     assert result.exit_code == 0
@@ -224,9 +226,12 @@ def test_help_documents_the_transport_switches(command, timeout):
         "PERMISSION_BOT_API_TIMEOUT",
     ):
         assert text in result.output
-    assert timeout in " ".join(result.output.split())
-    # It points nowhere the reader can't follow: the README has no list of API rows yet
-    assert "README" not in result.output
+    help_text = " ".join(result.output.split())
+    assert timeout in help_text
+    if readme is None:
+        assert "README" not in help_text
+    else:
+        assert readme in help_text
 
 
 # PERMISSION_BOT_API_TIMEOUT
