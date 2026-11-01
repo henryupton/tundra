@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<link rel="stylesheet" href="assets/docs.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="#/">__TITLE__</a>
+  <span class="summary" id="summary"></span>
+  <nav class="views">
+    <a href="#/" data-view="overview">Overview</a>
+    <a href="#/graph" data-view="graph">Graph</a>
+  </nav>
+</header>
+<aside class="sidebar">
+  <input id="search" type="search" placeholder="Search  ( / )" autocomplete="off" spellcheck="false" aria-label="Search roles, users and objects">
+  <nav id="nav" aria-label="Catalogue"></nav>
+</aside>
+<main id="main" tabindex="-1"></main>
+<div id="tooltip" role="tooltip" hidden></div>
+<script id="tundra-catalogue" type="application/json">__CATALOGUE__</script>
+<script src="assets/vendor/viz-global.js"></script>
+<script src="assets/docs.js"></script>
+</body>
+</html>

@@ -1,0 +1,3 @@
+integrations:
+  - s3_landing:
+      category: storage
