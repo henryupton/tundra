@@ -65,10 +65,10 @@ roles:
 
 ```yaml
 roles:
-  - sysadmin:
+  - loader:
       account_privileges: [execute task, execute managed task]
-  - transformer:
-      account_privileges: [apply tag, manage grants]
+  - tag_admin:
+      account_privileges: [apply tag]
 ```
 
 Declaring the key makes the list authoritative, like `warehouses`: undeclared account grants on that role are
@@ -82,10 +82,10 @@ latter are also rejected at spec load, so grant them outside Tundra.
 
 ```yaml
 roles:
-  - orchestrator:
+  - scheduler:
       privileges:
         tasks:
-          write: [raw.*.*]
+          write: [demo.jobs.*]
 ```
 
 | read      | write              |
@@ -104,7 +104,7 @@ revokes accordingly. Membership is fully managed: anything granted but not liste
 
 ```yaml
 roles:
-  - monitor:
+  - auditor:
       member_of:
         - snowflake.usage_viewer                    # database role
         - snowflake.cortex_analyst_requests_viewer  # application role
@@ -153,8 +153,8 @@ fragment holding any top-level keys, merged before validation:
 spec/
   settings.yml
   databases.yml
-  roles/custom.yml
-  users/service.yml
+  roles/common.yml
+  users/systems.yml
 ```
 
 List sections concatenate. An entity defined twice is an error naming both files. Scalar settings must agree.

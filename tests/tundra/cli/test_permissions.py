@@ -4,8 +4,8 @@ import sqlalchemy
 from tundra.cli.permissions import apply_query, print_command
 from tundra_test_utils.snowflake_connector import MockSnowflakeConnector
 
-SQL = "GRANT select ON FUTURE views IN schema test_analytics.pr_1__data_1 TO ROLE developer"
-SCHEMA_GONE = "Schema 'TEST_ANALYTICS.PR_1__DATA_1' does not exist or not authorized."
+SQL = "GRANT select ON FUTURE views IN schema trial_database.preview_tmp1 TO ROLE developer"
+SCHEMA_GONE = "Schema 'TRIAL_DATABASE.PREVIEW_TMP1' does not exist or not authorized."
 
 
 def snowflake_error(message: str) -> sqlalchemy.exc.DBAPIError:
@@ -63,7 +63,7 @@ class TestApplyQuery:
         conn, run_query = connector(
             mocker,
             [snowflake_error(SCHEMA_GONE), None],
-            ["test_analytics.pr_1__data_1"],
+            ["trial_database.preview_tmp1"],
         )
         query = {"sql": SQL, "already_granted": False}
 
@@ -77,7 +77,7 @@ class TestApplyQuery:
         conn, _ = connector(
             mocker,
             [snowflake_error(SCHEMA_GONE), snowflake_error(SCHEMA_GONE)],
-            ["test_analytics.pr_1__data_1"],
+            ["trial_database.preview_tmp1"],
         )
         query = {"sql": SQL, "already_granted": False}
 
