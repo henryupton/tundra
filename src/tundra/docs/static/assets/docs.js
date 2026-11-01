@@ -28,6 +28,8 @@
   };
   const CUSTOM_COLOURS = ['#eda100', '#e34948'];
   const MUTED = '#52514e';
+  const MAX_ZOOM = 1.5;
+  const LINEAGE_HEIGHT = { min: 180, max: 560 };
   const DRIFT = '#d03b3b';
   const DOUBLE = {};
   const FAMILY = {};
@@ -101,6 +103,7 @@
   }[c]));
   const prefixOf = (id) => id.slice(0, id.indexOf(':'));
   const tint = (hex, alpha) => hex + Math.round(alpha * 255).toString(16).padStart(2, '0');
+  const clip = (text, n) => (text.length > n ? text.slice(0, n - 1) + '…' : text);
   const plural = (n, one, many) => `${n.toLocaleString()} ${n === 1 ? one : (many || one + 's')}`;
   const by = (key) => (a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0);
   const sortName = (id) => (NODES[id] ? NODES[id].name : id).replace(/"/g, '').toLowerCase();
@@ -519,7 +522,7 @@
 
   function groupView(group) {
     const roles = group.roles.map(nameOf);
-    let sub = roles.slice(0, 3).join(' + ') + (roles.length > 3 ? ` + ${roles.length - 3} more` : '');
+    let sub = clip(roles.slice(0, 2).join(' + '), 40) + (roles.length > 2 ? ` + ${roles.length - 2} more` : '');
     if (!roles.length) sub = 'no roles';
     const single = group.users.length === 1;
     return {
@@ -616,7 +619,7 @@
 
   const quote = (s) => '"' + String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
 
-  function dot(model) {
+  function dot(model, rankdir) {
     const ids = Object.keys(model.nodes);
     const dotId = {};
     ids.forEach((id, i) => { dotId[id] = 'n' + i; });
@@ -624,7 +627,8 @@
     model.edges.forEach((e) => { connected[e.source] = connected[e.target] = true; });
     const lines = [
       'digraph tundra {',
-      ' graph [rankdir=LR, newrank=true, splines=spline, nodesep=0.14, ranksep=1.2, fontname="Helvetica", bgcolor="transparent", pad=0.4, outputorder=edgesfirst];',
+      // A focused graph is small, so its ranks sit closer and its labels draw larger
+      ` graph [rankdir=${rankdir}, newrank=true, splines=spline, ${model.focus ? 'nodesep=0.18, ranksep=0.6, pad=0.2' : 'nodesep=0.14, ranksep=1.2, pad=0.4'}, fontname="Helvetica", bgcolor="transparent", outputorder=edgesfirst];`,
       ' node [shape=box, style="rounded,filled", fontname="Helvetica", fontcolor="#0b0b0b", penwidth=1.2, margin="0.12,0.06"];',
       ' edge [arrowsize=0.6];',
     ];
@@ -710,15 +714,28 @@
   function renderGraph(el, model, options) {
     const count = Object.keys(model.nodes).length;
     el.innerHTML = `<div class="loading">Laying out ${plural(count, 'node')}…</div>`;
-    const built = dot(model);
+    const built = dot(model, 'LR');
     return viz().then((instance) => {
-      const svg = instance.renderSVGElement(built.source);
+      let svg = instance.renderSVGElement(built.source);
+      // A focused graph turns top to bottom when that draws it at least a fifth larger in
+      // the space it has, which a long chain of roles in a narrow panel usually does
+      if (model.focus) {
+        const tall = instance.renderSVGElement(dot(model, 'TB').source);
+        if (fitScale(tall, el, options) > 1.2 * fitScale(svg, el, options)) svg = tall;
+      }
       el.innerHTML = '';
       el.appendChild(svg);
       return interact(el, svg, model, built.nodeOf, options || {});
     }).catch((error) => {
       el.innerHTML = `<div class="error">Couldn't lay out the graph: ${esc(error && error.message ? error.message : error)}</div>`;
     });
+  }
+
+  function fitScale(svg, el, options) {
+    const [, , width, height] = svg.getAttribute('viewBox').split(' ').map(Number);
+    const box = options && options.mini ? el.parentElement : el;
+    const room = options && options.mini ? LINEAGE_HEIGHT.max - 16 : box.clientHeight;
+    return Math.min(box.clientWidth / width, room / height, MAX_ZOOM);
   }
 
   function interact(el, svg, model, nodeOf, options) {
@@ -795,15 +812,39 @@
     });
     svg.addEventListener('click', () => { if (moved) return; state.pinned = null; render(); });
 
-    // Wheel zoom and drag pan act on the viewBox; a drag that moves isn't a click
+    // The view starts fitted: the whole drawing as large as the element allows, but no
+    // more than MAX_ZOOM pixels to a Graphviz point, so a small neighbourhood stays at
+    // reading size. It refits on resize until the reader zooms or pans.
     const vb = svg.viewBox.baseVal;
-    const initial = { x: vb.x, y: vb.y, width: vb.width, height: vb.height };
+    const drawing = { x: vb.x, y: vb.y, width: vb.width, height: vb.height };
     let drag = null;
+    let adjusted = false;
     svg.removeAttribute('width');
     svg.removeAttribute('height');
+    if (options.mini) {
+      // A lineage panel takes the height its graph needs at the width it has
+      const panel = el.parentElement;
+      const scale = Math.min(panel.clientWidth / drawing.width, MAX_ZOOM);
+      panel.style.height = Math.round(Math.max(LINEAGE_HEIGHT.min, Math.min(LINEAGE_HEIGHT.max, drawing.height * scale + 16))) + 'px';
+    }
+    function fit() {
+      const r = svg.getBoundingClientRect();
+      if (!r.width || !r.height) return;
+      const s = Math.min(r.width / drawing.width, r.height / drawing.height, MAX_ZOOM);
+      const width = r.width / s;
+      const height = r.height / s;
+      vb.x = drawing.x - (width - drawing.width) / 2;
+      vb.y = drawing.y - (height - drawing.height) / 2;
+      vb.width = width;
+      vb.height = height;
+    }
+    const onResize = () => { if (!adjusted) fit(); };
+    window.addEventListener('resize', onResize);
+    fit();
     svg.addEventListener('wheel', (ev) => {
       if (options.mini && !(ev.ctrlKey || ev.metaKey)) return;
       ev.preventDefault();
+      adjusted = true;
       const k = Math.exp(Math.max(-0.5, Math.min(0.5, ev.deltaY * 0.0015)));
       const r = svg.getBoundingClientRect();
       const scale = Math.max(vb.width / r.width, vb.height / r.height);
@@ -824,6 +865,7 @@
       const scale = Math.max(vb.width / r.width, vb.height / r.height);
       if (Math.abs(ev.clientX - drag.x) + Math.abs(ev.clientY - drag.y) > 3) {
         moved = true;
+        adjusted = true;
         el.classList.add('dragging');
         hideTooltip();
       }
@@ -838,10 +880,11 @@
     return {
       state: state,
       render: render,
-      reset: () => { Object.assign(vb, initial); },
+      reset: () => { adjusted = false; fit(); },
       pin: (id) => { state.pinned = id; render(); },
       toggleFamily: (family) => { state.families[family] = !state.families[family]; render(); },
       dispose: () => {
+        window.removeEventListener('resize', onResize);
         window.removeEventListener('mousemove', onMove);
         window.removeEventListener('mouseup', onUp);
       },
