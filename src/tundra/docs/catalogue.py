@@ -13,7 +13,7 @@ to make is spec only, and a revoke is live only.
 
 import fnmatch
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import (
@@ -74,6 +74,19 @@ NODE_TYPE_ORDER = [
     "integration",
     "external_volume",
 ]
+# What each kind is counted and listed as. Roles are account roles, whether the spec
+# defines them or only refers to them. Database and application roles belong to
+# Snowflake, so they're counted on their own.
+COUNTED_AS = {
+    "role": "roles",
+    "database_role": "managed_roles",
+    "application_role": "managed_roles",
+    "user": "users",
+    "warehouse": "warehouses",
+    "database": "databases",
+    "integration": "integrations",
+    "external_volume": "external_volumes",
+}
 MISSING_KEYS = {
     "role": "roles",
     "database_role": "database_roles",
@@ -254,6 +267,7 @@ class _Builder:
                 ),
                 "spec": name,
                 "live": self.live,
+                "counts": self.counts(nodes),
             },
             "families": self.present_families(nodes),
             "nodes": nodes,
@@ -605,6 +619,25 @@ class _Builder:
             node["missing"] = any(str(entry) == name for entry in missing)
 
     # Summaries
+
+    @staticmethod
+    def counts(nodes: Dict[str, Dict[str, Any]]) -> Dict[str, int]:
+        kinds = Counter(COUNTED_AS[node["type"]] for node in nodes.values())
+        people = sum(
+            node["type"] == "user" and node["family"] == "people"
+            for node in nodes.values()
+        )
+        return {
+            "roles": kinds["roles"],
+            "managed_roles": kinds["managed_roles"],
+            "users": kinds["users"],
+            "people": people,
+            "service_users": kinds["users"] - people,
+            "warehouses": kinds["warehouses"],
+            "databases": kinds["databases"],
+            "integrations": kinds["integrations"],
+            "external_volumes": kinds["external_volumes"],
+        }
 
     def user_groups(self, nodes: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
         """People who hold exactly the same roles, as the graph draws them, biggest first."""
