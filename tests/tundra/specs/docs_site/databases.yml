@@ -1,0 +1,10 @@
+databases:
+  - raw:
+      shared: false
+      owner: sysadmin
+      meta:
+        comment: Landing zone for loaded data.
+  - analytics:
+      shared: false
+  - partner_feed:
+      shared: true

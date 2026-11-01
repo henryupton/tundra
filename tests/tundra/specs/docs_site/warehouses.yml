@@ -1,0 +1,9 @@
+warehouses:
+  - loading:
+      size: x-small
+      meta:
+        comment: Runs the nightly load.
+  - reporting:
+      size: small
+  - admin_wh:
+      size: x-small
