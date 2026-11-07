@@ -23,6 +23,7 @@ tundra compares Snowflake names by identity. Every spelling that Snowflake resol
         003001 (403): Insufficient privileges to operate on role 'LOCKED'.
     ```
 
+  - `-v` and `-vv` only set the log level. With `-v`, 1.0.6 also printed every statement that was already granted, as `[SKIPPED]` when applying and as `[PENDING]` with `--dry`. 2.0 prints them only with the new `--print-skipped` flag on `run`, so a dry run that used `-v --diff` for the full diff needs `--print-skipped` as well. The header that ends `(Full diff with both new and already granted commands):` prints only when `--diff` and `--print-skipped` are both given, and `--diff` alone prints the plain `SQL Commands generated for given spec file:` header.
   - On stderr, lines logged at WARNING (shown as `[WARNING ]`, with the level padded to eight characters) say when a statement or the rest of the run went through SQL.
   - Nothing on a `[SUCCESS]`, `[ERROR]` or `[VANISHED]` line says which transport ran the statement.
   - With `--skip-validation`, a spec role, user or database that's missing from Snowflake still ends the run with a traceback, but through the API it shows `snowflake.core`'s `NotFoundError` (404) text where SQL showed `does not exist or not authorized`.
@@ -78,7 +79,7 @@ tundra compares Snowflake names by identity. Every spelling that Snowflake resol
   2026-11-02 07:48:40: [WARNING ] [snowflake_connector] <sql> through snowflake.core failed (<reason>), so it runs as SQL: <detail>
   ```
 
-  On reads, only the failure that switches the run to SQL logs at WARNING. Other read fallbacks log at INFO, so by default only the yellow summary shows them. `tundra -v run` shows INFO lines, and also prints already-granted statements as `[SKIPPED]`.
+  On reads, only the failure that switches the run to SQL logs at WARNING. Other read fallbacks log at INFO, so by default only the yellow summary shows them. `tundra -v run` shows INFO lines.
 - `snowflake.core`'s own log records, such as the ERROR it logs for an error body it can't read, don't print.
 - The first REST call checks a connection out of the run's pool, builds the `snowflake.core` client over it, and holds it for the run. A run that uses the API therefore has one more Snowflake session than a SQL-only run, and with `PERMISSION_BOT_TOKEN_COMMAND` it runs the command once more. The pool holds up to twice `--max-workers` connections, so the held connection doesn't keep a worker waiting. REST calls go through `snowflake.core`'s own HTTP connection pool.
 - `snowflake.core` 1.14's validators refuse a database whose kind isn't `PERMANENT` or `TRANSIENT`, such as `APPLICATION` or `IMPORTED DATABASE`, and a user whose `default_secondary_roles` isn't `ALL` or `NONE`. `SHOW DATABASES` lists the `SNOWFLAKE` database, which every account has, as `APPLICATION` and a shared database as `IMPORTED DATABASE`, and `SHOW USERS` lists the `()` or `('all')` that tundra sets on each spec user as `[]` or `["ALL"]`. If the REST API returns the same values, then on every run the whole database or user listing reads through SQL, the listings line is yellow and strict mode fails. Whether a real account's REST API returns these values hasn't been checked.

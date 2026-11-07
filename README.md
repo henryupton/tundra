@@ -4,8 +4,8 @@ A fork of [Permifrost](https://gitlab.com/gitlab-data/permifrost) for managing S
 declarative YAML spec. It's faster on big accounts and understands the object types Snowflake has shipped since
 Permifrost stopped keeping up.
 
-Anything not covered here (spec structure, `read`/`write` semantics, `--diff`, `!include`, `require-owner`) works as
-it does in Permifrost. See the [Permifrost README](https://gitlab.com/gitlab-data/permifrost/-/blob/master/README.md).
+Anything not covered here (spec structure, `read`/`write` semantics, `!include`, `require-owner`) works as it does
+in Permifrost. See the [Permifrost README](https://gitlab.com/gitlab-data/permifrost/-/blob/master/README.md).
 Names, wildcards, ownership globs and the `--role` and `--user` filters follow the rules under [Names](#names). The
 [CHANGELOG](CHANGELOG.md) lists what changed from 1.x.
 
@@ -199,6 +199,11 @@ schema in the spec, in what Tundra reads and in the SQL it plans.
 - A malformed name in the spec, `--role` or `--user` fails before Tundra connects.
 
 ## Running it
+
+**Already-granted statements.** `run` prints the statements it applies, or with `--dry` the ones it would apply.
+`--print-skipped` also prints the ones already granted, as `[SKIPPED]`, or as `[PENDING]` with `--dry`. With
+`--diff`, a new statement starts with `+ ` and an already-granted one with two spaces. `-v` shows INFO logs and `-vv`
+DEBUG logs, and neither prints more statements.
 
 **Objects dropped mid-run.** Grants are planned from a snapshot, so a schema that CI drops and recreates while
 Tundra is applying would fail every queued statement. Tundra re-looks up the object instead: gone prints
