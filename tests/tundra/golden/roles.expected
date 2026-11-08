@@ -1,0 +1,84 @@
+[SKIPPED] GRANT ROLE monitor TO role loader
+[SKIPPED] GRANT DATABASE ROLE analytics.reader TO ROLE loader
+[PENDING] GRANT APPLICATION ROLE "SNOWFLAKE".cortex_user TO ROLE loader
+[PENDING] REVOKE ROLE stale_role FROM role loader
+[SKIPPED] GRANT usage ON warehouse reporting_wh TO ROLE loader
+[PENDING] GRANT operate ON warehouse reporting_wh TO ROLE loader
+[PENDING] GRANT monitor ON warehouse reporting_wh TO ROLE loader
+[PENDING] GRANT usage ON warehouse "etl-wh" TO ROLE loader
+[PENDING] GRANT operate ON warehouse "etl-wh" TO ROLE loader
+[PENDING] GRANT monitor ON warehouse "etl-wh" TO ROLE loader
+[PENDING] GRANT usage ON integration s3_integration TO ROLE loader
+[PENDING] GRANT usage ON external volume iceberg_volume TO ROLE loader
+[SKIPPED] GRANT apply tag ON ACCOUNT TO ROLE loader
+[PENDING] REVOKE create database ON ACCOUNT FROM ROLE loader
+[SKIPPED] GRANT usage ON database analytics TO ROLE loader
+[PENDING] GRANT imported privileges ON database partner_share TO ROLE loader
+[PENDING] GRANT usage, monitor, create schema ON database raw TO ROLE loader
+[SKIPPED] GRANT usage ON FUTURE schemas IN database analytics TO ROLE loader
+[SKIPPED] GRANT usage ON schema analytics.marts TO ROLE loader
+[PENDING] GRANT usage ON schema analytics.staging TO ROLE loader
+[PENDING] GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create semantic view, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server ON schema raw.public TO ROLE loader
+[PENDING] GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create semantic view, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server ON schema raw.loading_orders TO ROLE loader
+[PENDING] GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create semantic view, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server ON schema raw.loading_contact TO ROLE loader
+[PENDING] GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create semantic view, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server ON schema raw."Mixed-Case" TO ROLE loader
+[PENDING] REVOKE usage ON schema raw.archive FROM ROLE loader
+[PENDING] GRANT select ON FUTURE tables IN database analytics TO ROLE loader
+[PENDING] GRANT select ON ALL tables IN database analytics TO ROLE loader
+[SKIPPED] GRANT select ON FUTURE tables IN schema analytics.marts TO ROLE loader
+[SKIPPED] GRANT select ON ALL tables IN schema analytics.marts TO ROLE loader
+[PENDING] GRANT select ON FUTURE tables IN schema analytics.staging TO ROLE loader
+[PENDING] GRANT select ON ALL tables IN schema analytics.staging TO ROLE loader
+[PENDING] GRANT select ON FUTURE views IN database analytics TO ROLE loader
+[PENDING] GRANT select ON ALL views IN database analytics TO ROLE loader
+[PENDING] GRANT select ON FUTURE views IN schema analytics.marts TO ROLE loader
+[PENDING] GRANT select ON ALL views IN schema analytics.marts TO ROLE loader
+[PENDING] GRANT select ON FUTURE views IN schema analytics.staging TO ROLE loader
+[PENDING] GRANT select ON ALL views IN schema analytics.staging TO ROLE loader
+[PENDING] GRANT select ON FUTURE iceberg tables IN database analytics TO ROLE loader
+[PENDING] GRANT select ON ALL iceberg tables IN database analytics TO ROLE loader
+[PENDING] GRANT select ON FUTURE iceberg tables IN schema analytics.marts TO ROLE loader
+[PENDING] GRANT select ON ALL iceberg tables IN schema analytics.marts TO ROLE loader
+[PENDING] GRANT select ON FUTURE iceberg tables IN schema analytics.staging TO ROLE loader
+[PENDING] GRANT select ON ALL iceberg tables IN schema analytics.staging TO ROLE loader
+[PENDING] GRANT select ON FUTURE dynamic tables IN database analytics TO ROLE loader
+[PENDING] GRANT select ON ALL dynamic tables IN database analytics TO ROLE loader
+[PENDING] GRANT select ON FUTURE dynamic tables IN schema analytics.marts TO ROLE loader
+[PENDING] GRANT select ON ALL dynamic tables IN schema analytics.marts TO ROLE loader
+[PENDING] GRANT select ON FUTURE dynamic tables IN schema analytics.staging TO ROLE loader
+[PENDING] GRANT select ON ALL dynamic tables IN schema analytics.staging TO ROLE loader
+[PENDING] GRANT usage ON FUTURE streamlits IN database analytics TO ROLE loader
+[PENDING] GRANT usage ON ALL streamlits IN database analytics TO ROLE loader
+[PENDING] GRANT usage ON FUTURE streamlits IN schema analytics.marts TO ROLE loader
+[PENDING] GRANT usage ON ALL streamlits IN schema analytics.marts TO ROLE loader
+[PENDING] GRANT usage ON FUTURE streamlits IN schema analytics.staging TO ROLE loader
+[PENDING] GRANT usage ON ALL streamlits IN schema analytics.staging TO ROLE loader
+[PENDING] GRANT select ON FUTURE semantic views IN database analytics TO ROLE loader
+[PENDING] GRANT select ON ALL semantic views IN database analytics TO ROLE loader
+[PENDING] GRANT select ON FUTURE semantic views IN schema analytics.marts TO ROLE loader
+[PENDING] GRANT select ON ALL semantic views IN schema analytics.marts TO ROLE loader
+[PENDING] GRANT select ON FUTURE semantic views IN schema analytics.staging TO ROLE loader
+[PENDING] GRANT select ON ALL semantic views IN schema analytics.staging TO ROLE loader
+[PENDING] GRANT select, insert, update, delete, truncate, references ON FUTURE tables IN schema raw.public TO ROLE loader
+[PENDING] GRANT select, insert, update, delete, truncate, references ON ALL tables IN schema raw.public TO ROLE loader
+[PENDING] GRANT select ON FUTURE views IN schema raw.public TO ROLE loader
+[PENDING] GRANT select ON ALL views IN schema raw.public TO ROLE loader
+[PENDING] GRANT select, insert, update, delete, truncate, references ON FUTURE iceberg tables IN schema raw.public TO ROLE loader
+[PENDING] GRANT select, insert, update, delete, truncate, references ON ALL iceberg tables IN schema raw.public TO ROLE loader
+[PENDING] GRANT select, monitor, operate ON FUTURE dynamic tables IN schema raw.public TO ROLE loader
+[PENDING] GRANT select, monitor, operate ON ALL dynamic tables IN schema raw.public TO ROLE loader
+[PENDING] GRANT usage ON FUTURE streamlits IN schema raw.public TO ROLE loader
+[PENDING] GRANT usage ON ALL streamlits IN schema raw.public TO ROLE loader
+[PENDING] GRANT select ON FUTURE semantic views IN schema raw.public TO ROLE loader
+[PENDING] GRANT select ON ALL semantic views IN schema raw.public TO ROLE loader
+[PENDING] GRANT select, insert, update, delete, truncate, references ON table raw.loading_orders.charges TO ROLE loader
+[PENDING] REVOKE select ON FUTURE tables IN schema raw.archive FROM ROLE loader
+[PENDING] REVOKE select ON table raw.archive.old_events FROM ROLE loader
+[PENDING] GRANT usage ON database analytics TO ROLE monitor
+[PENDING] GRANT usage ON schema analytics.marts TO ROLE monitor
+[PENDING] GRANT select ON table analytics.marts.orders TO ROLE monitor
+[PENDING] GRANT select ON view analytics.marts."Customer View" TO ROLE monitor
+[PENDING] GRANT ROLE loader TO role transformer
+[SKIPPED] GRANT OWNERSHIP ON database analytics TO ROLE transformer COPY CURRENT GRANTS
+[PENDING] GRANT OWNERSHIP ON schema analytics.marts TO ROLE transformer COPY CURRENT GRANTS
+[PENDING] GRANT OWNERSHIP ON table analytics.marts.orders TO ROLE transformer COPY CURRENT GRANTS

@@ -8,7 +8,6 @@ from tundra.snowflake_grants import SnowflakeGrantsGenerator
 from tundra_test_utils.snowflake_schema_builder import SnowflakeSchemaBuilder
 from tundra_test_utils.snowflake_connector import MockSnowflakeConnector
 
-
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 SPEC_FILE_DIR = os.path.join(THIS_DIR, "specs")
 SCHEMA_FILE_DIR = os.path.join(THIS_DIR, "schemas")
@@ -327,6 +326,25 @@ class TestSnowflakeSpecLoader:
 
         return [spec_file_data, method, return_value, expected_error]
 
+    # test_check_entities_on_snowflake_server_errors_if_role_owner_does_not_match
+    def require_owner_error_handling_case_five():
+        """
+        An owner in the spec that isn't a valid role name isn't the role's owner
+        """
+        spec_file_data = (
+            SnowflakeSchemaBuilder()
+            .add_role(owner='sys"admin', member_of=["testrole"])
+            .build()
+        )
+        method = "show_roles"
+        return_value = {"testrole": "securityadmin"}
+        expected_error = (
+            "Role testrole has owner securityadmin on snowflake, but has owner"
+            ' sys"admin defined in the spec file'
+        )
+
+        return [spec_file_data, method, return_value, expected_error]
+
     @pytest.mark.parametrize(
         "config",
         [
@@ -334,6 +352,7 @@ class TestSnowflakeSpecLoader:
             require_owner_error_handling_case_two,
             require_owner_error_handling_case_three,
             require_owner_error_handling_case_four,
+            require_owner_error_handling_case_five,
         ],
     )
     def test_check_entities_on_snowflake_server_errors_if_role_owner_does_not_match(
@@ -363,14 +382,16 @@ class TestSnowflakeSpecLoader:
         filter out secondarydb grant references as only primarydb is
         cited in the spec file
         """
-        mock_method = "show_future_grants"
+        # Future grants are read per role, so the reader answers with testrole's own
+        # grants rather than every grantee's, keyed by role
+        mock_method = "show_future_grants_to_role"
         spec_file_data = get_spec_from_file(
             "snowflake_server_filters_grants_to_role_to_items_defined_in_config.yml"
         )
         return_value = SnowflakeSchemaBuilder().build_from_file(
             SCHEMA_FILE_DIR,
             "snowflake_server_filters_grants_to_role_to_items_defined_in_config_future_grants.json",
-        )
+        )["testrole"]
         expected_value = SnowflakeSchemaBuilder().build_from_file(
             SCHEMA_FILE_DIR,
             "snowflake_server_filters_grants_to_role_to_items_defined_in_config_future_grants_expected_values.json",
@@ -582,6 +603,33 @@ class TestSnowflakeSpecLoader:
         }
         spec_loader.filter_to_database_refs(grant_on=grant_on, filter_set=filter_set)
 
+    @pytest.mark.parametrize(
+        "grant_on,expected",
+        [("table", ["raw.public.events"]), ("function", [])],
+    )
+    def test_filter_to_database_refs_keeps_names_it_reads(
+        self, mocker, grant_on, expected
+    ):
+        mocker.patch.object(SnowflakeSpecLoader, "__init__", lambda *args: None)
+        spec_loader = SnowflakeSpecLoader("", None)
+        spec_loader.entities = {
+            "database_refs": {"raw"},
+            "warehouse_refs": set(),
+            "integration_refs": set(),
+        }
+
+        names = spec_loader.filter_to_database_refs(
+            grant_on=grant_on,
+            filter_set=[
+                "",
+                "RAW.PUBLIC.EVENTS",
+                'RAW."unterminated',
+                "OTHER.PUBLIC.EVENTS",
+            ],
+        )
+
+        assert names == expected
+
     # edge case for PascalCase table entities
     def load_spec_file_case_one():
         """
@@ -591,7 +639,7 @@ class TestSnowflakeSpecLoader:
             SnowflakeSchemaBuilder()
             .add_db(name="database_1")
             .add_role(
-                tables=["database_1.schema_1.TableOne"],
+                tables=['database_1.schema_1."TableOne"'],
                 permission_set=["read", "write"],
                 member_of=["testrole"],
             )
@@ -599,7 +647,9 @@ class TestSnowflakeSpecLoader:
         )
         method = "show_tables"
         return_value = ["database_1.schema_1.tableone"]
-        expected_error = "Missing Entity Error: Table/View database_1.schema_1.TableOne"
+        expected_error = (
+            'Missing Entity Error: Table/View database_1.schema_1."TableOne"'
+        )
         return [spec_file_data, method, return_value, expected_error]
 
     # edge case for table entities that do not exist
@@ -662,6 +712,42 @@ class TestSnowflakeSpecLoader:
 
         assert expected_error in str(context.value)
 
+    def test_unquoted_pascal_case_table_resolves_to_uppercase(
+        self, mocker, mock_connector
+    ):
+        """
+        An unquoted TableOne is TABLEONE, the table SHOW TABLES lists
+        """
+        spec_file_data = (
+            SnowflakeSchemaBuilder()
+            .add_db(name="database_1")
+            .add_role(
+                tables=["database_1.schema_1.TableOne"],
+                permission_set=["read", "write"],
+                member_of=["testrole"],
+            )
+            .build()
+        )
+        mocker.patch("builtins.open", mocker.mock_open(read_data=spec_file_data))
+        mocker.patch.object(
+            mock_connector, "show_databases", return_value=["database_1"]
+        )
+        mocker.patch.object(
+            mock_connector, "show_schemas", return_value=["database_1.schema_1"]
+        )
+        mocker.patch.object(
+            mock_connector, "show_roles", return_value={"testrole": "securityadmin"}
+        )
+        mocker.patch.object(
+            mock_connector,
+            "show_tables",
+            return_value=["database_1.schema_1.tableone"],
+        )
+
+        loader = SnowflakeSpecLoader("", mock_connector)
+
+        assert loader.missing_entities["tables"] == set()
+
     def test_check_database_role_entities_passes_when_role_exists(
         self, mocker, mock_connector
     ):
@@ -680,7 +766,9 @@ class TestSnowflakeSpecLoader:
 
         SnowflakeSpecLoader("", mock_connector)
 
-        mock_connector.show_database_roles.assert_called_once_with(database="snowflake")
+        mock_connector.show_database_roles.assert_called_once_with(
+            database='"SNOWFLAKE"'
+        )
 
     def test_check_database_role_entities_errors_when_role_missing(
         self, mocker, mock_connector
@@ -700,6 +788,33 @@ class TestSnowflakeSpecLoader:
         assert (
             "Missing Entity Error: Database role mydb.db_role_1 was not found"
             in str(context.value)
+        )
+
+    def test_dotted_database_role_tail_is_reported_missing(
+        self, mocker, mock_connector
+    ):
+        """
+        Only the first unquoted dot splits a member_of entry, so the rest is one role
+        name, and Snowflake has no database or application role by that name.
+        """
+        spec_file_data = (
+            SnowflakeSchemaBuilder()
+            .add_role(member_of=["mydb.myschema.db_role_1"])
+            .build()
+        )
+        mocker.patch("builtins.open", mocker.mock_open(read_data=spec_file_data))
+        mocker.patch.object(mock_connector, "show_roles", return_value=["testrole"])
+        mocker.patch.object(
+            mock_connector, "show_database_roles", return_value=["mydb.db_role_1"]
+        )
+
+        with pytest.raises(SpecLoadingError) as context:
+            SnowflakeSpecLoader("", mock_connector)
+
+        assert str(context.value) == (
+            'Missing Entity Error: Database role mydb."myschema.db_role_1" was not'
+            " found on Snowflake Server, as a database role or an application role."
+            " Please create it before continuing."
         )
 
     def test_check_database_role_entities_skipped_when_none_referenced(
@@ -1005,7 +1120,90 @@ class TestSnowflakeSpecLoaderWithOwner:
         assert [] == queries
 
 
+def unquoted_filter_error(noun, spelling):
+    return (
+        f"Name error: Not a valid {noun} name for --{noun}: {spelling!r}: "
+        f"{spelling!r} isn't a quoted identifier; quote the whole part"
+    )
+
+
 class TestSnowflakeSpecLoaderUserRoleFilters:
+    def test_malformed_filter_fails_before_connecting(self, mocker):
+        """A --role or --user value that isn't a name is a Name error before tundra connects."""
+        connector = mocker.patch(
+            "tundra.snowflake_spec_loader.SnowflakeConnector",
+            side_effect=AssertionError("connected"),
+        )
+        load_spec = mocker.patch("tundra.snowflake_spec_loader.load_spec")
+
+        with pytest.raises(SpecLoadingError) as context:
+            SnowflakeSpecLoader(
+                spec_path="",
+                roles=['"loader', "analyst", '"loader'],
+                users=["", 'hei"di'],
+            )
+
+        assert str(context.value).splitlines() == [
+            unquoted_filter_error("role", '"loader'),
+            "Name error: Not a valid user name for --user: '' has an empty part",
+            unquoted_filter_error("user", 'hei"di'),
+        ]
+        connector.assert_not_called()
+        load_spec.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "noun,spelling", [("role", 'pri"mary'), ("user", 'test"username')]
+    )
+    def test_generate_permission_queries_rejects_malformed_filter(
+        self, mocker, test_roles_mock_connector, test_roles_spec_file, noun, spelling
+    ):
+        """generate_permission_queries reports a malformed filter the same way."""
+        mocker.patch("builtins.open", mocker.mock_open(read_data=test_roles_spec_file))
+        spec_loader = SnowflakeSpecLoader(spec_path="", conn=test_roles_mock_connector)
+
+        with pytest.raises(SpecLoadingError) as context:
+            spec_loader.generate_permission_queries(
+                **{f"{noun}s": [spelling]}, run_list=[f"{noun}s"]
+            )
+
+        assert str(context.value) == unquoted_filter_error(noun, spelling)
+
+    @pytest.mark.parametrize(
+        "noun,spelling", [("role", 'pri"mary'), ("user", 'test"username')]
+    )
+    def test_fetching_grants_rejects_malformed_filter(
+        self, mocker, test_roles_mock_connector, test_roles_spec_file, noun, spelling
+    ):
+        """Fetching grants for a malformed filter is the same Name error."""
+        mocker.patch("builtins.open", mocker.mock_open(read_data=test_roles_spec_file))
+        spec_loader = SnowflakeSpecLoader(spec_path="", conn=test_roles_mock_connector)
+        fetch = getattr(spec_loader, f"get_{noun}_privileges_from_snowflake_server")
+
+        with pytest.raises(SpecLoadingError) as context:
+            fetch(test_roles_mock_connector, **{f"{noun}s": [spelling]})
+
+        assert str(context.value) == unquoted_filter_error(noun, spelling)
+
+    def test_role_filter_iterator_reaches_the_fetch(
+        self, mocker, test_roles_mock_connector, test_roles_spec_file
+    ):
+        """A one-shot iterator of roles still filters the grants tundra fetches."""
+        mocker.patch("builtins.open", mocker.mock_open(read_data=test_roles_spec_file))
+        fetch = mocker.patch.object(
+            SnowflakeSpecLoader,
+            "get_role_privileges_from_snowflake_server",
+            return_value=None,
+        )
+
+        SnowflakeSpecLoader(
+            spec_path="",
+            conn=test_roles_mock_connector,
+            roles=iter(["primary"]),
+            run_list=["roles"],
+        )
+
+        assert fetch.call_args.kwargs["roles"] == ["primary"]
+
     def test_role_filter(self, mocker, test_roles_mock_connector, test_roles_spec_file):
         """GRANT queries list filtered by role."""
 
@@ -1773,27 +1971,46 @@ class TestParallelRoleFetch:
         loader.grants_to_role = {}
         return loader
 
-    def test_fetches_future_grants_for_every_schema(self, mocker):
+    def test_fetches_future_grants_for_every_spec_role(self, mocker):
+        # Future grants are read per role, from every database at once, so no schema
+        # is listed to find them
         loader = self._loader(mocker)
         conn = MockSnowflakeConnector()
-        mocker.patch.object(
-            conn,
-            "show_schemas",
-            side_effect=lambda database=None: [f"{database}.s1", f"{database}.s2"],
+        show_schemas = mocker.patch.object(conn, "show_schemas", return_value=[])
+        future = mocker.patch.object(
+            conn, "show_future_grants_to_role", return_value={}
         )
-        future = mocker.patch.object(conn, "show_future_grants", return_value={})
         mocker.patch.object(conn, "show_grants_to_role", return_value={})
 
         loader.get_role_privileges_from_snowflake_server(conn=conn)
 
-        called = {c.kwargs.get("schema") for c in future.call_args_list}
-        assert {"db1.s1", "db1.s2", "db2.s1", "db2.s2"} <= called
+        assert {c.args[0] for c in future.call_args_list} == {"role_a", "role_b"}
+        show_schemas.assert_not_called()
+
+    def test_fetches_future_grants_under_ignore_memberships(self, mocker):
+        loader = self._loader(mocker)
+        conn = MockSnowflakeConnector()
+        mocker.patch.object(
+            conn,
+            "show_future_grants_to_role",
+            side_effect=lambda role: {"select": {"table": [f"db1.{role}.<table>"]}},
+        )
+        grants = mocker.patch.object(conn, "show_grants_to_role", return_value={})
+
+        loader.get_role_privileges_from_snowflake_server(
+            conn=conn, roles=["role_b"], ignore_memberships=True
+        )
+
+        grants.assert_not_called()
+        assert loader.grants_to_role == {
+            "role_b": {"select": {"table": ["db1.role_b.<table>"]}}
+        }
 
     def test_merges_role_grants_filtered_to_db_refs(self, mocker):
         loader = self._loader(mocker)
         conn = MockSnowflakeConnector()
-        mocker.patch.object(conn, "show_schemas", return_value=[])
-        mocker.patch.object(conn, "show_future_grants", return_value={})
+        # Future grants are read per role
+        mocker.patch.object(conn, "show_future_grants_to_role", return_value={})
         mocker.patch.object(
             conn,
             "show_grants_to_role",
@@ -1806,13 +2023,13 @@ class TestParallelRoleFetch:
         assert loader.grants_to_role["role_a"]["usage"]["database"] == ["db1"]
         assert loader.grants_to_role["role_b"]["usage"]["database"] == ["db1"]
 
-    def test_multi_db_schema_merge_order(self, mocker):
+    def test_role_merge_order(self, mocker):
         mocker.patch.object(SnowflakeSpecLoader, "__init__", lambda *a, **k: None)
         loader = SnowflakeSpecLoader("", None)
         loader.max_workers = 4
         loader.entities = {
             "database_refs": ["db1", "db2"],
-            "roles": [],
+            "roles": ["r"],
             "warehouse_refs": [],
             "integration_refs": [],
         }
@@ -1820,30 +2037,33 @@ class TestParallelRoleFetch:
         conn = MockSnowflakeConnector()
         mocker.patch.object(
             conn,
-            "show_schemas",
-            side_effect=lambda database=None: [f"{database}.s1", f"{database}.s2"],
+            "show_future_grants_to_role",
+            return_value={
+                "select": {
+                    "table": [
+                        "db2.s1.<table>",
+                        "other_db.<table>",
+                        "db1.<table>",
+                        "db1.s2.<table>",
+                    ]
+                }
+            },
         )
-
-        def future_grants(database=None, schema=None):
-            if schema is not None:
-                name = f"{schema}.tbl"
-            else:
-                name = f"{database}.dbgrant"
-            return {"r": {"select": {"table": [name]}}}
-
-        mocker.patch.object(conn, "show_future_grants", side_effect=future_grants)
-        mocker.patch.object(conn, "show_grants_to_role", return_value={})
+        mocker.patch.object(
+            conn,
+            "show_grants_to_role",
+            return_value={"select": {"table": ["db2.s1.t1", "db1.s1.t1"]}},
+        )
 
         loader.get_role_privileges_from_snowflake_server(conn=conn)
 
-        # Interleaved by database in order: db-level, then that db's schemas, then next db.
+        # The role's future grants as listed, less untracked databases, then its grants
         assert loader.grants_to_role["r"]["select"]["table"] == [
-            "db1.dbgrant",
-            "db1.s1.tbl",
-            "db1.s2.tbl",
-            "db2.dbgrant",
-            "db2.s1.tbl",
-            "db2.s2.tbl",
+            "db2.s1.<table>",
+            "db1.<table>",
+            "db1.s2.<table>",
+            "db2.s1.t1",
+            "db1.s1.t1",
         ]
 
     def test_user_fetch_is_filtered_and_populated(self, mocker):
@@ -1986,12 +2206,12 @@ class TestApplicationRoleEntities:
         loader = SnowflakeSpecLoader("", mock_connector)
 
         mock_connector.show_application_roles.assert_called_once_with(
-            application="snowflake"
+            application='"SNOWFLAKE"'
         )
         assert loader.entities["application_role_refs"] == {
-            "snowflake.cortex_analyst_requests_viewer"
+            '"SNOWFLAKE".cortex_analyst_requests_viewer'
         }
-        assert loader.entities["database_role_refs"] == {"snowflake.usage_viewer"}
+        assert loader.entities["database_role_refs"] == {'"SNOWFLAKE".usage_viewer'}
 
     def test_application_role_membership_generates_grant_application_role(
         self, mocker, mock_connector

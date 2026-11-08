@@ -71,6 +71,9 @@ class MockSnowflakeConnector(SnowflakeConnector):
     ) -> List[str]:
         return []
 
+    def show_future_grants_to_role(self, role) -> Dict[str, Any]:
+        return {}
+
     def show_grants_to_role(self, role) -> Dict[str, Any]:
         return {}
 
@@ -94,6 +97,3 @@ class MockSnowflakeConnector(SnowflakeConnector):
 
     def is_role_in_session(self, role: str) -> bool:
         return False
-
-    def full_schema_list(self, schema: str) -> List[str]:
-        return []

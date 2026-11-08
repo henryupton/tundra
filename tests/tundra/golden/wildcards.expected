@@ -1,0 +1,14 @@
+[PENDING] GRANT ROLE analyst TO role engineer
+[SKIPPED] GRANT OWNERSHIP ON schema raw.public TO ROLE engineer COPY CURRENT GRANTS
+[PENDING] GRANT OWNERSHIP ON schema raw.staging TO ROLE engineer COPY CURRENT GRANTS
+[SKIPPED] GRANT OWNERSHIP ON table raw.public.events TO ROLE engineer COPY CURRENT GRANTS
+[PENDING] GRANT OWNERSHIP ON table raw.staging.loads TO ROLE engineer COPY CURRENT GRANTS
+[PENDING] GRANT usage ON external volume iceberg_volume TO ROLE engineer
+[PENDING] REVOKE usage ON external volume old_volume FROM ROLE engineer
+[PENDING] GRANT apply tag ON ACCOUNT TO ROLE engineer
+[PENDING] GRANT usage ON database raw TO ROLE engineer
+[PENDING] REVOKE select ON FUTURE tables IN database raw FROM ROLE engineer
+[PENDING] GRANT monitor ON task raw.public.nightly_load TO ROLE engineer
+[PENDING] GRANT usage ON database raw TO ROLE analyst
+[PENDING] GRANT usage ON database raw TO ROLE admin_role
+[PENDING] ALTER USER robot SET DISABLED = TRUE, TYPE = 'LEGACY_SERVICE', DEFAULT_SECONDARY_ROLES = ()

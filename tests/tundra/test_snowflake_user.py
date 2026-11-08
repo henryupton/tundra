@@ -48,7 +48,7 @@ def test_roles_spec_file():
         )
         .add_user(
             name="test_user_keyword_default_role",
-            default_warehouse="monitoring",
+            default_warehouse="metrics_wh",
             default_role="monitor",
         )
         .add_user(
@@ -390,7 +390,7 @@ class TestSnowflakeUserProperties:
             {
                 "already_granted": False,
                 "sql": "ALTER USER test_user_keyword_default_role SET DISABLED = FALSE, "
-                'DEFAULT_WAREHOUSE = "MONITORING", '
+                'DEFAULT_WAREHOUSE = "METRICS_WH", '
                 'DEFAULT_ROLE = "MONITOR", '
                 "TYPE = 'PERSON', DEFAULT_SECONDARY_ROLES = ()",
             }

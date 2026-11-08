@@ -1,7 +1,30 @@
+from dataclasses import replace
 from typing import Any, Dict, List, Optional
 
+from tundra.identifiers import InvalidNameError, ObjectName, granted_name
 from tundra.snowflake_connector import SnowflakeConnector
 from tundra.snowflake_permission import SnowflakePermission
+
+
+def _entity(entity_type: str, name: Any) -> Any:
+    """
+    A permission's entity as it's compared: the name read the way SHOW GRANTS spells
+    that kind. Account permissions are compared as written (get_permissions names the
+    role's own "*"), and so are names of kinds tundra doesn't read. No role holds
+    those, because the reader skips their grants.
+    """
+    if entity_type == "account" or name == "*" or isinstance(name, ObjectName):
+        return name
+    try:
+        return granted_name(entity_type, name)
+    except InvalidNameError:
+        return name
+
+
+def _compared(permission: SnowflakePermission) -> SnowflakePermission:
+    return replace(
+        permission, entity_name=_entity(permission.entity_type, permission.entity_name)
+    )
 
 
 class SnowflakeRoleGrantChecker:
@@ -18,9 +41,9 @@ class SnowflakeRoleGrantChecker:
 
     def _get_permissions(self, role: str) -> Dict:
         if role not in self.role_permission_cache:
-            self.role_permission_cache[
-                role
-            ] = self.conn.show_grants_to_role_with_grant_option(role)
+            self.role_permission_cache[role] = (
+                self.conn.show_grants_to_role_with_grant_option(role)
+            )
 
         return self.role_permission_cache[role]
 
@@ -55,7 +78,8 @@ class SnowflakeRoleGrantChecker:
         if not role:
             return permission
 
-        role_permissions = self.get_permissions(role)
+        permission = _compared(permission)
+        role_permissions = [_compared(p) for p in self.get_permissions(role)]
 
         # Always check for ownership first because it gives the most permissions
         if permission.as_owner() in role_permissions:
@@ -71,20 +95,13 @@ class SnowflakeRoleGrantChecker:
     ) -> bool:
         """
         Will return true if the <role> has the given <permission> on the <entity_name>.
-        Where the <entity_name> is the name given in the permission object, or the "snowflaky" version. Both are checked.
+        Names are compared by Snowflake identity, however either side spells them.
+        Only grants on the kinds tundra manages are read, so a permission on a
+        function, stage or other kind is never found.
         If the role has ownership of the entity in question, then this function should always return true.
         Will always return true if <role> is none.
         """
-        return (
-            self._has_permission(role, permission) is not None
-            or self._has_permission(
-                role,
-                permission.with_entity_name(
-                    SnowflakeConnector.snowflaky(permission.entity_name)
-                ),
-            )
-            is not None
-        )
+        return self._has_permission(role, permission) is not None
 
     def _can_grant_permission(
         self, role: Optional[str], permission: SnowflakePermission
@@ -108,14 +125,9 @@ class SnowflakeRoleGrantChecker:
     ) -> bool:
         """
         Given the <permission>, will return true if the <role> is able to grant them on the <entity_name>.
-        Where the <entity_name> is the name given in the permission object, or the "snowflaky" version. Both are checked.
+        Names are compared by Snowflake identity, however either side spells them.
+        Only grants on the kinds tundra manages are read, so a permission on a
+        function, stage or other kind is never found.
         Will always return true if no <role> was given.
         """
-        return self._can_grant_permission(
-            role, permission
-        ) or self._can_grant_permission(
-            role,
-            permission.with_entity_name(
-                SnowflakeConnector.snowflaky(permission.entity_name)
-            ),
-        )
+        return self._can_grant_permission(role, permission)

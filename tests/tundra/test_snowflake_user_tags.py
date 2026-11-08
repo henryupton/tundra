@@ -110,10 +110,10 @@ class TestUserTags:
 
     def test_value_is_set_upper_case(self, mocker):
         spec = SnowflakeSchemaBuilder().add_user(
-            name="tagged", tags={TEAM: "Data_Platform"}
+            name="tagged", tags={TEAM: "Design_Studio"}
         )
         assert [q["sql"] for q in tag_queries(mocker, spec.build(), "tagged", {})] == [
-            f"ALTER USER tagged SET TAG {TEAM} = 'DATA_PLATFORM'"
+            f"ALTER USER tagged SET TAG {TEAM} = 'DESIGN_STUDIO'"
         ]
 
     def test_lower_case_live_value_is_reset(self, mocker, spec_file):
@@ -203,10 +203,3 @@ class TestShowTagsOnUser:
             TEAM: "marketing",
             '"SNOWFLAKE".core."Mixed-Case"': "x",
         }
-
-    def test_snowflaky_tag_matches_stored_form(self):
-        assert SnowflakeConnector.snowflaky_tag(TEAM) == TEAM
-        assert (
-            SnowflakeConnector.snowflaky_tag("snowflake.core.privacy_category")
-            == '"SNOWFLAKE".core.privacy_category'
-        )
