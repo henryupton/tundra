@@ -127,7 +127,20 @@ def report_writes(conn) -> None:
     "--dry", "--dryrun", help="Do not actually run, just check.", is_flag=True
 )
 @click.option(
-    "--diff", help="Show full diff, both new and existing permissions.", is_flag=True
+    "--diff",
+    help=(
+        "Prefix each statement with '+ ' if it's new or two spaces if it's already"
+        " granted. With --print-skipped, this shows the full diff."
+    ),
+    is_flag=True,
+)
+@click.option(
+    "--print-skipped",
+    help=(
+        "Also print the statements that are already granted, as [SKIPPED], or as"
+        " [PENDING] with --dry."
+    ),
+    is_flag=True,
 )
 @click.option(
     "--role",
@@ -170,12 +183,11 @@ def report_writes(conn) -> None:
     ),
     is_flag=True,
 )
-@click.pass_context
 def run(
-    ctx,
     spec,
     dry,
     diff,
+    print_skipped,
     role,
     user,
     ignore_memberships,
@@ -183,7 +195,6 @@ def run(
     ignore_missing_objects,
     max_workers,
     sql_only,
-    print_skipped=False,
 ):
     """
     Grant the permissions provided in the provided specification file for specific users and roles.
@@ -205,8 +216,6 @@ def run(
         run_list = ["users"]
     else:
         run_list = ["roles", "users"]
-    if ctx.parent.params.get("verbose", 0) >= 1:
-        print_skipped = True
     if max_workers is not None:
         os.environ["PERMISSION_BOT_MAX_WORKERS"] = str(max_workers)
     tundra_grants(
@@ -351,7 +360,7 @@ def tundra_grants(
         exit_with_error(exc)
 
     click.secho()
-    if diff:
+    if diff and print_skipped:
         click.secho(
             "SQL Commands generated for given spec file (Full diff with both new and already granted commands):"
         )
