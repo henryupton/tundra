@@ -1,0 +1,80 @@
+roles:
+  - accountadmin:
+      member_of:
+        - "*"
+
+  # Snowflake already makes securityadmin a member of useradmin, so run skips this
+  - securityadmin:
+      member_of:
+        - useradmin
+      warehouses:
+        - admin_wh
+
+  - sysadmin:
+      member_of:
+        include:
+          - "*"
+        exclude:
+          - loader
+
+  # bridge_provisioner is managed outside the spec
+  - useradmin:
+      member_of:
+        - bridge_provisioner
+
+  - loader:
+      owner: securityadmin
+      meta:
+        comment: Loads raw data.
+        team: platform
+      member_of:
+        - reader
+        - raw.ingest_admin
+      warehouses:
+        - loading
+      integrations:
+        - s3_landing
+      account_privileges:
+        - execute task
+      privileges:
+        databases:
+          write:
+            - raw
+        schemas:
+          write:
+            - raw.*
+        tables:
+          write:
+            - raw.*.*
+        tasks:
+          write:
+            - raw.ops.*
+
+  - reader:
+      meta:
+        comment: Reads modelled data.
+      warehouses:
+        - reporting
+      privileges:
+        databases:
+          read:
+            - raw
+            - analytics
+            - partner_feed
+        schemas:
+          read:
+            - analytics.mart_*
+            - raw.public
+        tables:
+          read:
+            - analytics.mart_*.*
+            - raw.public.events
+
+  - analyst:
+      member_of:
+        - reader
+      warehouses:
+        - reporting
+      owns:
+        schemas:
+          - analytics.scratch

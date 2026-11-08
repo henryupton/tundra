@@ -1,10 +1,10 @@
 from .cli import cli  # isort:skip
 
-from tundra.cli import permissions
+from tundra.cli import docs, permissions
 
 
 def main():
     cli()
 
 
-__all__ = ["permissions"]
+__all__ = ["docs", "permissions"]

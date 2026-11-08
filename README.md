@@ -327,6 +327,43 @@ Tundra sets on each spec user as `[]` or `["ALL"]`. If the REST API returns the 
 through SQL on every run and strict mode fails. This hasn't been checked against a real account. The warehouse listing
 and a user's grants take no row limit, so Tundra spots a truncated one only if Snowflake's default limit is 10,000.
 
+## Docs site
+
+`tundra docs generate` writes a static site for a spec, in the style of `dbt docs`: a page for each role, user,
+warehouse, database, integration and external volume, and a graph of who inherits what. `tundra docs serve` serves it
+locally and opens it in a browser.
+
+```bash
+tundra docs generate --spec spec/ --target-dir target
+tundra docs serve --target-dir target
+```
+
+| Option                             | Does                                                                                                          |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `--spec`                           | Spec file or spec directory, as `run` takes it. Required.                                                     |
+| `--target-dir`                     | Where the site goes, and where `serve` looks for it. Default `target`.                                        |
+| `--live`                           | Also reads the account's grants and marks each membership and usage grant as applied, not applied or drift.   |
+| `--family 'LABEL=PATTERN'`         | Gives roles whose names match the glob their own colour and row in the key. Repeatable; the first match wins. |
+| `--sql-only`                       | With `--live`, reads through SQL only.                                                                        |
+| `--host`, `--port`, `--no-browser` | For `serve`. It listens on `127.0.0.1:8080` and opens a browser by default.                                   |
+
+- The site is `index.html` with the catalogue inside it, `catalogue.json` with the same data, and `assets/`. It opens
+  from disk with no network and nothing to install beyond tundra, because the browser lays out the graphs with
+  Graphviz compiled to WebAssembly ([Viz.js](https://github.com/mdaines/viz-js)), which ships in the package.
+- Without `--live`, tundra reads the spec alone and never connects. Memberships come from the planner `run` uses, so
+  `member_of: ['*']`, `include` and `exclude`, and the skipped grants between Snowflake's default roles resolve as
+  `run` applies them to an account that has every role the spec defines. Wildcard privileges are listed as written.
+  A spec that `run` refuses fails here with the same error.
+- `--live` reads the account as `run` does, with the same `PERMISSION_BOT_*` settings and [running role](#running-it),
+  through a connector that refuses to grant or revoke. A grant `run` would leave alone is applied, one it would make is
+  not applied, and one it would revoke is drift. The comparison covers role memberships and usage of warehouses,
+  databases, integrations and external volumes. Schema, table and task privileges come from the spec only.
+- People (users without `type: SERVICE`) are grouped by the exact set of roles they hold, and a toggle in the graph
+  draws them one by one. Pages leave out users' names and email addresses.
+- In the graph, hover a node to trace everything that reaches it and everything it reaches, click to pin it, click a
+  row of the key to highlight a family, scroll to zoom and drag to pan. Each page has a lineage graph of its own, and
+  **Open in the graph** focuses the whole graph on it.
+
 ## Contributing
 
 Issues and PRs welcome on [GitHub](https://github.com/henryupton/tundra/issues). Tests run on every PR. Versions are
