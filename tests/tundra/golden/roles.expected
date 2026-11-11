@@ -18,10 +18,10 @@
 [SKIPPED] GRANT usage ON FUTURE schemas IN database analytics TO ROLE loader
 [SKIPPED] GRANT usage ON schema analytics.marts TO ROLE loader
 [PENDING] GRANT usage ON schema analytics.staging TO ROLE loader
-[PENDING] GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create semantic view, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server ON schema raw.public TO ROLE loader
-[PENDING] GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create semantic view, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server ON schema raw.loading_orders TO ROLE loader
-[PENDING] GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create semantic view, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server ON schema raw.loading_contact TO ROLE loader
-[PENDING] GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create semantic view, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server ON schema raw."Mixed-Case" TO ROLE loader
+[PENDING] GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create semantic view, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server, create masking policy ON schema raw.public TO ROLE loader
+[PENDING] GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create semantic view, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server, create masking policy ON schema raw.loading_orders TO ROLE loader
+[PENDING] GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create semantic view, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server, create masking policy ON schema raw.loading_contact TO ROLE loader
+[PENDING] GRANT usage, monitor, create table, create view, create iceberg table, create streamlit, create semantic view, create stage, create file format, create sequence, create function, create pipe, create cortex search service, create mcp server, create masking policy ON schema raw."Mixed-Case" TO ROLE loader
 [PENDING] REVOKE usage ON schema raw.archive FROM ROLE loader
 [PENDING] GRANT select ON FUTURE tables IN database analytics TO ROLE loader
 [PENDING] GRANT select ON ALL tables IN database analytics TO ROLE loader

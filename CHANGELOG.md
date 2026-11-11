@@ -2,6 +2,12 @@
 
 Versions follow [Semantic Versioning](https://semver.org/). The release workflow cuts a release each time a pull request merges to `main`.
 
+## 2.0.1
+
+### Grants
+
+- Schema write grants `create masking policy` with the other create privileges, so a role can create masking policies in any schema it writes, as it already can functions and Cortex Search services. A role that wrote a schema it didn't own couldn't create a masking policy there. Every role with schema write gains the privilege on its next run.
+
 ## 2.0.0
 
 tundra compares Snowflake names by identity. Every spelling that Snowflake resolves to one object, such as `raw.public`, `RAW.PUBLIC` and `raw."PUBLIC"`, is one name to tundra, in the spec, in what it reads from Snowflake and in the SQL it plans. tundra also reads grants and listings, and sends some grants and revokes, through Snowflake's REST API with `snowflake.core`, and uses SQL for everything else and for any call the API gives no usable answer to.

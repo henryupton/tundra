@@ -100,6 +100,7 @@ SCHEMA_PARTIAL_WRITE_PRIVILEGES = ", ".join(
         "create pipe",
         "create cortex search service",
         "create mcp server",
+        "create masking policy",
     ]
 )
 
