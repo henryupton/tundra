@@ -51,7 +51,7 @@ All table-like types ride the existing `tables` read/write lists, and a wildcard
 | Semantic view | `select` | `select`                                       | `create semantic view` |
 
 These matter because Snowflake's `ON ALL TABLES` / `ON ALL VIEWS` don't reach any of them, so under Permifrost they
-go silently ungranted. Schema write also grants `create cortex search service` and `create mcp server`. New types
+go silently ungranted. Schema write also grants `create cortex search service`, `create mcp server` and `create masking policy`. New types
 are one entry in [`src/tundra/table_object_types.py`](src/tundra/table_object_types.py).
 
 **External volumes** are a top-level spec section, granted `USAGE` from a role's `external_volumes:` list (needed to
