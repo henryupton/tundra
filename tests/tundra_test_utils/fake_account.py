@@ -663,7 +663,14 @@ class FakeAccount:
         self.require(kind, name)
         self.revoke(role, privileges, granted_on(kind), name)
 
-    def grant(self, role: str, privileges: Iterable[str], on: str, name: Name):
+    def grant(
+        self,
+        role: str,
+        privileges: Iterable[str],
+        on: str,
+        name: Name,
+        granted_by: Optional[str] = None,
+    ):
         """GRANT <privileges> ON <on> <name> TO ROLE <role>. `on` is SHOW GRANTS' granted_on."""
         self._require_role(role)
         for privilege in privileges:
@@ -678,7 +685,7 @@ class FakeAccount:
                     privilege,
                     on,
                     "-" if on == "ACCOUNT" else spell(name),
-                    granted_by=self.current_role,
+                    granted_by=granted_by or self.current_role,
                 )
             )
 
@@ -736,8 +743,11 @@ class FakeAccount:
 
     def grant_role(self, grantee: str, on: str, member: Name) -> None:
         """A role, database role or application role (on) granted to a role."""
-        self.require(on.replace("_", " ").lower(), member)
-        self.grant(grantee, ["USAGE"], on, member)
+        kind = on.replace("_", " ").lower()
+        self.require(kind, member)
+        # Snowflake reports the application as granted_by, whoever granted it
+        granted_by = member[0] if kind == "application role" else None
+        self.grant(grantee, ["USAGE"], on, member, granted_by=granted_by)
 
     def revoke_role(self, grantee: str, on: str, member: Name) -> None:
         self.require(on.replace("_", " ").lower(), member)
