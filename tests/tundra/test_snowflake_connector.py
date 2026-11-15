@@ -765,8 +765,8 @@ class TestApplicationRoles:
     def test_show_grants_to_role_application_roles(self, granted_on, mocker):
         """
         Application role grants are keyed under "application role" whichever spelling
-        Snowflake reports, normalised like the spec side, and the grants the
-        application made itself (granted_by empty or the application) are dropped.
+        Snowflake reports, normalised like the spec side. Snowflake reports the
+        application as granted_by even on grants SECURITYADMIN made, so those are kept.
         """
         mocker.patch("sqlalchemy.create_engine")
         conn = SnowflakeConnector()
@@ -774,32 +774,7 @@ class TestApplicationRoles:
         mocker.patch.object(
             conn.run_query(),
             "fetchall",
-            return_value=[
-                {
-                    "privilege": "USAGE",
-                    "granted_on": granted_on,
-                    "name": "SNOWFLAKE.CORTEX_ANALYST_REQUESTS_VIEWER",
-                    "granted_by": "SECURITYADMIN",
-                },
-                {
-                    "privilege": "USAGE",
-                    "granted_on": granted_on,
-                    "name": 'SNOWFLAKE."CORTEX-MODEL-ROLE-GEMINI-2.5-FLASH"',
-                    "granted_by": "ACCOUNTADMIN",
-                },
-                {
-                    "privilege": "USAGE",
-                    "granted_on": granted_on,
-                    "name": "SNOWFLAKE.AI_OBSERVABILITY_READER",
-                    "granted_by": "SNOWFLAKE",
-                },
-                {
-                    "privilege": "USAGE",
-                    "granted_on": granted_on,
-                    "name": "SNOWFLAKE.DATA_QUALITY_MONITORING_VIEWER",
-                    "granted_by": "",
-                },
-            ],
+            return_value=self.application_role_rows(granted_on),
         )
 
         grants = conn.show_grants_to_role("test_role")
@@ -812,6 +787,42 @@ class TestApplicationRoles:
                 }
             }
         }
+
+    @pytest.mark.parametrize("role", ["ACCOUNTADMIN", "accountadmin"])
+    def test_show_grants_to_role_skips_accountadmin_application_roles(
+        self, role, mocker
+    ):
+        """
+        The SNOWFLAKE application grants its roles to ACCOUNTADMIN itself, so they are
+        never recorded, and never revoked.
+        """
+        mocker.patch("sqlalchemy.create_engine")
+        conn = SnowflakeConnector()
+        conn.run_query = mocker.MagicMock()
+        mocker.patch.object(
+            conn.run_query(),
+            "fetchall",
+            return_value=self.application_role_rows("APPLICATION_ROLE"),
+        )
+
+        assert conn.show_grants_to_role(role) == {}
+
+    @staticmethod
+    def application_role_rows(granted_on: str) -> list:
+        return [
+            {
+                "privilege": "USAGE",
+                "granted_on": granted_on,
+                "name": "SNOWFLAKE.CORTEX_ANALYST_REQUESTS_VIEWER",
+                "granted_by": "SNOWFLAKE",
+            },
+            {
+                "privilege": "USAGE",
+                "granted_on": granted_on,
+                "name": 'SNOWFLAKE."CORTEX-MODEL-ROLE-GEMINI-2.5-FLASH"',
+                "granted_by": "SNOWFLAKE",
+            },
+        ]
 
     @pytest.mark.parametrize(
         "granted_on,expected",

@@ -73,6 +73,17 @@ DATABASE_ROLE_GRANT_TYPE = "database role"
 # as application roles, which GRANT DATABASE ROLE cannot reach.
 APPLICATION_ROLE_GRANT_TYPE = "application role"
 
+# The SNOWFLAKE application grants its roles to ACCOUNTADMIN itself, and SECURITYADMIN
+# can't revoke them, so ACCOUNTADMIN's application roles are never read. The grantor
+# can't tell them apart: Snowflake reports the application as granted_by on every
+# application role grant, including the ones tundra makes.
+SYSTEM_APPLICATION_ROLE_GRANTEES = frozenset({ObjectName.single("ACCOUNTADMIN")})
+
+
+def is_system_application_role_grantee(role: ObjectName) -> bool:
+    return role in SYSTEM_APPLICATION_ROLE_GRANTEES
+
+
 # External volume grants are keyed under this whether the row reports EXTERNAL_VOLUME or
 # EXTERNAL VOLUME, like the two role kinds above.
 EXTERNAL_VOLUME_GRANT_TYPE = "external volume"
@@ -1071,12 +1082,12 @@ class SnowflakeConnector:
         return self._read(
             "show_grants_to_role",
             lambda api: api.grants_to_role(name.api_name),
-            self._api_grants_to_role,
+            lambda models: self._api_grants_to_role(name, models),
             lambda: self._sql_grants_to_role(name),
         )
 
     def _api_grants_to_role(
-        self, models: Sequence[Any]
+        self, role: ObjectName, models: Sequence[Any]
     ) -> Dict[str, Dict[str, Set[ObjectName]]]:
         grants: Dict[str, Any] = {}
         for grant in models:
@@ -1085,10 +1096,9 @@ class SnowflakeConnector:
                 continue
             granted_on = self._api_granted_on(grant.securable_type)
 
-            # As in SQL, the application's own grants aren't recorded
-            if granted_on == APPLICATION_ROLE_GRANT_TYPE and (
-                not grant.granted_by
-                or ObjectName.from_api(grant.granted_by) == name.database
+            if (
+                granted_on == APPLICATION_ROLE_GRANT_TYPE
+                and is_system_application_role_grantee(role)
             ):
                 continue
 
@@ -1114,11 +1124,9 @@ class SnowflakeConnector:
             if name is None:
                 continue
 
-            # Grants the application made itself are system-managed: SECURITYADMIN
-            # cannot revoke them and no spec should try, so they are not recorded at all.
             if (
                 granted_on == APPLICATION_ROLE_GRANT_TYPE
-                and SnowflakeConnector.is_system_application_role_grant(result)
+                and is_system_application_role_grantee(role)
             ):
                 continue
 
@@ -1345,17 +1353,6 @@ class SnowflakeConnector:
         # SHOW APPLICATION ROLES reports the bare role name, which may itself contain
         # periods (CORTEX-MODEL-ROLE-GEMINI-2.5-FLASH)
         return [application.child(result["name"]) for result in results]
-
-    @staticmethod
-    def is_system_application_role_grant(result: Dict[str, Any]) -> bool:
-        """
-        True when a SHOW GRANTS row for an application role was granted by the
-        application itself (granted_by is empty or names the application), as the
-        SNOWFLAKE application does for ACCOUNTADMIN. Those grants are not ours to manage.
-        """
-        application = granted_name(result["granted_on"], result["name"]).database
-        granted_by = result.get("granted_by")
-        return not granted_by or ObjectName.from_canonical(granted_by) == application
 
     def run_query(self, query: str) -> "_BufferedResult":
         from sqlalchemy import text
